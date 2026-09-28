@@ -1,0 +1,6 @@
+worker_count,step_index,active_constraints,active_pairs,body_count,shape_count,constraint_count,sleeping_body_count,invalid_transform_count,case_status,metric_status,physics_elapsed_ms
+12,600,27844,20676,7748,7748,7168,0,0,ok,ok,1384.340500000
+12,600,27906,20738,7748,7748,7168,0,0,ok,ok,1377.104600000
+12,600,27817,20649,7748,7748,7168,0,0,ok,ok,1359.710600000
+12,600,27778,20610,7748,7748,7168,0,0,ok,ok,1379.134400000
+12,600,27822,20654,7748,7748,7168,0,0,ok,ok,1350.418400000

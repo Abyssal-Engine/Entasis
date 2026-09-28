@@ -1,0 +1,28 @@
+set(PACKAGE_VERSION "@ENTASIS_VERSION@")
+set(PACKAGE_VERSION_COMPATIBLE FALSE)
+set(PACKAGE_VERSION_EXACT FALSE)
+# CMake version requests are numeric. a prerelease must not satisfy a stable request
+if(PACKAGE_VERSION MATCHES "-")
+    return()
+endif()
+string(REGEX MATCH "^[0-9]+" _entasis_major "${PACKAGE_VERSION}")
+if(NOT PACKAGE_FIND_VERSION_MAJOR STREQUAL _entasis_major OR
+   PACKAGE_FIND_VERSION VERSION_GREATER PACKAGE_VERSION)
+    return()
+endif()
+if(PACKAGE_FIND_VERSION_RANGE)
+    math(EXPR _entasis_next_major "${_entasis_major} + 1")
+    if(PACKAGE_FIND_VERSION_RANGE_MAX STREQUAL "EXCLUDE")
+        if(NOT PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION_MAX OR
+           PACKAGE_FIND_VERSION_MAX VERSION_GREATER _entasis_next_major)
+            return()
+        endif()
+    elseif(PACKAGE_VERSION VERSION_GREATER PACKAGE_FIND_VERSION_MAX OR
+           NOT PACKAGE_FIND_VERSION_MAX_MAJOR STREQUAL _entasis_major)
+        return()
+    endif()
+endif()
+set(PACKAGE_VERSION_COMPATIBLE TRUE)
+if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+    set(PACKAGE_VERSION_EXACT TRUE)
+endif()

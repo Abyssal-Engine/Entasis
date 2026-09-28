@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: Entasis
+Description: Entasis runtime C ABI
+Version: @ENTASIS_VERSION@
+Libs: -L${libdir} -lentasis
+Libs.private: -ldl -lpthread -lm
+Cflags: -I${includedir}

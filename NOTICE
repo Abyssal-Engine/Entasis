@@ -1,0 +1,12 @@
+Entasis
+
+Original Entasis code and modifications:
+Copyright 2026 abyssmadeuspart
+
+Entasis contains code derived from BEPUphysics2, created by Ross Nordby.
+Copyright Bepu Entertainment LLC.
+
+The BEPUphysics2-derived code has been ported to Odin and substantially
+modified for Entasis.
+
+Licensed under the Apache License, Version 2.0. See LICENSE.

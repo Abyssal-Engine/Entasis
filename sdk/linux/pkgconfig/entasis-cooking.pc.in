@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: Entasis Cooking
+Description: Entasis cooking C ABI
+Version: @ENTASIS_VERSION@
+Requires: entasis
+Libs: -L${libdir} -lentasis_cooking
+Libs.private: -Wl,--allow-multiple-definition -ldl -lpthread -lm
+Cflags: -I${includedir}

@@ -1,0 +1,16 @@
+build/
+toolchains.local
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.dll
+*.o
+*.a
+*.so
+*.so.*
+
+# Benchmark process logs stay in build output and the local research archive.
+/results/**/*.stdout.txt
+/results/**/*.stderr.txt
