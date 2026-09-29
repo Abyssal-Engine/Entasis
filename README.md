@@ -6,11 +6,11 @@
   </picture>
 </p>
 
-# Entasis
-
 Entasis is a high-performance, data-oriented physics engine written in Odin for 3D games. It provides rigid-body simulation, collision detection, constraints and scene queries through a direct Odin API and a C ABI for C11 and C++20
 
 The engine uses SIMD and multithreaded execution on Windows and Linux AMD64. Odin games compile the engine source directly. C and C++ games can use shared or static libraries from source builds or a prebuilt C SDK
+
+[![Discord community](https://img.shields.io/badge/Discord-Join%20community-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/34NY53KNB)
 
 ## Features
 
