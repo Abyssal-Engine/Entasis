@@ -38,11 +38,11 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
     [string]$temporary = [IO.Path]::ChangeExtension($Output, '.building.exe')
     if ($Emit -eq 'Executable')
     {
-        foreach ($selected in @($Output, $temporary, ([IO.Path]::ChangeExtension($Output, '.pdb'))))
+        foreach ($selected in @($temporary))
         {
             if (Test-Path -LiteralPath $selected)
             {
-                Remove-Item -LiteralPath $selected -Force
+                Move-Item -LiteralPath $selected -Destination "$selected.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ')).failed"
             }
         }
         for ($index = 0; $index -lt $Arguments.Count; $index++)
@@ -54,10 +54,19 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
         }
     }
     Write-Host "BENCHMARK_STAGE stage=build package=$Package output=$Output"
-    Invoke-Checked $OdinExe $Arguments
+    [int]$remaining = [int][Math]::Floor((600000 - $script:BenchmarkBuildClock.ElapsedMilliseconds) / 1000)
+    if ($remaining -le 0)
+    {
+        [IO.File]::WriteAllText("$Output.build.timeout.txt", "BUILD_TIMEOUT stage=$Package before_launch")
+        exit 124
+    }
+    [string]$logPrefix = "$Output.build.$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
+    Write-Host "BENCHMARK_BUILD_LOG prefix=$logPrefix"
+    [IO.File]::WriteAllText("$logPrefix.arguments.txt", ($Arguments -join "`n"))
+    Invoke-BoundedProcess $OdinExe $Arguments $remaining $logPrefix "build-$Package"
     if ($Emit -eq 'Executable')
     {
-        Move-Item -LiteralPath $temporary -Destination $Output
+        Move-Item -LiteralPath $temporary -Destination $Output -Force
     }
     Write-Host "BENCHMARK_BUILT package=$Package elapsed_ms=$($clock.ElapsedMilliseconds)"
 }
@@ -110,7 +119,11 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
     {
         $profileArguments += "-define:ENTASIS_BENCHMARK_COMPONENTS=$($Components.ToLowerInvariant())"
     }
-    [string[]]$arguments = @('build', (Join-Path $script:Root "benchmarks/$Package"), "-out:$output",
+    if ($Package -eq "scene_stability")
+    {
+        $profileArguments += "-define:ENTASIS_BENCHMARK_COMPONENTS=common"
+    }
+    [string[]]$arguments = @('build', (Join-Path $script:BenchmarkHarnessRoot "benchmarks/$Package"), "-out:$output",
         "-collection:entasis=$(Join-Path $script:Root 'src')", "-target:$script:OdinTarget", "-microarch:$script:OdinMicroarch") +
         $profileArguments + @('-vet', '-warnings-as-errors', "-thread-count:$script:OdinThreadCount", '-linker:lld')
     Invoke-BenchmarkBuild $OdinExe $Package $output $arguments $Emit
@@ -127,7 +140,7 @@ function Build-BenchmarkReporter([string]$OdinExe, [string]$Configuration)
     {
         @('-o:speed', '-no-bounds-check', '-disable-assert', '-source-code-locations:none')
     }
-    [string[]]$arguments = @('build', (Join-Path $script:Root 'tools/benchmark_report'), "-out:$output",
+    [string[]]$arguments = @('build', (Join-Path $script:BenchmarkHarnessRoot 'tools/benchmark_report'), "-out:$output",
         "-target:$script:OdinTarget", "-microarch:$script:OdinMicroarch") + $profileArguments +
         @('-vet', '-warnings-as-errors', "-thread-count:$script:OdinThreadCount", '-linker:lld')
     Invoke-BenchmarkBuild $OdinExe 'benchmark_report' $output $arguments

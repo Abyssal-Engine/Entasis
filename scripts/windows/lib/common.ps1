@@ -18,7 +18,7 @@ $script:BenchmarkPackages = @(
 $script:BenchmarkRecordingPackages = @("container", "contact_islands", "pyramid", "ragdoll_stair_tumble", "noncontact_constraint_mix", "noncontact_fallback_smoke")
 $script:BenchmarkComponentPackages = @("custom_extensions", "query_extensions", "contact_islands")
 $script:TestPackages = @(
-    "root", "benchmark_support", "benchmark_report", "physics_visuals", "cooking", "bodies", "broadphase", "collections", "collision_batching",
+    "root", "scene_stability", "benchmark_support", "benchmark_report", "physics_visuals", "cooking", "bodies", "broadphase", "collections", "collision_batching",
     "collision_pairs", "contact_optimization", "constraints", "intrinsics", "islands", "layout",
     "narrowphase_integration", "queries", "public_api", "release_parity", "shapes",
     "simulation", "solver_kernels", "sweeps", "tasking_multi", "tasking_single",
@@ -29,6 +29,7 @@ $script:CodegenPackages = @(
 )
 $script:TestScopeToPackage = @{
     "root" = "root"
+    "scene-stability" = "scene_stability"
     "benchmark-support" = "benchmark_support"
     "benchmark-report" = "benchmark_report"
     "physics-visuals" = "physics_visuals"
@@ -78,38 +79,172 @@ function Invoke-Checked([string]$FilePath, [string[]]$Arguments)
     }
 }
 
-function Invoke-BoundedProcess([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
+function Invoke-BoundedProcess(
+    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds,
+    [string]$LogPrefix = "", [string]$Stage = "process")
 {
-    $start = [Diagnostics.ProcessStartInfo]::new($FilePath)
+    [Diagnostics.Stopwatch]$clock = [Diagnostics.Stopwatch]::StartNew()
+    [long]$budgetMilliseconds = [long]$TimeoutSeconds * 1000
+    [Diagnostics.ProcessStartInfo]$start = [Diagnostics.ProcessStartInfo]::new($FilePath)
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $script:Root
+    if ($LogPrefix.Length -gt 0)
+    {
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+    }
     foreach ($argument in $Arguments)
     {
         $start.ArgumentList.Add($argument)
     }
-    $process = [Diagnostics.Process]::Start($start)
+    [Threading.CancellationTokenSource]$copyCancellation = [Threading.CancellationTokenSource]::new()
+    [IO.FileStream]$stdout = $null
+    [IO.FileStream]$stderr = $null
+    [Threading.Tasks.Task]$stdoutTask = $null
+    [Threading.Tasks.Task]$stderrTask = $null
+    [Diagnostics.Process]$process = $null
+    [int]$exitCode = 124
+    [long]$observedPeak = 0
     try
     {
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000))
+        if ($LogPrefix.Length -gt 0)
         {
-            $process.Kill($true)
-            $process.WaitForExit()
-            [Console]::Error.WriteLine("Process timed out after $TimeoutSeconds seconds: $FilePath")
-            exit 124
+            $stdout = [IO.File]::Create("$LogPrefix.stdout.txt")
+            $stderr = [IO.File]::Create("$LogPrefix.stderr.txt")
         }
-        if ($process.ExitCode -ne 0)
+        $process = [Diagnostics.Process]::Start($start)
+        if ($LogPrefix.Length -gt 0)
         {
-            exit $process.ExitCode
+            $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout, 4096, $copyCancellation.Token)
+            $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderr, 4096, $copyCancellation.Token)
+        }
+        while (-not $process.HasExited)
+        {
+            $observedPeak = Get-ProcessPeakWorkingSet $process $observedPeak
+            [long]$remaining = $budgetMilliseconds - $clock.ElapsedMilliseconds
+            if ($remaining -le 0)
+            {
+                break
+            }
+            [void]$process.WaitForExit([int][Math]::Min($remaining, 100))
+        }
+        if ($process.HasExited -and $clock.ElapsedMilliseconds -lt $budgetMilliseconds)
+        {
+            $exitCode = $process.ExitCode
+            if ($LogPrefix.Length -gt 0)
+            {
+                foreach ($task in @($stdoutTask, $stderrTask))
+                {
+                    [long]$remaining = $budgetMilliseconds - $clock.ElapsedMilliseconds
+                    if ($remaining -le 0 -or -not $task.Wait([int][Math]::Min($remaining, [int]::MaxValue)))
+                    {
+                        $exitCode = 124
+                        break
+                    }
+                }
+            }
+        }
+        if ($exitCode -eq 124)
+        {
+            [string]$message = "PROCESS_TIMEOUT stage=$Stage timeout_seconds=$TimeoutSeconds elapsed_ms=$($clock.ElapsedMilliseconds)"
+            [Console]::Error.WriteLine($message)
+            if ($LogPrefix.Length -gt 0)
+            {
+                [IO.File]::WriteAllText("$LogPrefix.timeout.txt", $message)
+            }
         }
     }
     finally
     {
-        if (-not $process.HasExited)
+        $copyCancellation.Cancel()
+        try
         {
-            $process.Kill($true)
-            $process.WaitForExit()
+            if ($null -ne $process -and -not $process.HasExited)
+            {
+                try
+                {
+                    $process.Kill($true)
+                }
+                catch [InvalidOperationException]
+                {
+                    if (-not $process.HasExited)
+                    {
+                        throw
+                    }
+                }
+                [long]$remaining = $budgetMilliseconds - $clock.ElapsedMilliseconds
+                if ($remaining -gt 0)
+                {
+                    [void]$process.WaitForExit([int][Math]::Min($remaining, [int]::MaxValue))
+                }
+            }
         }
-        $process.Dispose()
+        finally
+        {
+            if ($null -ne $process)
+            {
+                $process.Dispose()
+            }
+            if ($null -ne $stdout)
+            {
+                $stdout.Dispose()
+            }
+            if ($null -ne $stderr)
+            {
+                $stderr.Dispose()
+            }
+            $copyCancellation.Dispose()
+        }
+    }
+    if ($LogPrefix.Length -gt 0)
+    {
+        Write-ProcessObservation $clock $LogPrefix $Stage $observedPeak
+        [Console]::Out.Write([IO.File]::ReadAllText("$LogPrefix.stdout.txt"))
+        [Console]::Error.Write([IO.File]::ReadAllText("$LogPrefix.stderr.txt"))
+    }
+    if ($exitCode -ne 0)
+    {
+        exit $exitCode
+    }
+}
+
+function Get-ProcessPeakWorkingSet([Diagnostics.Process]$Process, [long]$PreviousPeak)
+{
+    try
+    {
+        $Process.Refresh()
+        return [Math]::Max($PreviousPeak, $Process.PeakWorkingSet64)
+    }
+    catch [InvalidOperationException]
+    {
+        return $PreviousPeak
+    }
+    catch [ComponentModel.Win32Exception]
+    {
+        return $PreviousPeak
+    }
+}
+
+function Write-ProcessObservation(
+    [Diagnostics.Stopwatch]$Clock, [string]$LogPrefix, [string]$Stage, [long]$ObservedPeak = 0)
+{
+    [string]$memoryState = "unavailable"
+    [string]$peak = ""
+    if ($ObservedPeak -gt 0)
+    {
+        $memoryState = "available"
+        $peak = $ObservedPeak.ToString([Globalization.CultureInfo]::InvariantCulture)
+    }
+    [Diagnostics.Process]$parent = [Diagnostics.Process]::GetCurrentProcess()
+    try
+    {
+        [string]$placement = "cpu=$([Environment]::GetEnvironmentVariable('PROCESSOR_IDENTIFIER')) logical_cpus=$([Environment]::ProcessorCount) inherited_affinity=$($parent.ProcessorAffinity.ToInt64())"
+        [string]$line = "PROCESS_OBSERVATION stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) memory=$memoryState peak_working_set_bytes=$peak peak_scope=observed_while_running $placement"
+        [IO.File]::AppendAllText("$LogPrefix.stdout.txt", "$line`n")
+    }
+    finally
+    {
+        $parent.Dispose()
     }
 }
 
@@ -123,9 +258,9 @@ function Get-TestPackagePath([string]$Package)
     {
         return (Join-Path $script:Root "tools\benchmark_report")
     }
-    if ($Package -eq "benchmark_support")
+    if ($Package -in @("benchmark_support", "scene_stability"))
     {
-        return (Join-Path $script:Root "benchmarks\benchmark_support")
+        return (Join-Path $script:Root "benchmarks\$Package")
     }
     return (Join-Path $script:Root "tests\$Package")
 }
@@ -146,7 +281,7 @@ function Get-SafeName([string]$Value)
 
 function Assert-BenchmarkPackage([string]$Package)
 {
-    if ($script:BenchmarkPackages -notcontains $Package)
+    if ($script:BenchmarkPackages -notcontains $Package -and $Package -notin @("pyramid_wall", "scene_stability"))
     {
         throw "Unknown benchmark package: $Package"
     }
@@ -321,6 +456,10 @@ function Invoke-TestPackage(
         "-collection:entasis=$(Join-Path $script:Root 'src')", "-target:$script:OdinTarget",
         "-microarch:$script:OdinMicroarch"
     )
+    if ($Package -eq "scene_stability")
+    {
+        $arguments += "-define:ENTASIS_BENCHMARK_COMPONENTS=common"
+    }
     $arguments += $script:OdinProfileArguments
     $arguments += @(
         "-vet",

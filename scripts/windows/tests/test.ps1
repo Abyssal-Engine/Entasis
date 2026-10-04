@@ -4,7 +4,7 @@ param(
     [string]$OdinExe,
     [Parameter(Mandatory = $true)]
     [ValidateSet(
-        "root", "benchmark-support", "benchmark-report", "physics-visuals", "cooking", "bodies", "broadphase", "collections", "collision-batching",
+        "root", "scene-stability", "benchmark-support", "benchmark-report", "physics-visuals", "cooking", "bodies", "broadphase", "collections", "collision-batching",
         "collision-pairs", "contact-optimization", "constraints", "intrinsics", "islands", "layout",
         "narrowphase-integration", "queries", "public-api", "release-parity", "shapes",
         "simulation", "solver-kernels", "sweeps", "tasking-multi", "tasking-single",

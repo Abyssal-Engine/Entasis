@@ -80,12 +80,12 @@ function Invoke-BenchmarkChild(
 {
     if ($Clock.ElapsedMilliseconds -ge $BudgetMilliseconds)
     {
-        $message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) before_launch"
+        [string]$message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) before_launch"
         [Console]::Error.WriteLine($message)
         [IO.File]::WriteAllText("$OutputPrefix.timeout.txt", $message)
         return 124
     }
-    $start = [Diagnostics.ProcessStartInfo]::new()
+    [Diagnostics.ProcessStartInfo]$start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $FilePath
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
@@ -94,35 +94,60 @@ function Invoke-BenchmarkChild(
     {
         $start.ArgumentList.Add($argument)
     }
-    $process = [Diagnostics.Process]::new()
-    $process.StartInfo = $start
-    $stdout = [IO.File]::Create("$OutputPrefix.stdout.txt")
-    $stderr = [IO.File]::Create("$OutputPrefix.stderr.txt")
+    [Diagnostics.Stopwatch]$childClock = [Diagnostics.Stopwatch]::StartNew()
+    [Threading.CancellationTokenSource]$copyCancellation = [Threading.CancellationTokenSource]::new()
+    [IO.FileStream]$stdout = $null
+    [IO.FileStream]$stderr = $null
+    [Diagnostics.Process]$process = $null
+    [long]$observedPeak = 0
+    [int]$exitCode = 124
     try
     {
-        if (-not $process.Start())
-        {
-            throw "Failed to start: $FilePath"
-        }
-        $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout)
-        $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderr)
+        $stdout = [IO.File]::Create("$OutputPrefix.stdout.txt")
+        $stderr = [IO.File]::Create("$OutputPrefix.stderr.txt")
+        $process = [Diagnostics.Process]::Start($start)
+        [Threading.Tasks.Task]$stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout, 4096, $copyCancellation.Token)
+        [Threading.Tasks.Task]$stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderr, 4096, $copyCancellation.Token)
         while (-not $process.HasExited)
         {
-            $remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
+            $observedPeak = Get-ProcessPeakWorkingSet $process $observedPeak
+            [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
             if ($remaining -le 0)
             {
                 break
             }
-            [void]$process.WaitForExit([int][Math]::Min($remaining, [int]::MaxValue))
+            [void]$process.WaitForExit([int][Math]::Min($remaining, 100))
         }
-        $exitCode = 124
-        if ($Clock.ElapsedMilliseconds -ge $BudgetMilliseconds)
+        if ($process.HasExited -and $Clock.ElapsedMilliseconds -lt $BudgetMilliseconds)
         {
-            if (-not $process.HasExited)
+            $exitCode = $process.ExitCode
+            foreach ($task in @($stdoutTask, $stderrTask))
+            {
+                [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
+                if ($remaining -le 0 -or -not $task.Wait([int][Math]::Min($remaining, [int]::MaxValue)))
+                {
+                    $exitCode = 124
+                    break
+                }
+            }
+        }
+        if ($exitCode -eq 124)
+        {
+            [string]$message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) pid=$($process.Id)"
+            [Console]::Error.WriteLine($message)
+            [IO.File]::WriteAllText("$OutputPrefix.timeout.txt", $message)
+        }
+    }
+    finally
+    {
+        $copyCancellation.Cancel()
+        try
+        {
+            if ($null -ne $process -and -not $process.HasExited)
             {
                 try
                 {
-                    $process.Kill()
+                    $process.Kill($true)
                 }
                 catch [InvalidOperationException]
                 {
@@ -131,24 +156,31 @@ function Invoke-BenchmarkChild(
                         throw
                     }
                 }
+                [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
+                if ($remaining -gt 0)
+                {
+                    [void]$process.WaitForExit([int][Math]::Min($remaining, [int]::MaxValue))
+                }
             }
-            $message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) pid=$($process.Id)"
-            [Console]::Error.WriteLine($message)
-            [IO.File]::WriteAllText("$OutputPrefix.timeout.txt", $message)
         }
-        else
+        finally
         {
-            $exitCode = $process.ExitCode
+            if ($null -ne $process)
+            {
+                $process.Dispose()
+            }
+            if ($null -ne $stdout)
+            {
+                $stdout.Dispose()
+            }
+            if ($null -ne $stderr)
+            {
+                $stderr.Dispose()
+            }
+            $copyCancellation.Dispose()
         }
-        [void]$stdoutTask.GetAwaiter().GetResult()
-        [void]$stderrTask.GetAwaiter().GetResult()
     }
-    finally
-    {
-        $stdout.Dispose()
-        $stderr.Dispose()
-        $process.Dispose()
-    }
+    Write-ProcessObservation $childClock $OutputPrefix $Stage $observedPeak
     [Console]::Out.Write([IO.File]::ReadAllText("$OutputPrefix.stdout.txt"))
     [Console]::Error.Write([IO.File]::ReadAllText("$OutputPrefix.stderr.txt"))
     if ($exitCode -ne 0 -and $exitCode -ne 124)
