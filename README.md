@@ -28,11 +28,11 @@ Both language APIs expose these features. See [platform support and limitations]
 
 ## Get started
 
-Choose a download from [Releases](https://github.com/Abyssal-Engine/Entasis/releases):
+Download a package from [Releases](https://github.com/Abyssal-Engine/Entasis/releases) or clone the repository:
 
-- **`odin-source`:** engine source and native examples for Odin games, with no separate engine library to link
-- **`c-sdk`:** prebuilt runtime and cooking libraries, headers, CMake configuration and C/C++ examples for the selected platform. Using this package does not require Odin
-- **GitHub source checkout:** the full repository, including C ABI sources, tests, benchmarks and maintainer tools
+- **Odin source** (`odin-source`): engine source and Odin examples. Compile the engine directly with your game
+- **C SDK** (`c-sdk`): prebuilt runtime and cooking libraries, headers, CMake configuration and C/C++ examples for your platform. No Odin compiler required
+- **GitHub checkout**: the [full repository](https://github.com/Abyssal-Engine/Entasis), including both APIs, examples, tests, benchmarks and build tools
 
 The supported platforms are Linux and Windows on AMD64, the x86-64 CPU architecture. Binaries require the `x86-64-v3` instruction-set level, including AVX2
 
