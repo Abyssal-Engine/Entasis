@@ -208,6 +208,7 @@ Each linked report includes raw samples and all twelve tested worker counts from
 - [Documentation](docs/README.md): getting started, build instructions and API references by task and language
 - [Headless examples](docs/odin/EXAMPLES.md): programs covering queries, vehicles, ragdolls, mixed colliders, cooking and custom physics
 - [Engine integration](docs/odin/INTEGRATION.md): initialization, fixed updates, ECS mappings, jobs and shutdown
+- [Roadmap](ROADMAP.md): planned milestones and development priorities
 
 ## License
 
