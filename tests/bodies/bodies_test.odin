@@ -365,15 +365,21 @@ active_gather_masks_match_full_gather_for_every_field_and_mobility :: proc(t: ^t
 		body := &bodies.sets.memory[physics.BODIES_ACTIVE_SET_INDEX].dynamics_state.memory[index];
 		body.inertia.world = {inverse_mass=f32(index + 9), inverse_inertia_tensor={2, 3, 4, 5, 6, 7}};
 	}
-	for indices in ([3]util.I32x8{
+	for indices in ([4]util.I32x8{
 			{0, 1, 2, 3, 4, 5, 6, 7},
 			{0, -1, i32(u32(2) | physics.BODY_REFERENCE_KINEMATIC_MASK), 3, -1, 5, 6, 7},
 			{-1, -1, -1, -1, -1, -1, -1, -1},
+			{7, 0, 7, 3, i32(physics.BODY_REFERENCE_KINEMATIC_MASK | 1), -1, 5, 2},
 	})
 	{
 		for source in ([2]physics.Inertia_Source{.Local, .World})
 		{
 			full_position, full_orientation, full_velocity, full_inertia := physics.bodies_gather_active_trusted(&bodies, indices, source);
+			combined_velocity: physics.Body_Velocity_Wide;
+			combined_inertia: physics.Body_Inertia_Wide;
+			physics.bodies_gather_active_no_pose_trusted(&bodies, indices, source, &combined_velocity, &combined_inertia);
+			testing.expect_value(t, transmute([48]u32)combined_velocity, transmute([48]u32)full_velocity);
+			testing.expect_value(t, transmute([56]u32)combined_inertia, transmute([56]u32)full_inertia);
 			for bits in 0 ..< 64
 			{
 				access := transmute(physics.Body_Access_Mask)u8(bits);

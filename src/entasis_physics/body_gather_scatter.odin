@@ -85,27 +85,27 @@ body_load_dynamics_row :: #force_inline proc "contextless" (
 	return simd_x86._mm256_load_ps(&values[float_offset]);
 }
 
-@(enable_target_feature="avx")
+@(require_target_feature="avx")
 body_transpose_8x8 :: #force_inline proc "contextless" (
 	input: ^[8]simd_x86.__m256, output: ^[8]simd_x86.__m256,
 )
 {
-	n0 := simd_x86._mm256_unpacklo_ps(input[0], input[1]);
-	n1 := simd_x86._mm256_unpacklo_ps(input[2], input[3]);
-	n2 := simd_x86._mm256_unpacklo_ps(input[4], input[5]);
-	n3 := simd_x86._mm256_unpacklo_ps(input[6], input[7]);
-	n4 := simd_x86._mm256_unpackhi_ps(input[0], input[1]);
-	n5 := simd_x86._mm256_unpackhi_ps(input[2], input[3]);
-	n6 := simd_x86._mm256_unpackhi_ps(input[4], input[5]);
-	n7 := simd_x86._mm256_unpackhi_ps(input[6], input[7]);
-	o0 := simd_x86._mm256_shuffle_ps(n0, n1, 0x44);
-	o1 := simd_x86._mm256_shuffle_ps(n2, n3, 0x44);
-	o2 := simd_x86._mm256_shuffle_ps(n4, n5, 0x44);
-	o3 := simd_x86._mm256_shuffle_ps(n6, n7, 0x44);
-	o4 := simd_x86._mm256_shuffle_ps(n0, n1, 0xee);
-	o5 := simd_x86._mm256_shuffle_ps(n2, n3, 0xee);
-	o6 := simd_x86._mm256_shuffle_ps(n4, n5, 0xee);
-	o7 := simd_x86._mm256_shuffle_ps(n6, n7, 0xee);
+	n0 := simd.shuffle(input[0], input[1], 0, 8, 1, 9, 4, 12, 5, 13);
+	n1 := simd.shuffle(input[2], input[3], 0, 8, 1, 9, 4, 12, 5, 13);
+	n2 := simd.shuffle(input[4], input[5], 0, 8, 1, 9, 4, 12, 5, 13);
+	n3 := simd.shuffle(input[6], input[7], 0, 8, 1, 9, 4, 12, 5, 13);
+	n4 := simd.shuffle(input[0], input[1], 2, 10, 3, 11, 6, 14, 7, 15);
+	n5 := simd.shuffle(input[2], input[3], 2, 10, 3, 11, 6, 14, 7, 15);
+	n6 := simd.shuffle(input[4], input[5], 2, 10, 3, 11, 6, 14, 7, 15);
+	n7 := simd.shuffle(input[6], input[7], 2, 10, 3, 11, 6, 14, 7, 15);
+	o0 := simd.shuffle(n0, n1, 0, 1, 8, 9, 4, 5, 12, 13);
+	o1 := simd.shuffle(n2, n3, 0, 1, 8, 9, 4, 5, 12, 13);
+	o2 := simd.shuffle(n4, n5, 0, 1, 8, 9, 4, 5, 12, 13);
+	o3 := simd.shuffle(n6, n7, 0, 1, 8, 9, 4, 5, 12, 13);
+	o4 := simd.shuffle(n0, n1, 2, 3, 10, 11, 6, 7, 14, 15);
+	o5 := simd.shuffle(n2, n3, 2, 3, 10, 11, 6, 7, 14, 15);
+	o6 := simd.shuffle(n4, n5, 2, 3, 10, 11, 6, 7, 14, 15);
+	o7 := simd.shuffle(n6, n7, 2, 3, 10, 11, 6, 7, 14, 15);
 	output[0] = simd.shuffle(o0, o1, 0, 1, 2, 3, 8, 9, 10, 11);
 	output[1] = simd.shuffle(o4, o5, 0, 1, 2, 3, 8, 9, 10, 11);
 	output[2] = simd.shuffle(o2, o3, 0, 1, 2, 3, 8, 9, 10, 11);
@@ -275,14 +275,55 @@ bodies_gather_active_trusted :: proc "contextless" (
 	return;
 }
 
+@(require_target_feature="avx")
 bodies_gather_active_no_pose_trusted :: #force_inline proc "contextless" (
 	bodies: ^Bodies, encoded_body_indices: util.I32x8, inertia_source: Inertia_Source,
 	velocity: ^Body_Velocity_Wide, inertia: ^Body_Inertia_Wide,
 )
 {
-	active := &bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
-	bodies_gather_velocity_kernel(active.dynamics_state.memory, encoded_body_indices, velocity);
-	bodies_gather_inertia_kernel(active.dynamics_state.memory, encoded_body_indices, inertia_source, inertia);
+	active: ^Body_Set = &bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+	states: [^]Body_Dynamics = active.dynamics_state.memory;
+	indices_value: util.I32x8 = encoded_body_indices;
+	indices: [^]i32 = ([^]i32)(&indices_value);
+	inertia_offset: i32 = 16;
+	if inertia_source == .World
+	{
+		inertia_offset = 24;
+	}
+	velocity_rows: [8]simd_x86.__m256 = ---
+	inertia_rows: [8]simd_x86.__m256 = ---
+	#unroll for lane in 0..<8
+	{
+		encoded: i32 = indices[lane];
+		if encoded < 0
+		{
+			velocity_rows[lane] = simd_x86.__m256(0);
+			inertia_rows[lane] = simd_x86.__m256(0);
+		}
+		else
+		{
+			index: int = int(u32(encoded) & BODY_REFERENCE_INDEX_MASK);
+			values: [^]f32 = ([^]f32)(&states[index]);
+			velocity_rows[lane] = (^simd_x86.__m256)(&values[8])^;
+			inertia_rows[lane] = (^simd_x86.__m256)(&values[inertia_offset])^;
+		}
+	}
+	columns: [8]simd_x86.__m256 = ---
+	body_transpose_8x8(&velocity_rows, &columns);
+	velocity.linear.x = columns[0];
+	velocity.linear.y = columns[1];
+	velocity.linear.z = columns[2];
+	velocity.angular.x = columns[4];
+	velocity.angular.y = columns[5];
+	velocity.angular.z = columns[6];
+	body_transpose_8x8(&inertia_rows, &columns);
+	inertia.inverse_inertia_tensor.xx = columns[0];
+	inertia.inverse_inertia_tensor.yx = columns[1];
+	inertia.inverse_inertia_tensor.yy = columns[2];
+	inertia.inverse_inertia_tensor.zx = columns[3];
+	inertia.inverse_inertia_tensor.zy = columns[4];
+	inertia.inverse_inertia_tensor.zz = columns[5];
+	inertia.inverse_mass = columns[6];
 }
 
 bodies_gather_active :: proc "contextless" (
