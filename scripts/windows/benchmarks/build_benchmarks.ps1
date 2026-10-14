@@ -15,11 +15,19 @@ param(
     [ValidateSet("Executable", "Assembly")]
     [string]$Emit = "Executable",
     [string]$Record = "Off",
+    [ValidateSet("Off", "On")]
+    [string]$Symbols = "Off",
     [ValidateNotNullOrEmpty()]
     [string]$HarnessRoot
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if ($Symbols -eq "On" -and ($Configuration -ne "Release" -or $Emit -ne "Executable" -or
+    -not $PSBoundParameters.ContainsKey("Package") -or $Record -ne "Off"))
+{
+    [Console]::Error.WriteLine("Symbols On requires Release, Executable, one explicit Package and Record Off.")
+    exit 2
+}
 if ($Components -notin @("Common", "All"))
 {
     [Console]::Error.WriteLine("Components must be Common or All.")
@@ -74,11 +82,11 @@ if ($PSBoundParameters.ContainsKey("Package"))
 }
 Invoke-BoundedProcess $odin @("version") 600
 Write-Host "BENCHMARK_BUILD_INPUTS engine=$(Join-Path $script:Root 'src') harness=$script:BenchmarkHarnessRoot compiler=$odin target=$script:OdinTarget microarch=$script:OdinMicroarch deadline_seconds=600"
-Write-Host "BENCHMARK_BUILD_CONFIG configuration=$($Configuration.ToLowerInvariant()) packages=$($packages -join ',') emit=$($Emit.ToLowerInvariant()) components=$($Components.ToLowerInvariant())"
+Write-Host "BENCHMARK_BUILD_CONFIG configuration=$($Configuration.ToLowerInvariant()) packages=$($packages -join ',') emit=$($Emit.ToLowerInvariant()) components=$($Components.ToLowerInvariant()) symbols=$($Symbols.ToLowerInvariant())"
 
 foreach ($selectedPackage in $packages)
 {
-    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record
+    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols
 }
 if ($Emit -eq "Executable")
 {

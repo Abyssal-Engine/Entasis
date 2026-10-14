@@ -20,7 +20,7 @@ benchmark_reporter_binary() {
 invoke_benchmark_build() {
   local package="$1" output="$2" started
   shift 2
-  started="$(date +%s%3N)"
+  started="$(date +%s%N)"
   local temporary="$output.building" argument
   local -a arguments=()
   mkdir -p "$(dirname "$output")"
@@ -32,7 +32,7 @@ invoke_benchmark_build() {
   printf 'BENCHMARK_STAGE stage=build package=%s output=%s\n' "$package" "$output"
   "$ODIN_BIN" "${arguments[@]}"
   mv -- "$temporary" "$output"
-  printf 'BENCHMARK_BUILT package=%s elapsed_ms=%s\n' "$package" "$(( $(date +%s%3N) - started ))"
+  printf 'BENCHMARK_BUILT package=%s elapsed_ms=%s\n' "$package" "$(( ( $(date +%s%N) - started ) / 1000000 ))"
 }
 
 build_benchmark() {

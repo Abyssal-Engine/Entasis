@@ -456,6 +456,24 @@ function Import-ToolchainVsEnvironment([string]$Override = "")
             [Environment]::SetEnvironmentVariable($line.Substring(0, $separator), $line.Substring($separator + 1), "Process")
         }
     }
+    [string]$sdkRoot = $env:WindowsSdkDir
+    [string]$sdkVersion = $env:WindowsSDKVersion
+    if ([string]::IsNullOrWhiteSpace($sdkRoot) -or [string]::IsNullOrWhiteSpace($sdkVersion))
+    {
+        throw "The selected Visual Studio environment must provide its Windows SDK root and version"
+    }
+    $sdkVersion = $sdkVersion.TrimEnd('\')
+    [string]$ucrtInclude = Join-Path $sdkRoot "Include/$sdkVersion/ucrt"
+    [string]$ucrtLibrary = Join-Path $sdkRoot "Lib/$sdkVersion/ucrt/x64"
+    if (-not (Test-Path -LiteralPath (Join-Path $ucrtInclude "stddef.h") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $ucrtLibrary "libucrt.lib") -PathType Leaf))
+    {
+        throw "The selected Windows SDK lacks the required UCRT headers or library: $sdkRoot $sdkVersion"
+    }
+    $env:UniversalCRTSdkDir = $sdkRoot
+    $env:UCRTVersion = $sdkVersion
+    $env:INCLUDE = "$ucrtInclude;$env:INCLUDE"
+    $env:LIB = "$ucrtLibrary;$env:LIB"
     Write-Host "VS_ENVIRONMENT compiler=$((Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source)"
 }
 

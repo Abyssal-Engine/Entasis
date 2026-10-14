@@ -1,4 +1,4 @@
-function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All")
+function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off")
 {
     if ($Package -in $script:BenchmarkComponentPackages)
     {
@@ -7,6 +7,10 @@ function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release
     if ($Record -eq "On")
     {
         return (Join-Path $script:Root "build\benchmarks\recorded\$($Configuration.ToLowerInvariant())\$Package.exe")
+    }
+    if ($Symbols -eq "On")
+    {
+        return (Join-Path $script:Root "build/benchmarks/symbols/release/entasis_$Package.exe")
     }
     switch ($Configuration)
     {
@@ -31,12 +35,87 @@ function Get-BenchmarkReporterBinary([string]$Configuration)
     return (Join-Path $script:Root "build\tools\benchmark-report\$configurationName\benchmark_report.exe")
 }
 
-function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Output, [string[]]$Arguments, [string]$Emit = 'Executable')
+function Publish-BenchmarkSymbols([string]$Staging, [string]$Output)
+{
+    [string[]]$destinations = @($Output, [IO.Path]::ChangeExtension($Output, '.pdb'))
+    foreach ($destination in $destinations)
+    {
+        [string]$candidate = Join-Path $Staging ([IO.Path]::GetFileName($destination))
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf) -or (Get-Item -LiteralPath $candidate).Length -eq 0)
+        {
+            throw "Symbol build output is missing or empty: $candidate"
+        }
+    }
+    [string]$previous = Join-Path $Staging 'previous'
+    New-Item -ItemType Directory -Path $previous | Out-Null
+    [string]$publication = 'SavingPrevious'
+    try
+    {
+        foreach ($destination in $destinations)
+        {
+            if (Test-Path -LiteralPath $destination)
+            {
+                Move-Item -LiteralPath $destination -Destination $previous
+            }
+        }
+        $publication = 'Publishing'
+        foreach ($destination in $destinations)
+        {
+            Move-Item -LiteralPath (Join-Path $Staging ([IO.Path]::GetFileName($destination))) -Destination $destination
+        }
+        $publication = 'Complete'
+    }
+    catch
+    {
+        if ($publication -eq 'Publishing')
+        {
+            foreach ($destination in $destinations)
+            {
+                if (Test-Path -LiteralPath $destination)
+                {
+                    Remove-Item -LiteralPath $destination
+                }
+            }
+        }
+        foreach ($destination in $destinations)
+        {
+            [string]$saved = Join-Path $previous ([IO.Path]::GetFileName($destination))
+            if (Test-Path -LiteralPath $saved)
+            {
+                Move-Item -LiteralPath $saved -Destination $destination
+            }
+        }
+        throw
+    }
+    Remove-Item -LiteralPath $Staging -Recurse
+}
+
+function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Output, [string[]]$Arguments, [string]$Emit = 'Executable', [string]$Symbols = 'Off')
 {
     [Diagnostics.Stopwatch]$clock = [Diagnostics.Stopwatch]::StartNew()
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Output) | Out-Null
     [string]$temporary = [IO.Path]::ChangeExtension($Output, '.building.exe')
-    if ($Emit -eq 'Executable')
+    [string]$staging = ''
+    if ($Symbols -eq 'On')
+    {
+        $staging = Join-Path (Split-Path -Parent $Output) ('.build-' + $Package + '-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $staging | Out-Null
+        $temporary = Join-Path $staging ([IO.Path]::GetFileName($Output))
+        [string]$pdb = [IO.Path]::ChangeExtension($Output, '.pdb')
+        for ($index = 0; $index -lt $Arguments.Count; $index++)
+        {
+            if ($Arguments[$index] -eq "-out:$Output")
+            {
+                $Arguments[$index] = "-out:$temporary"
+            }
+            elseif ($Arguments[$index] -eq "-pdb-name:$pdb")
+            {
+                $Arguments[$index] = "-pdb-name:$([IO.Path]::ChangeExtension($temporary, '.pdb'))"
+            }
+        }
+        Write-Host "BENCHMARK_SYMBOL_STAGE directory=$staging"
+    }
+    elseif ($Emit -eq 'Executable')
     {
         foreach ($selected in @($temporary))
         {
@@ -64,17 +143,21 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
     Write-Host "BENCHMARK_BUILD_LOG prefix=$logPrefix"
     [IO.File]::WriteAllText("$logPrefix.arguments.txt", ($Arguments -join "`n"))
     Invoke-BoundedProcess $OdinExe $Arguments $remaining $logPrefix "build-$Package"
-    if ($Emit -eq 'Executable')
+    if ($Symbols -eq 'On')
+    {
+        Publish-BenchmarkSymbols $staging $Output
+    }
+    elseif ($Emit -eq 'Executable')
     {
         Move-Item -LiteralPath $temporary -Destination $Output -Force
     }
     Write-Host "BENCHMARK_BUILT package=$Package elapsed_ms=$($clock.ElapsedMilliseconds)"
 }
 
-function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off")
+function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off")
 {
     Assert-BenchmarkPackage $Package
-    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components
+    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols
     [string[]]$profileArguments = @()
     switch ($Configuration)
     {
@@ -90,6 +173,10 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
         {
             throw "Unknown build configuration: $Configuration"
         }
+    }
+    if ($Symbols -eq 'On')
+    {
+        $profileArguments += @('-debug', "-pdb-name:$([IO.Path]::ChangeExtension($output, '.pdb'))")
     }
     if ($Emit -eq 'Assembly')
     {
@@ -126,7 +213,7 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
     [string[]]$arguments = @('build', (Join-Path $script:BenchmarkHarnessRoot "benchmarks/$Package"), "-out:$output",
         "-collection:entasis=$(Join-Path $script:Root 'src')", "-target:$script:OdinTarget", "-microarch:$script:OdinMicroarch") +
         $profileArguments + @('-vet', '-warnings-as-errors', "-thread-count:$script:OdinThreadCount", '-linker:lld')
-    Invoke-BenchmarkBuild $OdinExe $Package $output $arguments $Emit
+    Invoke-BenchmarkBuild $OdinExe $Package $output $arguments $Emit $Symbols
 }
 
 function Build-BenchmarkReporter([string]$OdinExe, [string]$Configuration)

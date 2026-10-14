@@ -1,3 +1,9 @@
 * text=auto
 *.sh text eol=lf
 *.odin text eol=lf
+include/entasis.h text eol=lf
+include/entasis_cooking.h text eol=lf
+include/entasis/*.h text eol=lf
+generated/abi/* text eol=lf
+tests/c_abi/generated_layout_asserts.h text eol=lf
+docs/c/reference/*.md text eol=lf

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-preparation_start="$(date +%s%3N)"
+preparation_start="$(date +%s%N)"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 source "$ROOT/scripts/linux/benchmarks/build_support.sh"
 
@@ -363,8 +363,8 @@ current="${pending%.pending}"
 export MALLOC_ARENA_MAX=1
 printf 'BENCHMARK_RUN_CONFIG package=%s configuration=%s pending=%s\n' \
   "$package" "$configuration" "$pending"
-printf 'BENCHMARK_PREPARED elapsed_ms=%s\n' "$(( $(date +%s%3N) - preparation_start ))"
-workload_start="$(date +%s%3N)"
+printf 'BENCHMARK_PREPARED elapsed_ms=%s\n' "$(( ( $(date +%s%N) - preparation_start ) / 1000000 ))"
+workload_start="$(date +%s%N)"
 for worker_count in "${workers[@]}"; do
   output="$pending/workers-${worker_count}.csv"
   for ((run_index = 1; run_index <= runs; ++run_index)); do
@@ -403,8 +403,8 @@ for option in "${reproduction_options[@]}"; do
 done
 report_options=()
 if [[ -n "$variant" ]]; then report_options+=(--variant "$variant"); fi
-report_start="$(date +%s%3N)"
-printf 'BENCHMARK_STAGE stage=report workload_ms=%s\n' "$(( report_start - workload_start ))"
+report_start="$(date +%s%N)"
+printf 'BENCHMARK_STAGE stage=report workload_ms=%s\n' "$(( ( report_start - workload_start ) / 1000000 ))"
 "$reporter" "${report_options[@]}" \
   --source "$pending" \
   --package "$package" \
@@ -416,7 +416,7 @@ printf 'BENCHMARK_STAGE stage=report workload_ms=%s\n' "$(( report_start - workl
   --processor "$processor" \
   --logical-processors "$logical_processors" \
   --command "$canonical_command"
-printf 'BENCHMARK_REPORT elapsed_ms=%s\n' "$(( $(date +%s%3N) - report_start ))"
-printf 'BENCHMARK_ELAPSED milliseconds=%s\n' "$(( $(date +%s%3N) - workload_start ))"
+printf 'BENCHMARK_REPORT elapsed_ms=%s\n' "$(( ( $(date +%s%N) - report_start ) / 1000000 ))"
+printf 'BENCHMARK_ELAPSED milliseconds=%s\n' "$(( ( $(date +%s%N) - workload_start ) / 1000000 ))"
 commit_benchmark_result "$pending" "$current"
 printf 'BENCHMARK_OK result=%s report=%s/README.md\n' "$current" "$current"
