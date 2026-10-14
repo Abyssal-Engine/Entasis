@@ -114,6 +114,21 @@ main :: proc()
 		world = &pyramid_owner.world
 		bodies = pyramid_owner.bodies
 	}
+	q: observations.Qualification
+	defer observations.qualification_destroy(&q)
+	configuration: observations.Fixture_Configuration
+	if workload == .Contact_Islands
+	{
+		configuration = islands.benchmark_qualification_configuration(options)
+	}
+	else
+	{
+		configuration = pyramid.benchmark_qualification_configuration(options)
+	}
+	if observations.qualification_create(&q, configuration, options.verify) != nil
+	{
+		os.exit(1)
+	}
 	initial: []entasis.Vector3
 	allocation_error: runtime.Allocator_Error
 	initial, allocation_error = make([]entasis.Vector3, len(bodies))
@@ -161,9 +176,33 @@ main :: proc()
 				os.exit(1)
 			}
 		}
+		if q.result.mode == .On
+		{
+			for body, index in bodies
+			{
+				status: entasis.Status
+				q.current[index], status = entasis.body_get(world, body)
+				if status != .Ok
+				{
+					os.exit(1)
+				}
+			}
+			if step == 0
+			{
+				observations.qualification_bind(&q, .Construction)
+			}
+			else
+			{
+				observations.qualification_assess(&q, .Measured, step)
+			}
+		}
+		if step == options.steps
+		{
+			observations.qualification_complete(&q)
+		}
 		if step == 0 || step == 1 || step % sample_every == 0 || step == options.steps
 		{
-			if observe_scene(file, world, bodies, initial, options, step) != .Ok
+			if observe_scene(file, world, bodies, initial, options, step, &q) != .Ok
 			{
 				fmt.eprintfln("STABILITY_OBSERVATION_FAILED step=%d", step)
 				os.exit(1)
@@ -181,10 +220,15 @@ main :: proc()
 		fmt.eprintln("OBSERVATION_OUTPUT_FAILED stage=close")
 		os.exit(1)
 	}
+	if q.result.status == .Fail
+	{
+		fmt.eprintfln("STABILITY_PHYSICAL_FAILED reason=%s phase=%s step=%d body=%d", observations.physical_reason_text(q.result.reason), observations.assessment_phase_text(q.result.first.phase), q.result.first.step, q.result.first.body)
+		os.exit(2)
+	}
 	fmt.println("SCENE_STABILITY_COMPLETED")
 }
 
-observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.Body_Handle, initial: []entasis.Vector3, options: support.Options, step: int) -> support.Case_Status
+observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.Body_Handle, initial: []entasis.Vector3, options: support.Options, step: int, q: ^observations.Qualification) -> support.Case_Status
 {
 	group_count: int = 1
 	group_size: int = len(bodies)
@@ -213,7 +257,15 @@ observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.B
 		{
 			state: entasis.Body_State
 			status: entasis.Status
-			state, status = entasis.body_get(world, bodies[index])
+			if q.result.mode == .On
+			{
+				state = q.current[index]
+				status = .Ok
+			}
+			else
+			{
+				state, status = entasis.body_get(world, bodies[index])
+			}
 			if status != .Ok
 			{
 				observation.count += 1
@@ -223,7 +275,7 @@ observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.B
 			}
 			observations.observe_body(&observation, state, initial[index], options.shape_size, floor_center, {options.floor_size[0]/2, options.floor_size[2]/2})
 		}
-		status: support.Case_Status = write_observation(file, observation, step, options.timestep_hz, group, group_size, stats.active_bodies + stats.sleeping_bodies)
+		status: support.Case_Status = write_observation(file, observation, step, options.timestep_hz, group, group_size, stats.active_bodies + stats.sleeping_bodies, q.result)
 		if status != .Ok
 		{
 			return status

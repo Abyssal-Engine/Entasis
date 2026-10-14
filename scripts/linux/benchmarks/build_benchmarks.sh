@@ -11,8 +11,17 @@ package=""
 package_count=0
 record="off"
 record_count=0
+components="all"
+components_count=0
 while (($# > 0)); do
   case "$1" in
+    --components)
+      ((components_count += 1))
+      ((components_count == 1)) || fail_usage "--components may be supplied only once"
+      (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "--components requires a value"
+      components="$2"
+      shift 2
+      ;;
     --record)
       ((record_count += 1))
       ((record_count == 1)) || fail_usage "--record may be supplied only once"
@@ -61,12 +70,14 @@ case "$configuration" in
   *) fail_usage "unknown configuration: $configuration" ;;
 esac
 if ((package_count > 0)); then benchmark_exists "$package" || fail_usage "unknown benchmark package: $package"; fi
+[[ "$components" == common || "$components" == all ]] || fail_usage "--components must be common or all"
+if ((components_count > 0)); then [[ "$package" == contact_islands ]] || fail_usage "--components requires contact_islands"; fi
 require_odin "$odin"
 packages=("${BENCHMARK_PACKAGES[@]}")
 if ((package_count > 0)); then packages=("$package"); fi
 printf 'BENCHMARK_BUILD_CONFIG configuration=%s packages=%s\n' "$configuration" "$(IFS=,; printf '%s' "${packages[*]}")"
 for selected_package in "${packages[@]}"; do
-  build_benchmark "$selected_package" "$configuration" "$record"
+  build_benchmark "$selected_package" "$configuration" "$record" "$components"
 done
 build_benchmark_reporter "$configuration"
 printf 'BUILD_BENCHMARKS_OK\n'

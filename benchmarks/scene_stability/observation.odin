@@ -11,7 +11,7 @@ Observation :: observations.Observation
 
 write_header :: proc(file: ^os.File) -> support.Case_Status
 {
-	header: string = "step,simulated_seconds,group,expected_bodies,world_bodies,observed_bodies,invalid,escaped,below_floor,mean_height,height_fraction,lateral_rms,plane_rms,maximum_drop,dropped,displaced,outside_plane,maximum_center_height,apex,maximum_floor_penetration,maximum_speed\n"
+	header: string = "step,simulated_seconds,group,expected_bodies,world_bodies,observed_bodies,invalid,escaped,below_floor,mean_height,height_fraction,lateral_rms,plane_rms,maximum_drop,dropped,displaced,outside_plane,maximum_center_height,apex,maximum_floor_penetration,maximum_speed" + observations.PHYSICAL_HEADER + "\n"
 	written: int
 	error: os.Error
 	written, error = os.write(file, transmute([]byte)header)
@@ -22,18 +22,20 @@ write_header :: proc(file: ^os.File) -> support.Case_Status
 	return .Ok
 }
 
-write_observation :: proc(file: ^os.File, observation: Observation, step, hz, group, expected, world_bodies: int) -> support.Case_Status
+write_observation :: proc(file: ^os.File, observation: Observation, step, hz, group, expected, world_bodies: int, physical: observations.Qualification_Result = {mode=.Off, reason=.Verification_Off}) -> support.Case_Status
 {
 	count: f64 = f64(max(observation.count, 1))
 	height_fraction: f64 = observation.sum_y / observation.initial_sum_y
+	physical_buffer: [4096]u8
+	physical_values: string = observations.physical_csv(physical, physical_buffer[:])
 	buffer: [8192]byte
-	row: string = fmt.bprintf(buffer[:], "%d,%.9f,%d,%d,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f\n",
+	row: string = fmt.bprintf(buffer[:], "%d,%.9f,%d,%d,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f%s\n",
 		step, f64(step)/f64(hz), group, expected, world_bodies, observation.count,
 		observation.invalid, observation.escaped, observation.below_floor,
 		observation.sum_y/count, height_fraction,
 		math.sqrt(observation.lateral_squared/count), math.sqrt(observation.plane_squared/count), observation.maximum_drop,
 		observation.dropped, observation.displaced, observation.outside_plane, observation.maximum_center_height,
-		observation.apex, observation.maximum_floor_penetration, observation.maximum_speed,
+		observation.apex, observation.maximum_floor_penetration, observation.maximum_speed, physical_values,
 	)
 	written: int
 	error: os.Error

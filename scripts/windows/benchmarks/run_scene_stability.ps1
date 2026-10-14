@@ -13,12 +13,14 @@ param(
     [ValidateSet("box")][string]$Shape = "box",
     [ValidateSet(0)][int]$ProjectileCount = 0,
     [ValidateRange(1, 2147483)][int]$TimeoutSeconds = 1800,
+    [ValidateSet("On", "Off")][string]$Verify = "On",
     [string]$Output,
     [string]$Snapshot
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
 $Sleep = $Sleep.ToLowerInvariant()
+$Verify = $Verify.ToLowerInvariant()
 $Package = $Package.ToLowerInvariant()
 $Shape = $Shape.ToLowerInvariant()
 if ($Package -ne "pyramid" -and $PSBoundParameters.ContainsKey("ProjectileCount"))
@@ -63,7 +65,7 @@ if (-not (Test-Path -LiteralPath $binary -PathType Leaf))
 Assert-WorkerCount $WorkerCount
 [string[]]$arguments = @("--package=$Package", "--worker-count=$WorkerCount", "--steps=$Steps",
     "--warmup-steps=$WarmupSteps", "--velocity-iterations=$VelocityIterations", "--substeps=$Substeps",
-    "--timestep-hz=$TimestepHz", "--sample-every=$SampleEvery", "--sleep=$Sleep", "--shape=$Shape",
+    "--timestep-hz=$TimestepHz", "--sample-every=$SampleEvery", "--sleep=$Sleep", "--verify=$Verify", "--shape=$Shape",
     "--output=$Output", "--snapshot=$Snapshot")
 if ($Package -eq "pyramid")
 {

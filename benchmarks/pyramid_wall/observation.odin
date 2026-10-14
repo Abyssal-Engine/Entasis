@@ -9,7 +9,7 @@ import support "../benchmark_support"
 
 write_header :: proc(file: ^os.File) -> support.Case_Status
 {
-	header: string = "step,simulated_seconds,expected_bodies,world_bodies,observed_bodies,invalid,escaped,below_floor,mean_height,height_fraction,lateral_rms,plane_rms,maximum_drop,dropped,displaced,outside_plane,maximum_center_height,apex,maximum_floor_penetration,maximum_speed,physics_elapsed_ms\n"
+	header: string = "step,simulated_seconds,expected_bodies,world_bodies,observed_bodies,invalid,escaped,below_floor,mean_height,height_fraction,lateral_rms,plane_rms,maximum_drop,dropped,displaced,outside_plane,maximum_center_height,apex,maximum_floor_penetration,maximum_speed,physics_elapsed_ms" + observations.PHYSICAL_HEADER + "\n"
 	written: int
 	error: os.Error
 	written, error = os.write(file, transmute([]byte)header)
@@ -20,14 +20,22 @@ write_header :: proc(file: ^os.File) -> support.Case_Status
 	return .Ok
 }
 
-write_observation :: proc(file: ^os.File, owner: ^Owner, options: Options, step: int, elapsed_ms: f64) -> support.Case_Status
+write_observation :: proc(file: ^os.File, owner: ^Owner, options: Options, step: int, elapsed_ms: f64, q: ^observations.Qualification) -> support.Case_Status
 {
 	observation: observations.Observation
 	for body, index in owner.bodies
 	{
 		state: entasis.Body_State
 		status: entasis.Status
-		state, status = entasis.body_get(&owner.world, body)
+		if q.result.mode == .On
+		{
+			state = q.current[index]
+			status = .Ok
+		}
+		else
+		{
+			state, status = entasis.body_get(&owner.world, body)
+		}
 		if status != .Ok
 		{
 			observation.count += 1
@@ -45,14 +53,16 @@ write_observation :: proc(file: ^os.File, owner: ^Owner, options: Options, step:
 		return .Validation_Failed
 	}
 	count: f64 = f64(BODY_COUNT)
+	physical_buffer: [4096]u8
+	physical_values: string = observations.physical_csv(q.result, physical_buffer[:])
 	buffer: [8192]byte
-	row: string = fmt.bprintf(buffer[:], "%d,%.9f,%d,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f\n",
+	row: string = fmt.bprintf(buffer[:], "%d,%.9f,%d,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f%s\n",
 		step, f64(step)/f64(options.timestep_hz), BODY_COUNT, stats.active_bodies + stats.sleeping_bodies, observation.count,
 		observation.invalid, observation.escaped, observation.below_floor,
 		observation.sum_y/count, observation.sum_y/observation.initial_sum_y,
 		math.sqrt(observation.lateral_squared/count), math.sqrt(observation.plane_squared/count), observation.maximum_drop,
 		observation.dropped, observation.displaced, observation.outside_plane, observation.maximum_center_height,
-		observation.apex, observation.maximum_floor_penetration, observation.maximum_speed, elapsed_ms,
+		observation.apex, observation.maximum_floor_penetration, observation.maximum_speed, elapsed_ms, physical_values,
 	)
 	written: int
 	error: os.Error

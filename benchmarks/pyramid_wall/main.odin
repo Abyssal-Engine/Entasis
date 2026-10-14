@@ -5,6 +5,7 @@ import "core:os"
 import "core:time"
 import entasis "entasis:entasis"
 import support "../benchmark_support"
+import observations "../scene_observation"
 
 parse_options :: proc(arguments: []string) -> (Options, support.Admission)
 {
@@ -13,7 +14,7 @@ parse_options :: proc(arguments: []string) -> (Options, support.Admission)
 		timestep_hz=60, sample_every=60, sleep_threshold=-1,
 		friction=0.5, hertz=30, damping_ratio=1, recovery=2,
 	}
-	names: [15]string = {"rows", "steps", "worker-count", "velocity-iterations", "substeps", "timestep-hz", "sample-every", "sleep", "friction", "hertz", "damping-ratio", "recovery", "recycle-distance", "output", "snapshot"}
+	names: [16]string = {"rows", "steps", "worker-count", "velocity-iterations", "substeps", "timestep-hz", "sample-every", "sleep", "friction", "hertz", "damping-ratio", "recovery", "recycle-distance", "output", "snapshot", "verify"}
 	seen: u32
 	for argument in arguments
 	{
@@ -111,9 +112,18 @@ parse_options :: proc(arguments: []string) -> (Options, support.Admission)
 		{
 			options.output = value
 		}
-		else
+		else if index == 14
 		{
 			options.snapshot = value
+		}
+		else
+		{
+			switch value
+			{
+				case "on": options.verify = .On
+				case "off": options.verify = .Off
+				case: return {}, .Invalid
+			}
 		}
 	}
 	if len(options.output) == 0 || len(options.snapshot) == 0 || options.output == options.snapshot ||
@@ -143,6 +153,14 @@ main :: proc()
 	owner: Owner
 	defer owner_destroy(&owner)
 	if owner_create(&owner, &pool, options) != .Ok
+	{
+		os.exit(1)
+	}
+	q: observations.Qualification
+	defer observations.qualification_destroy(&q)
+	configuration: observations.Fixture_Configuration = {fixture=.Pyramid_Wall, half_extent={0.5, 0.5, 0.5},
+		floor_half_size={500, 500}, rows=ROWS, horizontal_spacing=1, population=BODY_COUNT, body_count=BODY_COUNT, steps=options.steps, timestep_hz=options.timestep_hz}
+	if observations.qualification_create(&q, configuration, options.verify) != nil
 	{
 		os.exit(1)
 	}
@@ -179,9 +197,33 @@ main :: proc()
 				os.exit(1)
 			}
 		}
+		if q.result.mode == .On
+		{
+			for body, index in owner.bodies
+			{
+				status: entasis.Status
+				q.current[index], status = entasis.body_get(&owner.world, body)
+				if status != .Ok
+				{
+					os.exit(1)
+				}
+			}
+			if step == 0
+			{
+				observations.qualification_bind(&q, .Construction)
+			}
+			else
+			{
+				observations.qualification_assess(&q, .Measured, step)
+			}
+		}
+		if step == options.steps
+		{
+			observations.qualification_complete(&q)
+		}
 		if step == 0 || step == 1 || step % options.sample_every == 0 || step == options.steps
 		{
-			if write_observation(file, &owner, options, step, elapsed_ms) != .Ok
+			if write_observation(file, &owner, options, step, elapsed_ms, &q) != .Ok
 			{
 				os.exit(1)
 			}
@@ -197,6 +239,11 @@ main :: proc()
 	{
 		fmt.eprintln("OBSERVATION_OUTPUT_FAILED stage=close")
 		os.exit(1)
+	}
+	if q.result.status == .Fail
+	{
+		fmt.eprintfln("WALL_PHYSICAL_FAILED reason=%s phase=%s step=%d body=%d", observations.physical_reason_text(q.result.reason), observations.assessment_phase_text(q.result.first.phase), q.result.first.step, q.result.first.body)
+		os.exit(2)
 	}
 	fmt.println("PYRAMID_WALL_COMPLETED")
 }

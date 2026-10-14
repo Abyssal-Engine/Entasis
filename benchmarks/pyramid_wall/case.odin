@@ -2,12 +2,14 @@ package pyramid_wall
 
 import "base:runtime"
 import entasis "entasis:entasis"
+import observations "../scene_observation"
 
 ROWS :: 180
 BODY_COUNT :: ROWS * (ROWS + 1) / 2
 
 Options :: struct
 {
+	verify: observations.Verification_Mode,
 	steps: int,
 	worker_count: int,
 	velocity_iterations: int,

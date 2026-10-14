@@ -1,6 +1,9 @@
 package benchmark_support
 
 import "core:testing"
+import "core:encoding/csv"
+import "core:strconv"
+import observations "../scene_observation"
 import "core:os"
 import "core:fmt"
 import "core:mem"
@@ -186,7 +189,7 @@ canonical_parameters_normalize_order_and_preserve_effective_changes :: proc(t: ^
 					testing.expect_value(t, restored.spacing, original.spacing);
 					testing.expect_value(t, restored.worker_count, 2);
 					testing.expect_value(t, restored.output, "preview.csv");
-					testing.expect_value(t, restored.recording.mode, mode if workload == .Container else Recording_Mode.Off);
+					testing.expect_value(t, restored.recording.mode, mode if workload == .Container && original.verify == .Off else Recording_Mode.Off);
 					canonical_buffer: [PARAMETER_CAPACITY]u8;
 					canonical, canonical_status := canonical_parameters(restored, canonical_buffer[:]);
 					testing.expect_value(t, canonical_status, Admission.Ok);
@@ -224,7 +227,7 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 		path: string = fmt.aprintf("%s/results-%d.csv", directory, extended);
 		defer delete(path);
 		options: Options = {worker_count=2, steps=3, body_count=4, static_count=1, output=path};
-		sample: Benchmark_Sample = {elapsed_ms=1.25};
+		sample: Benchmark_Sample = {elapsed_ms=1.25, physical={mode=.On, criterion=.Container_Safety, status=.Unassessed, reason=.Incomplete_Coverage, shape_limit=1e-12}};
 		header: string = "";
 		values: string = "";
 		if extended == 1
@@ -243,11 +246,33 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 			return;
 		}
 		defer delete(data);
-		row: string = fmt.aprintf("2,3,0,0,5,5,0,0,0,0,0,ok,ok,1.250000000,\"shape=box\"%s,,,off,whole_loop\n", values);
+		physical_buffer: [4096]u8;
+		physical: string = observations.physical_csv(sample.physical, physical_buffer[:]);
+		row: string = fmt.aprintf("2,3,0,0,5,5,0,0,0,0,0,ok,ok,1.250000000,\"shape=box\"%s%s,,,off,native_step_sum\n", values, physical);
 		defer delete(row);
-		expected: string = fmt.aprintf("%s%s%s\n%s%s", CSV_HEADER, header, RECORDING_HEADER, row, row);
+		expected: string = fmt.aprintf("%s%s%s%s\n%s%s", CSV_HEADER, header, observations.PHYSICAL_HEADER, RECORDING_HEADER, row, row);
 		defer delete(expected);
 		testing.expect_value(t, string(data), expected);
+		arena: mem.Dynamic_Arena;
+		mem.dynamic_arena_init(&arena);
+		{
+			context.allocator = mem.dynamic_arena_allocator(&arena);
+			records, csv_error := csv.read_all_from_string(string(data), context.allocator, context.allocator);
+			testing.expect_value(t, csv_error, csv.Error(nil));
+			if csv_error == nil
+			{
+				for name, column in records[0]
+				{
+					if name == "physical_shape_limit_m"
+					{
+						value, parsed := strconv.parse_f64(records[1][column]);
+						testing.expect(t, parsed);
+						testing.expect_value(t, value, sample.physical.shape_limit);
+					}
+				}
+			}
+		}
+		mem.dynamic_arena_destroy(&arena);
 	}
 }
 
@@ -277,4 +302,36 @@ recording_admission_preserves_off_and_requires_supported_final_output :: proc(t:
 		_, _, invalid := recording_arguments("container", {"--record=on", fmt.tprintf("--recording-output=%s", path)}, .On);
 		testing.expect_value(t, invalid, Admission.Invalid);
 	}
+}
+
+@(test)
+verification_admission_preserves_workload_defaults :: proc(t: ^testing.T)
+{
+	for workload in Workload
+	{
+		baseline: Options
+		diagnostic: string
+		baseline, diagnostic = admit_test(workload, {"--shape=box"})
+		testing.expect_value(t, diagnostic, "")
+		testing.expect_value(t, baseline.verify, observations.Verification_Mode.On)
+		for selector in ([]string{"on", "off"})
+		{
+			argument: string = fmt.aprintf("--verify=%s", selector)
+			options: Options
+			options, diagnostic = admit_test(workload, {"--shape=box", argument})
+			delete(argument)
+			testing.expect_value(t, diagnostic, "")
+			testing.expect_value(t, options.body_count, baseline.body_count)
+			testing.expect_value(t, options.steps, baseline.steps)
+			testing.expect_value(t, options.warmup_steps, baseline.warmup_steps)
+			testing.expect_value(t, options.spacing, baseline.spacing)
+			testing.expect_value(t, options.verify, observations.Verification_Mode.On if selector == "on" else observations.Verification_Mode.Off)
+		}
+		for extra in ([][]string{{"--shape=box", "--verify=yes"}, {"--shape=box", "--verify=on", "--verify=off"}, {"--shape=box", "--components=common"}})
+		{
+			_, diagnostic = admit_test(workload, extra)
+			testing.expect(t, len(diagnostic) > 0)
+		}
+	}
+	testing.expect(t, BENCHMARK_COMPONENTS == "common" || BENCHMARK_COMPONENTS == "all")
 }

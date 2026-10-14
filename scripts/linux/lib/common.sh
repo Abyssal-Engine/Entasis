@@ -85,7 +85,7 @@ require_odin() {
 
 test_scope_to_package() {
   case "$1" in
-    root|benchmark-support|benchmark-report|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
+    root|scene-stability|benchmark-support|benchmark-report|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
       printf '%s\n' "${1//-/_}"
       ;;
     *) return 1 ;;
@@ -95,6 +95,8 @@ test_scope_to_package() {
 test_package_path() {
   if [[ "$1" == root ]]; then
     printf '%s/tests\n' "$ROOT"
+  elif [[ "$1" == scene_stability ]]; then
+    printf '%s/benchmarks/scene_stability\n' "$ROOT"
   elif [[ "$1" == benchmark_support ]]; then
     printf '%s/benchmarks/benchmark_support\n' "$ROOT"
   elif [[ "$1" == benchmark_report ]]; then
@@ -252,6 +254,7 @@ run_test_package() {
     -define:ODIN_TEST_THREADS="$test_threads"
     -define:ODIN_TEST_FANCY=false
   )
+  if [[ "$package" == scene_stability ]]; then arguments+=(-define:ENTASIS_BENCHMARK_COMPONENTS=common); fi
   if [[ -n "$test_names" ]]; then
     arguments+=( -define:ODIN_TEST_NAMES="$test_names" )
   fi

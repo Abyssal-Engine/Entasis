@@ -27,7 +27,8 @@ ray_report_uses_native_timing_and_rejects_mixed_workloads :: proc(t: ^testing.T)
 		median = result.summaries[1].median
 		speedup = result.summaries[1].speedup
 		markdown: string = render_markdown(request, result.summaries[:])
-		if strings.contains(markdown, "## ray_elapsed_ms summary") && strings.contains(markdown, "divide by 100") &&
+		if strings.contains(markdown, "## Closest-ray time summary") && strings.contains(markdown, "ms/frame (50,000 rays)") &&
+			strings.contains(markdown, "| 2 | 2 | 1.000000 | 0.800000 | 1.200000 | 2.000000x |") &&
 			strings.contains(markdown, "Public query_batch, batch size 256")
 		{
 			metric_label = .Enabled

@@ -6,6 +6,7 @@ import "core:strings"
 import "core:strconv"
 import "core:math"
 import entasis "entasis:entasis"
+import observations "../scene_observation"
 
 Workload :: enum u8
 {
@@ -49,6 +50,7 @@ Options :: struct
 	velocity_iterations: int,
 	substeps: int,
 	sleep: Sleep,
+	verify: observations.Verification_Mode,
 	grid: [3]int,
 	spacing: [3]f32,
 	spawn_height: f32,
@@ -101,6 +103,7 @@ OPTION_NAMES :: [?]string{
 	"projectile-velocity",
 	"worker-count",
 	"output",
+	"verify",
 };
 
 parse_integer :: proc(value: string) -> (int, Admission)
@@ -433,6 +436,13 @@ parse_workload_options :: proc(workload: Workload, arguments: []string) -> (Opti
 			o.worker_count, status = parse_integer(value);
 			case 27:
 			o.output = value;
+			case 28:
+			switch value
+			{
+				case "on": o.verify = .On;
+				case "off": o.verify = .Off;
+				case: status = .Invalid;
+			}
 		}
 		if status != .Ok
 		{
@@ -651,7 +661,7 @@ canonical_parameters :: proc(o: Options, buffer: []byte) -> (string, Admission)
 	lifecycle := "same-world;timing=per-step";
 	if o.workload == .Container
 	{
-		lifecycle = "fresh-world-same-pool;timing=native-step-sum" if o.recording.mode == .On else "fresh-world-same-pool;timing=whole-loop";
+		lifecycle = "fresh-world-same-pool;timing=native-step-sum" if o.recording.mode == .On || o.verify == .On else "fresh-world-same-pool;timing=whole-loop";
 	}
 	if o.workload == .Pyramid
 	{
@@ -689,6 +699,8 @@ canonical_parameters :: proc(o: Options, buffer: []byte) -> (string, Admission)
 		o.projectile_center[0], o.projectile_center[1], o.projectile_center[2], o.projectile_spacing[0], o.projectile_spacing[1], o.projectile_spacing[2],
 		o.projectile_velocity[0], o.projectile_velocity[1], o.projectile_velocity[2]);
 	}
+	offset += len(result);
+	result = fmt.bprintf(buffer[offset:], ";verify=%s", observations.verification_text(o.verify));
 	offset += len(result);
 	if offset >= len(buffer) - 1
 	{
@@ -888,6 +900,7 @@ options_from_saved_parameters :: proc(workload: Workload, parameters: string, wo
 	storage: [PARAMETER_CAPACITY+2*len(OPTION_NAMES)]u8;
 	arguments: [len(OPTION_NAMES)]string;
 	argument_count, offset, field_count: int;
+	verification_evidence: Admission = .Invalid;
 	remaining: string = parameters;
 	for field in strings.split_by_byte_iterator(&remaining, ';')
 	{
@@ -905,6 +918,10 @@ options_from_saved_parameters :: proc(workload: Workload, parameters: string, wo
 			{
 				return {}, .Invalid;
 			}
+		}
+		if key == "verify"
+		{
+			verification_evidence = .Ok;
 		}
 		field_count += 1;
 		for option in OPTION_NAMES
@@ -931,10 +948,14 @@ options_from_saved_parameters :: proc(workload: Workload, parameters: string, wo
 	{
 		return {}, .Invalid;
 	}
+	if verification_evidence != .Ok
+	{
+		options.verify = .Off;
+	}
 	remaining = parameters;
 	for field in strings.split_by_byte_iterator(&remaining, ';')
 	{
-		if field == "timing=native-step-sum" && workload == .Container
+		if field == "timing=native-step-sum" && workload == .Container && options.verify == .Off
 		{
 			options.recording.mode = .On;
 		}
@@ -948,6 +969,10 @@ options_from_saved_parameters :: proc(workload: Workload, parameters: string, wo
 	expected_count: int;
 	for field in strings.split_by_byte_iterator(&canonical, ';')
 	{
+		if verification_evidence != .Ok && strings.has_prefix(field, "verify=")
+		{
+			continue;
+		}
 		expected_count += 1;
 		found: Admission = .Invalid;
 		remaining = parameters;

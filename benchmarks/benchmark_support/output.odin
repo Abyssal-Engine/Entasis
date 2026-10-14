@@ -3,6 +3,7 @@ package benchmark_support
 import "core:fmt"
 import "core:os"
 import entasis "entasis:entasis"
+import observations "../scene_observation"
 
 Case_Status :: enum u8
 {
@@ -14,6 +15,7 @@ Case_Status :: enum u8
 	Validation_Failed,
 	Release_Failed,
 	Output_Failed,
+	Physical_Failed,
 }
 
 Step_Phase :: enum u8
@@ -39,6 +41,7 @@ Benchmark_Sample :: struct
 	below_floor_count: int,
 	out_of_bounds_count: int,
 	elapsed_ms: f64,
+	physical: observations.Qualification_Result,
 }
 
 
@@ -59,8 +62,10 @@ write_result :: proc(
 	{
 		return .Output_Failed;
 	}
-	recording_values: string = recording_columns(o.recording, "whole_loop" if o.workload == .Container else "native_step_sum");
-	buffer, allocation_error := make([]byte, 2 * len(parameters) + 2048 + len(additional_values)+len(recording_values));
+	recording_values: string = recording_columns(o.recording, "whole_loop" if o.workload == .Container && o.verify == .Off else "native_step_sum");
+	physical_buffer: [4096]u8
+	physical_values: string = observations.physical_csv(sample.physical, physical_buffer[:])
+	buffer, allocation_error := make([]byte, 2 * len(parameters) + 2048 + len(additional_values)+len(recording_values)+len(physical_values));
 	if allocation_error != nil
 	{
 		return .Allocation_Failed;
@@ -84,6 +89,7 @@ write_result :: proc(
 	buffer[count] = '"';
 	count += 1;
 	count += copy(buffer[count:], transmute([]byte)additional_values);
+	count += copy(buffer[count:], transmute([]byte)physical_values);
 	count += copy(buffer[count:], transmute([]byte)recording_values);
 	buffer[count] = '\n';
 	count += 1;
@@ -99,7 +105,7 @@ write_result :: proc(
 	}
 	if stat_error == os.Error(os.General_Error.Not_Exist)
 	{
-		for header in ([4]string{CSV_HEADER, additional_header, RECORDING_HEADER, "\n"})
+		for header in ([5]string{CSV_HEADER, additional_header, observations.PHYSICAL_HEADER, RECORDING_HEADER, "\n"})
 		{
 			written, error := os.write(file, transmute([]byte)header);
 			if error != nil || written != len(header)

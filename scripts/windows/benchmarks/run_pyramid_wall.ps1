@@ -15,12 +15,14 @@ param(
     [ValidateRange(0.000001, 1000000)][double]$DampingRatio = 1,
     [ValidateRange(0, 1000000)][double]$Recovery = 2,
     [ValidateSet(0.05)][double]$RecycleDistance = 0.05,
+    [ValidateSet("On", "Off")][string]$Verify = "On",
     [string]$Output,
     [string]$Snapshot
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
 $Sleep = $Sleep.ToLowerInvariant()
+$Verify = $Verify.ToLowerInvariant()
 [string]$binary = Get-BenchmarkBinary "pyramid_wall" $Configuration
 [string]$stamp = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffffffZ")
 if (-not $PSBoundParameters.ContainsKey("Output"))
@@ -58,7 +60,7 @@ if (-not (Test-Path -LiteralPath $binary -PathType Leaf))
 Assert-WorkerCount $WorkerCount
 [string[]]$arguments = @("--rows=$Rows", "--steps=$Steps", "--worker-count=$WorkerCount",
     "--velocity-iterations=$VelocityIterations", "--substeps=$Substeps", "--timestep-hz=$TimestepHz",
-    "--sample-every=$SampleEvery", "--sleep=$Sleep", "--output=$Output", "--snapshot=$Snapshot")
+    "--sample-every=$SampleEvery", "--sleep=$Sleep", "--verify=$Verify", "--output=$Output", "--snapshot=$Snapshot")
 foreach ($name in @("Friction", "Hertz", "DampingRatio", "Recovery"))
 {
     [string]$key = switch ($name)

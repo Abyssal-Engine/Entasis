@@ -142,9 +142,23 @@ The simulation fixtures use 60 Hz, gravity `(0, -10, 0)` and zero damping. The S
 - **Closest-ray batches:** 50,000 closest rays per frame through `entasis.query_batch`, in batches of 256. Ten warmup frames and 100 measured frames
 - **Mixed spatial queries:** 10,000 static boxes and 100,000 queries per batch: 50,000 closest rays, 25,000 sphere casts with radius 0.5 and 25,000 AABB overlap-presence queries. Ten warmup batches and 100 measured batches
 
-Simulation timing excludes setup, warmup, validation and teardown. Box Container times the whole step loop. Contact Islands, Ragdolls and Pyramid sum per-step times, including Pyramid's launch work. Divide each process total by its measured step count before taking the median
+Simulation timing excludes setup, warmup, validation and teardown. The retained Box Container baseline times the whole step loop. Current Verify On and recording On sum native step intervals, with assessment and capture after each interval. Verify Off with recording Off retains whole-loop timing. Contact Islands, Ragdolls and Pyramid sum per-step times, including Pyramid's launch work. Divide each process total by its measured step count before taking the median
 
 Query timing includes submission, output writes, hit counting and dispatch. Setup, allocation, warmup and result validation are outside timing. The ray report records elapsed milliseconds for all measured frames. Throughput is `ray_query_count * measured_batches / (ray_elapsed_ms * 1000)` in millions of rays per second. Mixed-query CSVs record throughput in `queries_per_second`
+
+## Physical qualification
+
+Current Container, Contact Islands and Pyramid runs default to verification On. `--verify off` (`-Verify Off` on Windows) skips assessment and records Unassessed with reason `verification_off`. Container qualification requires equal box dimensions; unequal boxes remain accepted benchmark inputs with Unassessed outcomes. Other valid custom geometry or insufficient assessment windows also remain accepted inputs with Unassessed outcomes. Existing saved results without the new evidence are Unassessed
+
+Assessment reads construction and every completed warmup/measured state outside native timers. Container recreates its measured world after warmup, retains applicable warmup safety failures and checks finite state plus upward escape after full-box entry below the rim. Contact Islands checks shape over exactly the final `Hz+1` measured states (`N-Hz..N`, requiring `N>Hz`), with finite-state and assigned support-plane safety throughout. Pyramid checks its unforced trajectory and excludes the ending state of the first possible projectile-impact interval, even before scheduled launch. A Pyramid Pass requires at least one assessed completed step; impact during construction or step 1 leaves an intact fixture Unassessed. Earlier breaches remain Fail. Wall checks its complete unforced trajectory
+
+Shape limits are whole-box authored-slot excess and assigned-neighbor compression: 10% of the minimum full box edge for Islands, and 0.10 m for Pyramid/Wall. Projection normalizes finite nonzero rotations. Islands, Pyramid and Wall also check their assigned support planes: a bottom-layer center must remain at or above the actual floor top, and an upper center at or above its lowest assigned support center plus the original vertical half extent. These fixed-axis structural measures are not contact-manifold penetration or a general oriented-box intersection test. Existing height, drift, speed and rotated-floor measurements remain diagnostics, with no additional settling-speed criterion
+
+CSV fields record verification mode, criterion, outcome, coverage, counts, limits, first breach, worst observations and projectile cutoff. Zero-based body identities refer to the authored fixture, and step numbers count completed work units. A physical breach remains Fail after recovery or impact. Completed timing rows retain `case_status=ok,metric_status=ok` before physical Fail returns status 2. Run preserves the pending CSV/logs and finalized recording, stops later repeats/workers and publishes no successful report
+
+Verification On changes Container timing to `native_step_sum`, while recording Off plus verification Off retains `whole_loop`. Islands and Pyramid retain native step intervals, including Pyramid launch work. Verification mode is included in new canonical parameters. Assessment and recording can affect caches and wall time outside those intervals, so compare only compatible routes
+
+Linux Islands Build/Run accept `--components common|all` and default to All. Common uses distinct `_common` prepared images and avoids the separate restitution/trigger component workloads during focused physical checks
 
 ## Reproduction
 

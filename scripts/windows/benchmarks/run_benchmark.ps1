@@ -32,6 +32,7 @@ param(
     [string]$VelocityIterations,
     [string]$Substeps,
     [string]$Sleep,
+    [string]$Verify = "On",
     [string]$Grid,
     [string]$Spacing,
     [string]$SpawnHeight,
@@ -55,6 +56,12 @@ param(
 $preparationClock = [Diagnostics.Stopwatch]::StartNew()
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if ($Verify -notin @("On", "Off") -or
+    ($PSBoundParameters.ContainsKey("Verify") -and $Package -notin @("container", "contact_islands", "pyramid")))
+{
+    [Console]::Error.WriteLine("Verify requires On or Off and a supported dynamics package")
+    exit 2
+}
 if ($Components -notin @("Common", "All"))
 {
     [Console]::Error.WriteLine("Components must be Common or All.")
@@ -205,6 +212,7 @@ $workloadOptionNames = [ordered]@{
     VelocityIterations = "velocity-iterations"
     Substeps = "substeps"
     Sleep = "sleep"
+    Verify = "verify"
     Grid = "grid"
     Spacing = "spacing"
     SpawnHeight = "spawn-height"
@@ -231,6 +239,7 @@ if ($Package -in @("container", "contact_islands", "pyramid"))
     {
         throw "New workloads require valid Shape and Variant."
     }
+    $nativeOptions += "--verify=$($Verify.ToLowerInvariant())"
     $resultPackage = "$Package\$Variant"
     $reportOptions = @("--variant", $Variant)
 }
@@ -246,7 +255,7 @@ else
 }
 foreach ($option in $workloadOptionNames.Keys)
 {
-    if ($PSBoundParameters.ContainsKey($option))
+    if ($option -ne "Verify" -and $PSBoundParameters.ContainsKey($option))
     {
         $value = $PSBoundParameters[$option]
         if ([string]::IsNullOrEmpty($value))
@@ -292,11 +301,13 @@ if ($Package -in $script:BenchmarkComponentPackages)
 }
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf))
 {
-    throw "Missing benchmark binary: $binary. Build with: $buildCommand"
+    [Console]::Error.WriteLine("Missing benchmark binary: $binary. Build with: $buildCommand")
+    exit 2
 }
 if (-not (Test-Path -LiteralPath $reporter -PathType Leaf))
 {
-    throw "Missing benchmark reporter: $reporter. Build with: $buildCommand"
+    [Console]::Error.WriteLine("Missing benchmark reporter: $reporter. Build with: $buildCommand")
+    exit 2
 }
 $compilerVersion = "Unavailable (reused producer binary)"
 $operatingSystem = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription.Trim()

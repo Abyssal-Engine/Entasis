@@ -223,3 +223,43 @@ visual_result_inputs_reject_mixed_or_invalid_rows :: proc(t: ^testing.T)
 		testing.expect_value(t, result_dataset_bytes(&bounded), u64(0));
 	}
 }
+
+@(test)
+saved_physical_evidence_never_infers_a_pass :: proc(t: ^testing.T)
+{
+	owned_allocator: mem.Allocator = context.allocator
+	arena: mem.Dynamic_Arena
+	mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	defer context.allocator = owned_allocator
+	path: string
+	status: Report_Status
+	path, status = test_directory("entasis-saved-physical")
+	testing.expect_value(t, status, Report_Status.Ok)
+	defer test_directory_remove(path)
+	dataset: Result_Dataset
+	defer result_dataset_close(&dataset)
+	cases: [4]string = {
+		"worker_count,step_index,case_status,metric_status,physics_elapsed_ms,benchmark_parameters\n1,61,ok,ok,100,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0\n",
+		PHYSICAL_TEST_HEADER+PHYSICAL_TEST_PASS,
+		PHYSICAL_TEST_HEADER+PHYSICAL_TEST_FAIL,
+		PHYSICAL_TEST_HEADER+PHYSICAL_TEST_OFF,
+	}
+	expected: [4]Result_Physical = {.Unassessed, .Pass, .Fail, .Unassessed}
+	for csv, index in cases
+	{
+		_ = write_lane(path, 1, csv)
+		result: Report_Result = result_dataset_open(&dataset, path, "contact_islands")
+		testing.expect_value(t, result.status, Report_Status.Ok)
+		if result.status == .Ok
+		{
+			testing.expect_value(t, dataset.lanes[0].summary.physical.status, expected[index])
+			testing.expect_value(t, dataset.lanes[0].summary.median, f64(100 if index < 2 else 200))
+		}
+		result_dataset_close(&dataset)
+	}
+	invalid, _ := strings.replace_all(PHYSICAL_TEST_HEADER+PHYSICAL_TEST_PASS, ",62,0.1,", ",0,0.1,")
+	_ = write_lane(path, 1, invalid)
+	testing.expect_value(t, result_dataset_open(&dataset, path, "contact_islands").status, Report_Status.Invalid_Measurement)
+}

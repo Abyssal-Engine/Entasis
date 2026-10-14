@@ -8,12 +8,13 @@ import replay "../../tools/physics_replay"
 import scene "../../tools/physics_scene"
 import entasis "entasis:entasis"
 import support "../benchmark_support"
+import observations "../scene_observation"
 
-measure_world :: proc(owner: ^Benchmark_Owner) -> (Benchmark_Result, Benchmark_Sample)
+measure_world :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification) -> (Benchmark_Result, Benchmark_Sample)
 {
 	when support.RECORDING_ENABLED
 	{
-		return measure_recorded_world(owner);
+		return measure_recorded_world(owner, q);
 	}
 	else
 	{
@@ -44,6 +45,10 @@ measure_world :: proc(owner: ^Benchmark_Owner) -> (Benchmark_Result, Benchmark_S
 			return {status=.Step_Failed, physics_status=status, phase=.Measured, failed_step=step_index + 1}, {};
 		}
 		durations[step_index] = i64(time.tick_diff(start, end));
+		if benchmark_assess(owner, q, .Measured, step_index+1) != .Ok
+		{
+			return {status=.Validation_Failed}, {}
+		}
 	}
 	sample: Benchmark_Sample;
 	for duration in durations
@@ -65,7 +70,7 @@ measure_world :: proc(owner: ^Benchmark_Owner) -> (Benchmark_Result, Benchmark_S
 }
 
 execute_case :: proc(
-owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
+owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options, q: ^observations.Qualification,
 ) -> (Benchmark_Result, Benchmark_Sample)
 {
 	result := benchmark_owner_create(owner, pool, options);
@@ -73,11 +78,21 @@ owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
 	{
 		return result, {};
 	}
-	return measure_world(owner);
+	if benchmark_assess(owner, q, .Construction, 0) != .Ok
+	{
+		return {status=.Validation_Failed}, {}
+	}
+	return measure_world(owner, q);
 }
 
 run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark_Result
 {
+	q: observations.Qualification
+	defer observations.qualification_destroy(&q)
+	if observations.qualification_create(&q, benchmark_qualification_configuration(options), options.verify) != nil
+	{
+		return {status=.Allocation_Failed}
+	}
 	pool: entasis.Buffer_Pool;
 	pool_status := entasis.buffer_pool_init(&pool, POOL_MINIMUM_BLOCK_SIZE);
 	if pool_status != .Ok
@@ -85,7 +100,12 @@ run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark
 		return {status=.Allocation_Failed, physics_status=pool_status};
 	}
 	owner: Benchmark_Owner;
-	result, sample := execute_case(&owner, &pool, options);
+	result, sample := execute_case(&owner, &pool, options, &q);
+	if result.status == .Ok
+	{
+		observations.qualification_complete(&q)
+		sample.physical = q.result
+	}
 	release_status := benchmark_owner_destroy(&owner);
 	pool_status = entasis.buffer_pool_destroy(&pool);
 	if release_status == .Ok
@@ -106,6 +126,12 @@ run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark
 	if result.status == .Ok
 	{
 		result.status = support.write_result(options, parameters, sample);
+	}
+	if result.status == .Ok && q.result.status == .Fail
+	{
+		fmt.eprintfln("physical_failed reason=%s phase=%s step=%d body=%d value_m=%.9f", observations.physical_reason_text(q.result.reason),
+			observations.assessment_phase_text(q.result.first.phase), q.result.first.step, q.result.first.body, q.result.first.value)
+		result.status = .Physical_Failed
 	}
 	return result;
 }
@@ -141,7 +167,7 @@ Recording_Status :: scene.Status;
 
 when support.RECORDING_ENABLED
 {
-measure_recorded_world :: proc(owner: ^Benchmark_Owner) -> (Benchmark_Result, Benchmark_Sample)
+measure_recorded_world :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification) -> (Benchmark_Result, Benchmark_Sample)
 {
 	recording: support.Recording_Options = owner.options.recording;
 	parameter_buffer: [support.PARAMETER_CAPACITY]u8;
@@ -192,6 +218,10 @@ measure_recorded_world :: proc(owner: ^Benchmark_Owner) -> (Benchmark_Result, Be
 			return {status=.Validation_Failed}, {};
 		}
 		elapsed += i64(time.tick_diff(start, end));
+		if benchmark_assess(owner, q, .Measured, step_index+1) != .Ok
+		{
+			return {status=.Validation_Failed}, {}
+		}
 		o.budget = recording.budget-replay.writer_bytes(&w);
 		status = observation.observation_read(&o, &owner.world);
 		o.packet.frame.tick = u64(step_index+1);

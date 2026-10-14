@@ -16,6 +16,8 @@ declare -A workload_options=()
 workload_arguments=()
 reproduction_options=()
 variant=""
+components=all
+components_count=0
 record=off
 compression=lz4
 memory_mib=512
@@ -31,6 +33,21 @@ while (($# > 0)); do
         --compression) compression="$2" ;;
         --memory-mib) memory_mib="$2" ;;
       esac
+      shift 2
+      ;;
+    --components)
+      ((components_count += 1))
+      ((components_count == 1)) || fail_usage "--components may be supplied only once"
+      (($# >= 2)) && [[ "$2" == common || "$2" == all ]] || fail_usage "--components requires common or all"
+      components="$2"
+      shift 2
+      ;;
+    --verify)
+      [[ -z "${workload_options[verify]+present}" ]] || fail_usage "--verify may be supplied only once"
+      (($# >= 2)) && [[ "$2" == on || "$2" == off ]] || fail_usage "--verify requires on or off"
+      workload_options[verify]="$2"
+      reproduction_options+=("$1" "$2")
+      workload_arguments+=("--verify=$2")
       shift 2
       ;;
     --package)
@@ -284,6 +301,7 @@ done
 ((package_count == 1)) || fail_usage "missing required --package <package>"
 ((runs_count == 1)) || fail_usage "missing required --runs <n>"
 ((workers_count == 1)) || fail_usage "missing required --workers <csv>"
+if ((components_count > 0)); then [[ "$package" == contact_islands ]] || fail_usage "--components requires contact_islands"; fi
 benchmark_exists "$package" || fail_usage "unknown benchmark package: $package"
 validate_positive_int32 "$runs" || fail_usage "runs must be an integer in 1..2147483647"
 [[ "$workers_csv" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || fail_usage "invalid worker list: $workers_csv"
@@ -314,6 +332,7 @@ for option in "${!workload_options[@]}"; do
   case "$option" in
     shape) [[ "$value" =~ ^(box|sphere|capsule|cylinder|hull)$ ]] || fail_usage "invalid --shape" ;;
     static-shape) [[ "$value" =~ ^(box|hull)$ ]] || fail_usage "invalid --static-shape" ;;
+    verify) [[ "$value" == on || "$value" == off ]] || fail_usage "invalid --verify" ;;
     sleep) [[ "$value" =~ ^(enabled|disabled)$ ]] || fail_usage "invalid --sleep" ;;
     variant) ;;
     grid) [[ "$value" =~ ^[0-9]+,[0-9]+,[0-9]+$ ]] || fail_usage "invalid --grid" ;;
@@ -344,9 +363,18 @@ esac
 if [[ "$record" == off && ( -n "${recording_seen[--compression]+present}" || -n "${recording_seen[--memory-mib]+present}" ) ]]; then
   fail_usage "recording settings require --record on"
 fi
-binary="$(benchmark_binary "$package" "$configuration" "$record")"
+case "$package" in
+  container|contact_islands|pyramid)
+    if [[ -z "${workload_options[verify]+present}" ]]; then
+      workload_arguments+=("--verify=on")
+      reproduction_options+=(--verify on)
+    fi
+    ;;
+esac
+binary="$(benchmark_binary "$package" "$configuration" "$record" "$components")"
 reporter="$(benchmark_reporter_binary "$configuration")"
 build_command="./scripts/linux/benchmarks/build_benchmarks.sh --package $package --configuration $configuration --record $record"
+if ((components_count > 0)); then build_command+=" --components $components"; fi
 [[ -x "$binary" ]] || fail_usage "missing benchmark binary: $binary. Build with: $build_command"
 [[ -x "$reporter" ]] || fail_usage "missing benchmark reporter: $reporter. Build with: $build_command"
 compiler_version="Unavailable (reused producer binary)"
@@ -376,7 +404,13 @@ for worker_count in "${workers[@]}"; do
         recording_arguments+=("--recording-output=$pending/workers-$worker_count-sample-$run_index.epr" "--compression=$compression" "--memory-mib=$memory_mib")
       fi
     fi
-    "$binary" --worker-count="$worker_count" --output="$output" "${workload_arguments[@]}" "${recording_arguments[@]}"
+    stdout="$pending/workers-$worker_count-run-$run_index.stdout.txt"
+    stderr="$pending/workers-$worker_count-run-$run_index.stderr.txt"
+    child_status=0
+    "$binary" --worker-count="$worker_count" --output="$output" "${workload_arguments[@]}" "${recording_arguments[@]}" >"$stdout" 2>"$stderr" || child_status=$?
+    cat "$stdout"
+    cat "$stderr" >&2
+    if ((child_status != 0)); then exit "$child_status"; fi
     if [[ "$recording_capable" == available ]]; then
       header="$(head -n 1 "$output")"
       header="${header%$'\r'}"
@@ -395,6 +429,7 @@ for worker_count in "${workers[@]}"; do
   done
 done
 canonical_command="./scripts/linux/benchmarks/run_benchmark.sh --package $package --runs $runs --workers $workers_csv --configuration $configuration"
+if ((components_count > 0)); then canonical_command+=" --components $components"; fi
 canonical_command+=" --record $record"
 if [[ "$record" == on ]]; then canonical_command+=" --compression $compression --memory-mib $memory_mib"; fi
 for option in "${reproduction_options[@]}"; do

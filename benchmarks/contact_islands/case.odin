@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import entasis "entasis:entasis"
 import support "../benchmark_support"
+import observations "../scene_observation"
 
 Case_Status :: support.Case_Status;
 Benchmark_Result :: support.Benchmark_Result;
@@ -234,9 +235,51 @@ benchmark_validate :: proc(owner: ^Benchmark_Owner, sample: ^Benchmark_Sample) -
 			}
 		}
 	}
-	if sample.invalid_transform_count != 0
+	if owner.options.verify == .Off && sample.invalid_transform_count != 0
 	{
 		return {status=.Validation_Failed};
 	}
 	return {status=.Ok};
+}
+
+benchmark_qualification_configuration :: proc(o: support.Options) -> observations.Fixture_Configuration
+{
+	c: observations.Fixture_Configuration = {fixture=.Contact_Islands, half_extent={f64(o.shape_size[0]/2), f64(o.shape_size[1]/2), f64(o.shape_size[2]/2)},
+		grid=o.grid, spacing={f64(o.spacing[0]), f64(o.spacing[1]), f64(o.spacing[2])}, island_grid=o.island_grid,
+		island_spacing={f64(o.island_spacing[0]), f64(o.island_spacing[1])}, floor_half_size={f64(o.floor_size[0])/2, f64(o.floor_size[2])/2},
+		spawn_height=f64(o.spawn_height), rows=o.rows, horizontal_spacing=f64(0.5*o.layout_scale), population=o.population_count,
+		body_count=o.body_count, projectile_radius=f64(o.projectile_radius), steps=o.steps, warmup_steps=o.warmup_steps, timestep_hz=o.timestep_hz,
+		container_half_size={f64(o.container_size[0]-o.layout_scale)/2, f64(o.container_size[2]-o.layout_scale)/2},
+		container_rim=f64(o.container_size[1])-f64(o.layout_scale)/2}
+	if o.shape != .Box || (o.static_shape != .Box && o.static_shape != .Hull)
+	{
+		c.geometry = .Unsupported
+	}
+	return c
+}
+
+benchmark_assess :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification, phase: observations.Assessment_Phase, step: int) -> entasis.Status
+{
+	if q.result.mode == .Off
+	{
+		return .Ok
+	}
+	for handle, index in owner.bodies
+	{
+		status: entasis.Status
+		q.current[index], status = entasis.body_get(&owner.world, handle)
+		if status != .Ok
+		{
+			return status
+		}
+	}
+	if phase == .Construction || phase == .Warmup_Construction
+	{
+		observations.qualification_bind(q, phase)
+	}
+	else
+	{
+		observations.qualification_assess(q, phase, step)
+	}
+	return .Ok
 }

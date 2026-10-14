@@ -370,3 +370,138 @@ parameterized_report_records_variant_settings_and_step_mean :: proc(t: ^testing.
  testing.expect(t, strings.contains(result.markdown, request.command))
  testing.expect(t, strings.contains(result.markdown, "not the median of individual step times"))
 }
+
+PHYSICAL_TEST_HEADER :: "worker_count,step_index,case_status,metric_status,physics_elapsed_ms,benchmark_parameters,verification_mode,physical_criterion,physical_status,physical_coverage,physical_reason,physical_sample_count,physical_shape_limit_m,physical_first_phase,physical_first_step,physical_first_body,physical_first_value_m,physical_max_slot_excess_m,physical_max_slot_excess_phase,physical_max_slot_excess_step,physical_max_slot_excess_body,physical_max_neighbor_compression_m,physical_max_neighbor_compression_phase,physical_max_neighbor_compression_step,physical_max_neighbor_compression_body,physical_warmup_samples,physical_measured_samples,physical_terminal_samples,physical_impact_step\n"
+PHYSICAL_TEST_PASS :: "1,61,ok,ok,100,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0;verify=on,on,island_boxes,pass,complete,none,62,0.1,,,,,0,measured,1,0,0,measured,1,0,0,61,61,\n"
+PHYSICAL_TEST_FAIL :: "1,61,ok,ok,200,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0;verify=on,on,island_boxes,fail,complete,slot_excess,62,0.1,measured,1,0,0.11,0.11,measured,1,0,0,measured,1,0,0,61,61,\n"
+PHYSICAL_TEST_OFF :: "1,61,ok,ok,200,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0;verify=off,off,island_boxes,unassessed,incomplete,verification_off,0,0.1,,,,,,,,,,,,,0,0,0,\n"
+
+@(test)
+physical_outcomes_preserve_timing_and_coverage :: proc(t: ^testing.T)
+{
+	owned_allocator: mem.Allocator = context.allocator
+	arena: mem.Dynamic_Arena
+	mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	defer context.allocator = owned_allocator
+	path: string
+	status: Report_Status
+	path, status = test_directory("entasis-physical-report")
+	testing.expect_value(t, status, Report_Status.Ok)
+	defer test_directory_remove(path)
+	request: Report_Request = test_request(path, {1}, 2)
+	request.package_name = "contact_islands"
+	request.variant = "physical-test"
+	cases: [3]string = {PHYSICAL_TEST_PASS+PHYSICAL_TEST_PASS, PHYSICAL_TEST_PASS+PHYSICAL_TEST_FAIL, PHYSICAL_TEST_OFF+PHYSICAL_TEST_OFF}
+	outcomes: [3]Result_Physical = {.Pass, .Fail, .Unassessed}
+	for rows, index in cases
+	{
+		testing.expect_value(t, write_lane(path, 1, fmt.aprintf("%s%s", PHYSICAL_TEST_HEADER, rows)), Report_Status.Ok)
+		result: Report_Result = collect_summaries(request)
+		testing.expect_value(t, result.status, Report_Status.Ok)
+		if result.status != .Ok
+		{
+			continue
+		}
+		testing.expect_value(t, result.summaries[0].physical.status, outcomes[index])
+		testing.expect_value(t, result.summaries[0].median, f64(100 if index == 0 else 150 if index == 1 else 200))
+		markdown: string = render_markdown(request, result.summaries[:])
+		testing.expect(t, strings.contains(markdown, "Physical outcome"))
+		testing.expect_value(t, result.summaries[0].sample_count, 2)
+	}
+	unassessed_rows: [2]string = {
+		"1,61,ok,ok,100,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0;verify=on,on,island_boxes,unassessed,incomplete,incomplete_coverage,31,0.1,,,,,0,measured,1,0,0,measured,1,0,0,30,30,\n",
+		"1,61,ok,ok,100,workload=contact_islands;steps=61;timestep-hz=60;warmup-steps=0;verify=on,on,island_boxes,unassessed,complete,unsupported_fixture,62,0.1,,,,,,,,,,,,,0,61,0,\n",
+	}
+	for row in unassessed_rows
+	{
+		_ = write_lane(path, 1, fmt.aprintf("%s%s%s", PHYSICAL_TEST_HEADER, row, row))
+		result: Report_Result = collect_summaries(request)
+		testing.expect_value(t, result.status, Report_Status.Ok)
+		if result.status == .Ok
+		{
+			testing.expect_value(t, result.summaries[0].physical.status, Result_Physical.Unassessed)
+		}
+	}
+	_ = write_lane(path, 1, PHYSICAL_TEST_HEADER+PHYSICAL_TEST_PASS+PHYSICAL_TEST_OFF)
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
+	for replacement in ([][2]string{
+		{",62,0.1,", ",61,0.1,"},
+		{",0,61,61,", ",0,61,60,"},
+		{",pass,complete,", ",pass,incomplete,"},
+		{",0.1,", ",NaN,"},
+		{",0,measured,1,0,", ",0.11,measured,1,0,"},
+	})
+	{
+		invalid, _ := strings.replace_all(PHYSICAL_TEST_PASS, replacement[0], replacement[1])
+		_ = write_lane(path, 1, fmt.aprintf("%s%s%s", PHYSICAL_TEST_HEADER, invalid, invalid))
+		testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
+	}
+	_ = write_lane(path, 1, PHYSICAL_TEST_HEADER+PHYSICAL_TEST_PASS)
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Row_Count)
+	request.package_name = "pyramid"
+	request.run_count = 1
+	one_body: string = "1,61,ok,ok,100,workload=pyramid;rows=1;steps=61;timestep-hz=60;warmup-steps=0;verify=on,on,pyramid_boxes,pass,complete,none,62,0.1,,,,,0,construction,0,0,,,,,0,61,0,\n"
+	_ = write_lane(path, 1, fmt.aprintf("%s%s", PHYSICAL_TEST_HEADER, one_body))
+	one_body_result: Report_Result = collect_summaries(request)
+	testing.expect_value(t, one_body_result.status, Report_Status.Ok)
+	if one_body_result.status == .Ok
+	{
+		testing.expect_value(t, one_body_result.summaries[0].physical.status, Result_Physical.Pass)
+	}
+	for impact_step: int = 0; impact_step <= 2; impact_step += 1
+	{
+		row: string = fmt.aprintf("%s%d\n", strings.trim_suffix(one_body, "\n"), impact_step)
+		_ = write_lane(path, 1, fmt.aprintf("%s%s", PHYSICAL_TEST_HEADER, row))
+		testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement if impact_step <= 1 else Report_Status.Ok)
+	}
+	unassessed_impact, _ := strings.replace_all(one_body, ",pass,complete,none,", ",unassessed,complete,impact_before_assessment,")
+	unassessed_impact = fmt.aprintf("%s1\n", strings.trim_suffix(unassessed_impact, "\n"))
+	_ = write_lane(path, 1, fmt.aprintf("%s%s", PHYSICAL_TEST_HEADER, unassessed_impact))
+	impact_result: Report_Result = collect_summaries(request)
+	testing.expect_value(t, impact_result.status, Report_Status.Ok)
+	if impact_result.status == .Ok
+	{
+		testing.expect_value(t, impact_result.summaries[0].physical.status, Result_Physical.Unassessed)
+		testing.expect_value(t, impact_result.summaries[0].median, f64(100))
+	}
+}
+
+@(test)
+mixed_query_report_normalizes_native_totals_per_batch :: proc(t: ^testing.T)
+{
+	owned_allocator: mem.Allocator = context.allocator
+	arena: mem.Dynamic_Arena
+	mem.dynamic_arena_init(&arena)
+	defer mem.dynamic_arena_destroy(&arena)
+	context.allocator = mem.dynamic_arena_allocator(&arena)
+	defer context.allocator = owned_allocator
+	path: string
+	status: Report_Status
+	path, status = test_directory("entasis-mixed-query-report")
+	testing.expect_value(t, status, Report_Status.Ok)
+	defer test_directory_remove(path)
+	header :: "worker_count,query_count,measured_batches,case_status,metric_status,physics_elapsed_ms\n"
+	_ = write_lane(path, 1, header+"1,100000,100,ok,ok,200\n1,100000,100,ok,ok,400\n")
+	request: Report_Request = test_request(path, {1}, 2)
+	request.package_name = "spatial_query_trace"
+	result: Report_Result = collect_summaries(request)
+	testing.expect_value(t, result.status, Report_Status.Ok)
+	if result.status == .Ok
+	{
+		testing.expect_value(t, result.summaries[0].median, f64(300))
+		markdown: string = render_markdown(request, result.summaries[:])
+		testing.expect(t, strings.contains(markdown, "ms/batch (100,000 queries)"))
+		testing.expect(t, strings.contains(markdown, "| 1 | 2 | 3.000000 | 2.000000 | 4.000000 |"))
+		testing.expect(t, strings.contains(markdown, "37.500000"))
+	}
+	for count in ([]string{"0", "-1", "99", "NaN"})
+	{
+		_ = write_lane(path, 1, fmt.aprintf("%s1,100000,100,ok,ok,200\n1,100000,%s,ok,ok,400\n", header, count))
+		testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
+	}
+	_ = write_lane(path, 1, header+"1,99999,100,ok,ok,200\n1,99999,100,ok,ok,400\n")
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
+
+}

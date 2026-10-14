@@ -525,3 +525,247 @@ result_sample_recording :: proc(lane: ^Result_Lane, sample: int, component: stri
 	}
 	return lane.records[sample+1][path_column];
 }
+
+Result_Verification :: enum u8
+{
+	Missing,
+	On,
+	Off,
+}
+Result_Physical :: enum u8
+{
+	Unassessed,
+	Pass,
+	Fail,
+}
+Physical_Summary :: struct
+{
+	mode: Result_Verification,
+	status: Result_Physical,
+	criterion: string,
+	shape_limit: f64,
+	passed, failed, unassessed: int,
+}
+
+physical_result_summary :: proc(records: [][]string, package_name: string) -> (Physical_Summary, Report_Result)
+{
+	names: [23]string = {"verification_mode", "physical_criterion", "physical_status", "physical_coverage", "physical_reason", "physical_sample_count",
+		"physical_shape_limit_m", "physical_first_phase", "physical_first_step", "physical_first_body", "physical_first_value_m",
+		"physical_max_slot_excess_m", "physical_max_slot_excess_phase", "physical_max_slot_excess_step", "physical_max_slot_excess_body",
+		"physical_max_neighbor_compression_m", "physical_max_neighbor_compression_phase", "physical_max_neighbor_compression_step", "physical_max_neighbor_compression_body",
+		"physical_warmup_samples", "physical_measured_samples", "physical_terminal_samples", "physical_impact_step"}
+	columns: [len(names)]int
+	present: int
+	for name, index in names
+	{
+		count: int
+		for header, column in records[0]
+		{
+			if header == name
+			{
+				columns[index] = column
+				count += 1
+			}
+		}
+		if count > 1
+		{
+			return {}, report_error(.Invalid_Header, "duplicated physical column: %s", name)
+		}
+		present += count
+	}
+	if present == 0
+	{
+		return {unassessed=len(records)-1}, {status=.Ok}
+	}
+	if present != len(names)
+	{
+		return {}, report_error(.Invalid_Header, "physical evidence columns are incomplete")
+	}
+	parameter_column, parameter_status := header_index(records[0], "benchmark_parameters")
+	step_column, step_status := header_index(records[0], "step_index")
+	if parameter_status != .Ok || step_status != .Ok
+	{
+		return {}, report_error(.Invalid_Header, "physical evidence requires workload parameters and measured steps")
+	}
+	summary: Physical_Summary
+	for record, row in records[1:]
+	{
+		if len(record) != len(records[0])
+		{
+			return {}, report_error(.Csv_Invalid, "physical row column count mismatch")
+		}
+		fields: [len(names)]string
+		for column, index in columns
+		{
+			fields[index] = record[column]
+		}
+		mode: Result_Verification
+		switch fields[0]
+		{
+			case "on": mode = .On
+			case "off": mode = .Off
+			case: return {}, report_error(.Invalid_Measurement, "invalid verification mode")
+		}
+		criterion: string
+		switch package_name
+		{
+			case "container": criterion = "container_safety"
+			case "contact_islands": criterion = "island_boxes"
+			case "pyramid": criterion = "pyramid_boxes"
+			case: return {}, report_error(.Invalid_Measurement, "physical criterion is inapplicable to %s", package_name)
+		}
+		limit, limit_parsed := strconv.parse_f64(fields[6])
+		if fields[1] != criterion || !limit_parsed || math.is_nan(limit) || math.is_inf(limit) || limit <= 0 ||
+			(fields[3] != "complete" && fields[3] != "incomplete") ||
+			(row > 0 && (summary.mode != mode || summary.criterion != criterion || summary.shape_limit != limit))
+		{
+			return {}, report_error(.Invalid_Measurement, "incompatible physical criterion, limit, mode or coverage")
+		}
+		summary.mode = mode
+		summary.criterion = criterion
+		summary.shape_limit = limit
+		counts: [4]i64
+		for slot, index in ([4]int{5, 19, 20, 21})
+		{
+			parsed: bool
+			counts[index], parsed = strconv.parse_i64(fields[slot])
+			if !parsed || counts[index] < 0 || counts[index] > 2_000_002
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid physical sample count")
+			}
+		}
+		steps, parsed_steps := strconv.parse_i64(record[step_column])
+		hz, warmup: i64
+		parameter_mode: string
+		neighbor_requirement: Result_Availability = .Available
+		parameters: string = record[parameter_column]
+		for field in strings.split_by_byte_iterator(&parameters, ';')
+		{
+			if (package_name == "pyramid" && field == "rows=1") || (package_name == "contact_islands" && field == "grid=1,1,1")
+			{
+				neighbor_requirement = .Unavailable
+			}
+			if strings.has_prefix(field, "verify=")
+			{
+				parameter_mode = field[len("verify="):]
+			}
+			if strings.has_prefix(field, "timestep-hz=")
+			{
+				parsed: bool
+				hz, parsed = strconv.parse_i64(field[len("timestep-hz="):])
+				if !parsed || hz <= 0
+				{
+					return {}, report_error(.Invalid_Measurement, "invalid physical timestep")
+				}
+			}
+			if strings.has_prefix(field, "warmup-steps=")
+			{
+				parsed: bool
+				warmup, parsed = strconv.parse_i64(field[len("warmup-steps="):])
+				if !parsed || warmup < 0
+				{
+					return {}, report_error(.Invalid_Measurement, "invalid physical warmup count")
+				}
+			}
+		}
+		if parameter_mode != fields[0] || !parsed_steps || steps <= 0 || counts[2] > steps || counts[1] > warmup ||
+			counts[0] < counts[1]+counts[2] || counts[0] > counts[1]+counts[2]+2
+		{
+			return {}, report_error(.Invalid_Measurement, "physical counts contradict the measured workload")
+		}
+		// empty observations preserve absence, and each populated observation owns all its identities
+		for group in ([3]int{7, 11, 15})
+		{
+			filled: int
+			for offset: int = 0; offset < 4; offset += 1
+			{
+				if len(fields[group+offset]) > 0
+				{
+					filled += 1
+				}
+			}
+			if filled == 0
+			{
+				continue
+			}
+			phase_index, value_index, step_index, body_index: int = group+1, group, group+2, group+3
+			if group == 7
+			{
+				phase_index, value_index, step_index, body_index = 7, 10, 8, 9
+			}
+			phase: string = fields[phase_index]
+			observation_step, step_parsed := strconv.parse_i64(fields[step_index])
+			body, body_parsed := strconv.parse_i64(fields[body_index])
+			if (phase != "construction" && phase != "warmup_construction" && phase != "warmup" && phase != "measured") ||
+				!step_parsed || observation_step < 0 || observation_step > max(steps, warmup) || !body_parsed || body < 0
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid physical observation identity")
+			}
+			if fields[4] == "invalid_state" && group == 7 && len(fields[10]) == 0 && filled == 3
+			{
+				continue
+			}
+			value, value_parsed := strconv.parse_f64(fields[value_index])
+			if filled != 4 || !value_parsed || math.is_nan(value) || math.is_inf(value) || value < 0
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid physical observation value")
+			}
+		}
+		if len(fields[22]) > 0
+		{
+			impact, parsed := strconv.parse_i64(fields[22])
+			if !parsed || package_name != "pyramid" || impact < 0 || impact > steps || (fields[2] == "pass" && impact <= 1)
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid projectile impact step")
+			}
+		}
+		switch fields[2]
+		{
+			case "pass":
+			construction_count: i64 = 2 if package_name == "container" else 1
+			if mode != .On || fields[3] != "complete" || fields[4] != "none" || counts[2] != steps || counts[1] != warmup ||
+				counts[0] != counts[1]+counts[2]+construction_count || len(fields[7]) != 0 ||
+				(package_name == "contact_islands" && (hz <= 0 || steps <= hz || counts[3] != hz+1)) ||
+				(package_name != "container" && (len(fields[11]) == 0 || (neighbor_requirement == .Available && len(fields[15]) == 0)))
+			{
+				return {}, report_error(.Invalid_Measurement, "physical Pass lacks complete compatible evidence")
+			}
+			for index in ([2]int{11, 15})
+			{
+				if len(fields[index]) > 0
+				{
+					value, _ := strconv.parse_f64(fields[index])
+					if value > limit
+					{
+						return {}, report_error(.Invalid_Measurement, "physical Pass contradicts its worst observation")
+					}
+				}
+			}
+			summary.passed += 1
+			case "fail":
+			if mode != .On || len(fields[7]) == 0 ||
+				(fields[4] != "invalid_state" && fields[4] != "slot_excess" && fields[4] != "neighbor_compression" && fields[4] != "support_plane" && fields[4] != "container_escape")
+			{
+				return {}, report_error(.Invalid_Measurement, "physical Fail lacks breach evidence")
+			}
+			summary.failed += 1
+			case "unassessed":
+			if (mode == .Off && (fields[4] != "verification_off" || counts[0] != 0)) ||
+				(mode == .On && fields[4] != "unsupported_fixture" && fields[4] != "insufficient_window" && fields[4] != "incomplete_coverage" && fields[4] != "impact_before_assessment")
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid Unassessed reason")
+			}
+			summary.unassessed += 1
+			case: return {}, report_error(.Invalid_Measurement, "invalid physical status")
+		}
+	}
+	if summary.failed > 0
+	{
+		summary.status = .Fail
+	}
+	else if summary.passed == len(records)-1
+	{
+		summary.status = .Pass
+	}
+	return summary, {status=.Ok}
+}

@@ -55,6 +55,10 @@ Lane_Summary :: struct
 	maximum:      f64,
 	speedup:      f64,
 	ray_checksum: u64,
+	measured_units: int,
+	query_count: int,
+	median_throughput: f64,
+	physical: Physical_Summary,
 }
 
 Report_Result :: struct
@@ -189,6 +193,13 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 	{
 		return {}, recording_status;
 	}
+	physical: Physical_Summary
+	physical_result: Report_Result
+	physical, physical_result = physical_result_summary(records, package_name)
+	if physical_result.status != .Ok
+	{
+		return {}, physical_result
+	}
 	case_status_index, case_header_status := header_index(records[0], "case_status")
 	measurement_name: string = "physics_elapsed_ms"
 	metric_status_name: string = "metric_status"
@@ -205,6 +216,12 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 	}
 	measurements := make([]f64, expected_rows)
 	defer delete(measurements)
+	throughputs: []f64
+	if package_name == "spatial_query_batch" || package_name == "spatial_query_trace"
+	{
+		throughputs = make([]f64, expected_rows)
+	}
+	defer delete(throughputs)
 	ray_checksum: u64
 	parameters: string
 	measured_steps := 0
@@ -238,6 +255,18 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 				return {}, report_error(.Invalid_Header, "required ray header missing or duplicated: %s in %s", name, path)
 			}
 			ray_columns[index] = column
+		}
+	}
+	unit_column, query_column: int
+	measured_units, query_count: int
+	if package_name == "spatial_query_batch" || package_name == "spatial_query_trace"
+	{
+		unit_status, query_status: Report_Status
+		unit_column, unit_status = header_index(records[0], "measured_batches")
+		query_column, query_status = header_index(records[0], "ray_query_count" if package_name == "spatial_query_batch" else "query_count")
+		if unit_status != .Ok || query_status != .Ok
+		{
+			return {}, report_error(.Invalid_Header, "query normalization requires measured batch and query counts")
 		}
 	}
 	for row_index in 0..<expected_rows
@@ -284,12 +313,28 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 			parameters = row_parameters
 			measured_steps = int(steps)
 		}
+		if package_name == "spatial_query_batch" || package_name == "spatial_query_trace"
+		{
+			units, units_parsed := strconv.parse_i64(record[unit_column])
+			queries, queries_parsed := strconv.parse_i64(record[query_column])
+			if !units_parsed || units <= 0 || units > 1_000_000 || !queries_parsed || queries <= 0 || queries > i64(max(i32)) ||
+				(package_name == "spatial_query_trace" && queries != 100_000) ||
+				(row_index > 0 && (units != i64(measured_units) || queries != i64(query_count)))
+			{
+				return {}, report_error(.Invalid_Measurement, "query measured counts differ or are nonpositive")
+			}
+			measured_units, query_count = int(units), int(queries)
+		}
 		measurement, parsed := strconv.parse_f64(record[measurement_index])
 		if !parsed || math.is_nan(measurement) || math.is_inf(measurement) || measurement <= 0
 		{
 			return {}, report_error(.Invalid_Measurement, "invalid %s in %s row %d", measurement_name, path, row_index + 2)
 		}
 		measurements[row_index] = measurement
+		if len(throughputs) > 0
+		{
+			throughputs[row_index] = f64(query_count)*f64(measured_units)/(measurement*1000)
+		}
 	}
 	sort_measurements(measurements)
 	middle := expected_rows / 2
@@ -297,6 +342,16 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 	if expected_rows % 2 == 0
 	{
 		median = (measurements[middle - 1] + measurements[middle]) / 2
+	}
+	median_throughput: f64
+	if len(throughputs) > 0
+	{
+		sort_measurements(throughputs)
+		median_throughput = throughputs[middle]
+		if expected_rows%2 == 0
+		{
+			median_throughput = (throughputs[middle-1]+throughputs[middle])/2
+		}
 	}
 	return Lane_Summary{
 		recording_mode=recording_mode, timing_method=timing_method,
@@ -306,6 +361,7 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 		minimum = measurements[0],
 		maximum = measurements[len(measurements) - 1],
 		ray_checksum = ray_checksum,
+		measured_units=measured_units, query_count=query_count, median_throughput=median_throughput, physical=physical,
 		benchmark_parameters = parameters,
 		measured_steps = measured_steps,
 	}, Report_Result{status = .Ok}
@@ -388,6 +444,11 @@ collect_summaries :: proc(request: Report_Request) -> Report_Result
 		{
 			return report_error(.Invalid_Measurement, "mixed recording or timing conditions");
 		}
+		if len(summaries) > 0 && (summary.physical.mode != summaries[0].physical.mode || summary.physical.criterion != summaries[0].physical.criterion ||
+			summary.physical.shape_limit != summaries[0].physical.shape_limit || summary.measured_units != summaries[0].measured_units || summary.query_count != summaries[0].query_count)
+		{
+			return report_error(.Invalid_Measurement, "incompatible physical verification or query counts across workers")
+		}
 		append(&summaries, summary)
 	}
 	smallest_worker_index := 0
@@ -444,9 +505,15 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	report_line(&builder)
 	if request.package_name == "spatial_query_batch"
 	{
-		report_line(&builder, "## ray_elapsed_ms summary")
+		report_line(&builder, "## Closest-ray time summary")
 		report_line(&builder)
-		report_line(&builder, "Public query_batch, batch size 256. Each run measures 100 frames of 50,000 closest rays after 10 warmup frames. Times below are totals in milliseconds: divide by 100 for ms/frame, then calculate million rays/s = 50 / ms/frame. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
+		report_line(&builder, "Public query_batch, batch size 256. Times are native totals divided by measured frames, in ms/frame (50,000 rays). Lower is better. Each process measures 100 frames after 10 warmup frames. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
+	}
+	else if request.package_name == "spatial_query_trace"
+	{
+		report_line(&builder, "## Mixed-query time summary")
+		report_line(&builder)
+		report_line(&builder, "Times are native totals divided by measured batches, in ms/batch (100,000 queries). Lower is better")
 	}
 	else
 	{
@@ -465,22 +532,57 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	}
 	report_line(&builder, "Median is the middle sample for odd counts and the arithmetic mean of the two middle samples for even counts. Speedup is relative to the smallest requested worker count")
 	report_line(&builder)
-	report_line(&builder, "| Workers | Samples | Median | Minimum | Maximum | Speedup |")
+	if request.package_name == "spatial_query_batch" || request.package_name == "spatial_query_trace"
+	{
+		unit: string = "ms/frame" if request.package_name == "spatial_query_batch" else "ms/batch"
+		report_format_line(&builder, "| Workers | Samples | Median %s | Minimum %s | Maximum %s | Speedup |", unit, unit, unit)
+	}
+	else
+	{
+		report_line(&builder, "| Workers | Samples | Median | Minimum | Maximum | Speedup |")
+	}
 	report_line(&builder, "| ------: | ------: | -----: | ------: | ------: | ------: |")
 	for summary in summaries
 	{
+		divisor: f64 = f64(summary.measured_units) if request.package_name == "spatial_query_batch" || request.package_name == "spatial_query_trace" else 1
 		report_format_line(
 			&builder,
 			"| %d | %d | %.6f | %.6f | %.6f | %.6fx |",
 			summary.worker_count,
 			summary.sample_count,
-			summary.median,
-			summary.minimum,
-			summary.maximum,
+			summary.median/divisor,
+			summary.minimum/divisor,
+			summary.maximum/divisor,
 			summary.speedup,
 		)
 	}
 	report_line(&builder)
+	if request.package_name == "spatial_query_batch" || request.package_name == "spatial_query_trace"
+	{
+		report_line(&builder, "Secondary throughput, in millions of queries per second. The time table uses per-process mean time, not individual query latency")
+		report_line(&builder)
+		report_line(&builder, "| Workers | Median M queries/s |")
+		report_line(&builder, "| ------: | -----------------: |")
+		for summary in summaries
+		{
+			report_format_line(&builder, "| %d | %.6f |", summary.worker_count, summary.median_throughput)
+		}
+		report_line(&builder)
+	}
+	if workload_kind(request.package_name) == .Parameterized
+	{
+		report_line(&builder, "Physical qualification uses authored box slots and assigned-neighbor compression. These fixed-axis measures do not describe contact-manifold penetration. Verification can affect cache and wall time outside the native timer")
+		report_line(&builder)
+		report_line(&builder, "| Workers | Measured | Physical outcome | Passed | Failed | Unassessed |")
+		report_line(&builder, "| ------: | -------: | :--------------- | -----: | -----: | ---------: |")
+		for summary in summaries
+		{
+			names: [Result_Physical]string = {.Unassessed="Unassessed", .Pass="Pass", .Fail="Fail"}
+			report_format_line(&builder, "| %d | %d | %s | %d | %d | %d |", summary.worker_count, summary.sample_count,
+				names[summary.physical.status], summary.physical.passed, summary.physical.failed, summary.physical.unassessed)
+		}
+		report_line(&builder)
+	}
 	if workload_kind(request.package_name) == .Parameterized
 	{
 		report_line(&builder, "Mean milliseconds per measured step, derived from each process total. The median of process means is not the median of individual step times")
