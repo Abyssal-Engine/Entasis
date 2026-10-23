@@ -11,6 +11,7 @@ Run the falling-box example, then import Entasis into your application using [Ge
 - [Engine integration](odin/INTEGRATION.md): initialization, fixed updates, jobs and shutdown
 - [Cooking assets](odin/COOKING.md): prepare and import geometry
 - [Headless examples](odin/EXAMPLES.md): complete programs grouped by task
+- [Large-world coordinates](../examples/headless/large_world_precision/README.md): run frame conversion, shifting and mixed64 query/export examples
 
 ## API reference
 
@@ -25,7 +26,7 @@ Use the [declaration index](odin/reference/API-INDEX.md) for symbol lookup
 | Filters, materials, contacts and triggers | [Collision](odin/reference/COLLISION.md) |
 | Rays, sweeps, overlaps and distance | [Queries](odin/reference/QUERIES.md) |
 | Batches and deferred commands | [Structural operations](odin/reference/STRUCTURAL-OPERATIONS.md) |
-| Dense views and properties | [Data access](odin/reference/DATA-ACCESS.md) |
+| Dense views, authoring snapshots and properties | [Data access](odin/reference/DATA-ACCESS.md) |
 | Callbacks and manual stages | [Callbacks and stages](odin/reference/CALLBACKS-STAGES.md) |
 | Profiling, statistics and versions | [Profiling and inspection](odin/reference/PROFILING-INSPECTION.md) |
 

@@ -1,5 +1,13 @@
-function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off")
+function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "")
 {
+    if ($Package -eq "large_world_precision")
+    {
+        return (Join-Path $script:Root "build/benchmarks/large_world_precision/$($Configuration.ToLowerInvariant())/$PrecisionCandidate/entasis_large_world_precision.exe")
+    }
+    if ($Precision -eq "Mixed64")
+    {
+        return (Join-Path $script:Root "build/benchmarks/mixed64/$($Configuration.ToLowerInvariant())/entasis_$Package.exe")
+    }
     if ($Package -in $script:BenchmarkComponentPackages)
     {
         $Package += "_$($Components.ToLowerInvariant())"
@@ -154,20 +162,20 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
     Write-Host "BENCHMARK_BUILT package=$Package elapsed_ms=$($clock.ElapsedMilliseconds)"
 }
 
-function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off")
+function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "")
 {
     Assert-BenchmarkPackage $Package
-    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols
-    [string[]]$profileArguments = @()
+    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols $Precision $PrecisionCandidate
+    [string[]]$profileArguments = @("-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())")
     switch ($Configuration)
     {
         'Development'
         {
-            $profileArguments = @('-debug', '-o:none', '-source-code-locations:normal', "-pdb-name:$([IO.Path]::ChangeExtension($output, '.pdb'))")
+            $profileArguments += @('-debug', '-o:none', '-source-code-locations:normal', "-pdb-name:$([IO.Path]::ChangeExtension($output, '.pdb'))")
         }
         'Release'
         {
-            $profileArguments = @('-o:speed', '-no-bounds-check', '-disable-assert', '-source-code-locations:none')
+            $profileArguments += @('-o:speed', '-no-bounds-check', '-disable-assert', '-source-code-locations:none')
         }
         default
         {
@@ -181,7 +189,19 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
     if ($Emit -eq 'Assembly')
     {
         $output = Join-Path $script:Root "build/inspection/$Package/release/$Package.s"
+        if ($Package -eq "large_world_precision")
+        {
+            $output = Join-Path $script:Root "build/inspection/$Package/release/$PrecisionCandidate/$Package.s"
+        }
+        elseif ($Precision -eq "Mixed64")
+        {
+            $output = Join-Path $script:Root "build/inspection/$Package/release/mixed64/$Package.s"
+        }
         $profileArguments += '-build-mode:assembly'
+    }
+    if ($Package -eq "large_world_precision")
+    {
+        $profileArguments += "-define:ENTASIS_PRECISION_CANDIDATE=$PrecisionCandidate"
     }
     if ($Record -eq 'On')
     {

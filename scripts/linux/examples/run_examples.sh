@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
+precision="float32"
+precision_count=0
 odin=""
 odin_count=0
 configuration="development"
@@ -12,6 +14,13 @@ skip_build="disabled"
 skip_build_count=0
 while (($# > 0)); do
   case "$1" in
+    --precision)
+      ((precision_count += 1))
+      ((precision_count == 1)) || fail_usage "--precision may be supplied only once"
+      (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "--precision requires a value"
+      precision="$2"
+      shift 2
+      ;;
     --odin)
       ((odin_count += 1))
       ((odin_count <= 1)) || fail_usage "--odin may be supplied only once"
@@ -55,19 +64,20 @@ else
   package_names="$(example_packages)"
   mapfile -t packages <<< "$package_names"
 fi
+case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
 require_odin "$odin"
 configurations=("$configuration")
 if [[ "$configuration" == all ]]; then configurations=(development release); fi
 
 if [[ "$skip_build" == disabled ]]; then
-  build_arguments=(--odin "$ODIN_BIN" --configuration "$configuration")
+  build_arguments=(--odin "$ODIN_BIN" --configuration "$configuration" --precision "$precision")
   if ((package_count > 0)); then build_arguments+=(--package "$package"); fi
   "$ROOT/build_odin_linux.sh" "${build_arguments[@]}"
 fi
 
 for selected_configuration in "${configurations[@]}"; do
   for selected_package in "${packages[@]}"; do
-    binary="$(example_binary "$selected_package" "$selected_configuration")"
+    binary="$(example_binary "$selected_package" "$selected_configuration" "$precision")"
     [[ -x "$binary" ]] || fail_usage "missing example binary: $binary"
     printf '[example run] %s configuration=%s executable=%s\n' \
       "$selected_package" "$selected_configuration" "$binary"

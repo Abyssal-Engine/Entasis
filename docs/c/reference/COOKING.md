@@ -26,6 +26,8 @@ Size `8`, alignment `8`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_cooking_abi_version`
 
 returns the cooking C ABI generation used by this library
@@ -54,8 +56,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cook_big_compo
 | `out_cooked` | `entasis_cooked_big_compound_t *`             | receives the cooked big compound                                             |
 | `diagnostic` | `entasis_diagnostic_t *`                      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cook_compound`
 
 copies portable compound children into a cooking-context-owned asset
@@ -73,8 +73,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cook_compound(
 | `count`      | `uint64_t`                                | number of entries in the input arrays                                        |
 | `out_cooked` | `entasis_cooked_compound_t *`             | receives the cooked compound                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cook_hull`
 
@@ -95,8 +93,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cook_hull(enta
 | `out_center` | `entasis_vector3_t *`         | receives the computed center of mass                                         |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cook_mesh`
 
 builds immutable mesh data and its bounds tree from caller-provided triangles
@@ -114,8 +110,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cook_mesh(enta
 | `out_cooked` | `entasis_cooked_mesh_t *`     | receives the cooked mesh                                                     |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooked_big_compound_destroy`
 
 releases a cooked big compound and returns its storage to the owning cooking context
@@ -128,8 +122,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_big_com
 | ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
 | `cooked`     | `entasis_cooked_big_compound_t *` | target cooked asset                                                          |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_big_compound_import`
 
@@ -148,8 +140,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_big_com
 | `out_handle`       | `entasis_shape_handle_t *`              | receives the created shape handle                                            |
 | `diagnostic`       | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooked_compound_destroy`
 
 releases a cooked compound and returns its storage to the owning cooking context
@@ -162,8 +152,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_compoun
 | ------------ | ----------------------------- | ---------------------------------------------------------------------------- |
 | `cooked`     | `entasis_cooked_compound_t *` | target cooked asset                                                          |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_compound_import`
 
@@ -182,8 +170,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_compoun
 | `out_handle`       | `entasis_shape_handle_t *`          | receives the created shape handle                                            |
 | `diagnostic`       | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooked_hull_destroy`
 
 releases a cooked hull and returns its storage to the owning cooking context
@@ -196,8 +182,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_hull_de
 | ------------ | ------------------------- | ---------------------------------------------------------------------------- |
 | `cooked`     | `entasis_cooked_hull_t *` | target cooked asset                                                          |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_hull_import`
 
@@ -214,8 +198,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_hull_im
 | `out_handle` | `entasis_shape_handle_t *`      | receives the created shape handle                                            |
 | `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooked_hull_validate`
 
 validates a ready cooked hull and its internal topology
@@ -227,8 +209,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_hull_va
 | Parameter | C type                          | Meaning             |
 | --------- | ------------------------------- | ------------------- |
 | `cooked`  | `const entasis_cooked_hull_t *` | target cooked asset |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_mesh_closed_mass_properties`
 
@@ -248,8 +228,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_mesh_cl
 | `out_properties` | `entasis_mesh_mass_properties_t *` | receives the mesh mass properties                                            |
 | `diagnostic`     | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooked_mesh_destroy`
 
 releases a cooked mesh and returns its storage to the owning cooking context
@@ -262,8 +240,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_mesh_de
 | ------------ | ------------------------- | ---------------------------------------------------------------------------- |
 | `cooked`     | `entasis_cooked_mesh_t *` | target cooked asset                                                          |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_mesh_import`
 
@@ -279,8 +255,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_mesh_im
 | `cooked`     | `const entasis_cooked_mesh_t *` | target cooked asset                                                          |
 | `out_handle` | `entasis_shape_handle_t *`      | receives the created shape handle                                            |
 | `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooked_mesh_open_mass_properties`
 
@@ -298,8 +272,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooked_mesh_op
 | `out_properties` | `entasis_mesh_mass_properties_t *` | receives the mesh mass properties                                            |
 | `diagnostic`     | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooking_context_clear`
 
 releases cooking pool blocks while retaining context metadata
@@ -315,8 +287,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooking_contex
 | `context`    | `entasis_cooking_context_t *` | target cooking context                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooking_context_destroy`
 
 destroys an idle cooking context after all cooked assets are released
@@ -331,8 +301,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooking_contex
 | ------------ | ----------------------------- | ---------------------------------------------------------------------------- |
 | `context`    | `entasis_cooking_context_t *` | target cooking context                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cooking_context_init`
 
@@ -350,8 +318,6 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooking_contex
 | `allocator`               | `const entasis_allocator_t *` | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`              | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_cooking_context_init_extended`
 
 initializes one caller-owned cooking context with explicit Legacy/All_Owned allocation scope. allocator callbacks and user data remain alive through resource destruction
@@ -368,5 +334,3 @@ ENTASIS_COOKING_API entasis_status_t ENTASIS_COOKING_CALL entasis_cooking_contex
 | `allocator`               | `const entasis_allocator_t *` | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `allocation_scope`        | `entasis_allocation_scope_t`  | Legacy preserves existing behavior. All_Owned includes pool metadata, native blocks and included thread records                  |
 | `diagnostic`              | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
-
-returns ENTASIS_STATUS_OK on success or a failure status

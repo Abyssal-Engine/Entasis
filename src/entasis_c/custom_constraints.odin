@@ -144,8 +144,17 @@ abi_custom_constraint_next_type_id :: proc "contextless" (
 
 abi_custom_constraint_register :: proc "contextless" (
 	world: ^Entasis_World, registration: ^Entasis_Custom_Constraint_Registration, diagnostic: ^Entasis_Diagnostic,
+	position_space: u8 = 0,
 ) -> Entasis_Status
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_space > 1
+		{
+			return abi_status_finish(.Invalid_Description, diagnostic, .Constraint_Register);
+		}
+	}
+
 	if registration == nil || registration.struct_size != u32(size_of(Entasis_Custom_Constraint_Registration)) ||
 	registration.struct_version != ENTASIS_STRUCT_VERSION
 	{
@@ -202,13 +211,18 @@ abi_custom_constraint_register :: proc "contextless" (
 	binding := (^abi_custom_constraint_binding)(memory);
 	binding^ = {description=selected};
 	context = runtime.default_context();
-	status = entasis.custom_constraint_register_contextual(&resource.world, {
+	core: entasis.Contextual_Custom_Constraint_Registration = {
 			type_id=entasis.Constraint_Type_ID(selected.type_id), body_count=i32(selected.body_count),
 			description_size=i32(selected.description_size), prestep_bundle_size=i32(selected.prestep_bundle_size),
 			impulse_bundle_size=i32(selected.impulse_bundle_size), initial_access=initial, solve_access=solve,
 			user_context=binding, validate_description=abi_custom_constraint_validate_bridge,
 			kernel=abi_custom_constraint_kernel_bridge, incremental_kernel=abi_custom_constraint_kernel_bridge,
-	});
+	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		core.position_space = entasis.Constraint_Position_Space(position_space);
+	}
+	status = entasis.custom_constraint_register_contextual(&resource.world, core);
 	if status != .Ok
 	{
 		abi_resource_free(binding, size_of(abi_custom_constraint_binding), align_of(abi_custom_constraint_binding), &resource.allocator);

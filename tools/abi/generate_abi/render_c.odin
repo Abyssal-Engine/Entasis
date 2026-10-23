@@ -186,6 +186,7 @@ append_api_macros :: proc(builder: ^strings.Builder, prefix: string)
 
 append_struct_definition :: proc(builder: ^strings.Builder, item: ^Node)
 {
+	c_availability_begin(builder, item);
 	append_doc_comment(builder, field_string(item, "doc"), field_string(item, "details"))
 	builder_format_line(builder, "struct %s {{", field_string(item, "name"))
 	for field, index in field_items(item, "fields")
@@ -206,6 +207,7 @@ append_struct_definition :: proc(builder: ^strings.Builder, item: ^Node)
 		}
 	}
 	builder_line(builder, "};")
+	c_availability_end(builder, item);
 	builder_line(builder)
 }
 
@@ -293,6 +295,13 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 		builder_line(&builder, "#  error \"Entasis ABI v1 requires a 64-bit target.\"")
 		builder_line(&builder, "#endif")
 		builder_line(&builder)
+		builder_line(&builder, "#ifndef ENTASIS_PRECISION_MIXED64");
+		builder_line(&builder, "#  define ENTASIS_PRECISION_MIXED64 0");
+		builder_line(&builder, "#endif");
+		builder_line(&builder, "#if ENTASIS_PRECISION_MIXED64 != 0 && ENTASIS_PRECISION_MIXED64 != 1");
+		builder_line(&builder, "#  error \"ENTASIS_PRECISION_MIXED64 must be 0 or 1\"");
+		builder_line(&builder, "#endif");
+		builder_line(&builder);
 		append_api_macros(&builder, "ENTASIS")
 		builder_line(&builder, "#if defined(__cplusplus)")
 		builder_line(&builder, "#  define ENTASIS_ALIGNAS(bytes) alignas(bytes)")
@@ -383,7 +392,9 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 		}
 		for item in ordered
 		{
+			c_availability_begin(&builder, item);
 			builder_format_line(&builder, "typedef struct %s %s;", field_string(item, "name"), field_string(item, "name"))
+			c_availability_end(&builder, item);
 		}
 		builder_line(&builder)
 	}
@@ -416,6 +427,7 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 			continue
 		}
 		callback_count += 1
+		c_availability_begin(&builder, callback);
 		append_doc_comment(
 			&builder,
 			field_string(callback, "doc"),
@@ -434,6 +446,7 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 			parameter_text = strings.join(params[:], ", ")
 		}
 		builder_format_line(&builder, "typedef %s (ENTASIS_CALL *%s)(%s);", field_string(callback, "return_c"), field_string(callback, "name"), parameter_text)
+		c_availability_end(&builder, callback);
 	}
 	if callback_count > 0
 	{
@@ -482,6 +495,7 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 		{
 			continue
 		}
+		c_availability_begin(&builder, function);
 		append_doc_comment(
 			&builder,
 			field_string(function, "doc"),
@@ -500,6 +514,7 @@ render_domain_header :: proc(manifest: ^Manifest, header: string) -> (string, Ex
 			parameter_text = strings.join(params[:], ", ")
 		}
 		builder_format_line(&builder, "%s_API %s %s_CALL %s(%s);", api_prefix, field_string(function, "return_c"), api_prefix, field_string(function, "name"), parameter_text)
+		c_availability_end(&builder, function);
 		builder_line(&builder)
 	}
 	builder_line(&builder, "#ifdef __cplusplus")
@@ -544,12 +559,12 @@ render_compatibility_header :: proc(guard, target: string) -> string
 	return builder_result(&builder)
 }
 
-library_symbols :: proc(manifest: ^Manifest, library: string) -> [dynamic]string
+library_symbols :: proc(manifest: ^Manifest, library: string, precision: string) -> [dynamic]string
 {
 	result: [dynamic]string
 	for function in field_items(manifest.root, "functions")
 	{
-		if field_string(function, "library") == library
+		if field_string(function, "library") == library && (field_string(function, "availability") != "mixed64" || precision == "mixed64")
 		{
 			append(&result, field_string(function, "name"))
 		}
@@ -558,13 +573,13 @@ library_symbols :: proc(manifest: ^Manifest, library: string) -> [dynamic]string
 	return result
 }
 
-render_version_script :: proc(manifest: ^Manifest, library: string) -> string
+render_version_script :: proc(manifest: ^Manifest, library: string, precision: string = "float32") -> string
 {
 	builder := strings.builder_make_len_cap(0, 16384)
 	builder_format_line(&builder, "# %s", BANNER_OWNER)
 	builder_format_line(&builder, "%s {{", field_string(library_spec(manifest, library), "version_node"))
 	builder_line(&builder, "  global:")
-	for symbol in library_symbols(manifest, library)
+	for symbol in library_symbols(manifest, library, precision)
 	{
 		builder_format_line(&builder, "    %s;", symbol)
 	}
@@ -575,13 +590,13 @@ render_version_script :: proc(manifest: ^Manifest, library: string) -> string
 	return builder_result(&builder)
 }
 
-render_def :: proc(manifest: ^Manifest, library: string) -> string
+render_def :: proc(manifest: ^Manifest, library: string, precision: string = "float32") -> string
 {
 	builder := strings.builder_make_len_cap(0, 16384)
 	builder_format_line(&builder, "; %s", BANNER_OWNER)
 	builder_format_line(&builder, "LIBRARY %s", field_string(library_spec(manifest, library), "def_library"))
 	builder_line(&builder, "EXPORTS")
-	for symbol in library_symbols(manifest, library)
+	for symbol in library_symbols(manifest, library, precision)
 	{
 		builder_format_line(&builder, "    %s", symbol)
 	}
@@ -609,6 +624,7 @@ render_layout_header :: proc(manifest: ^Manifest) -> string
 	builder_line(&builder)
 	for item in field_items(manifest.root, "structs")
 	{
+		c_availability_begin(&builder, item);
 		name := field_string(item, "name")
 		builder_format_line(&builder, "ENTASIS_LAYOUT_ASSERT(sizeof(%s) == %du, \"%s size\");", name, field_integer(item, "size"), name)
 		builder_format_line(&builder, "ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(%s) == %du, \"%s alignment\");", name, field_integer(item, "align"), name)
@@ -616,6 +632,7 @@ render_layout_header :: proc(manifest: ^Manifest) -> string
 		{
 			builder_format_line(&builder, "ENTASIS_LAYOUT_ASSERT(offsetof(%s, %s) == %du, \"%s.%s offset\");", name, offset.key, node_integer(offset.value), name, offset.key)
 		}
+		c_availability_end(&builder, item);
 	}
 	builder_line(&builder)
 	builder_line(&builder, "ENTASIS_LAYOUT_ASSERT(ENTASIS_STATUS_OK == 0, \"status value\");")
@@ -631,4 +648,20 @@ render_layout_header :: proc(manifest: ^Manifest) -> string
 	builder_line(&builder, "#endif /* ENTASIS_GENERATED_LAYOUT_ASSERTS_H */")
 	builder_line(&builder)
 	return builder_result(&builder)
+}
+
+c_availability_begin :: proc(builder: ^strings.Builder, item: ^Node)
+{
+	if field_string(item, "availability") == "mixed64"
+	{
+		builder_line(builder, "#if ENTASIS_PRECISION_MIXED64");
+	}
+}
+
+c_availability_end :: proc(builder: ^strings.Builder, item: ^Node)
+{
+	if field_string(item, "availability") == "mixed64"
+	{
+		builder_line(builder, "#endif /* ENTASIS_PRECISION_MIXED64 */");
+	}
 }

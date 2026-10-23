@@ -5,11 +5,19 @@ package entasis_physics
 
 import util "entasis:entasis_utilities"
 
-Tree_Ray :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	origin:    util.Vector3,
-	direction: util.Vector3,
-	maximum_t: f32,
+	Tree_Global_Ray :: struct
+	{
+		origin:    Tree_Position,
+		direction: Tree_Position,
+		maximum_t: Tree_Scalar,
+	}
+	Tree_Coordinate_Ray :: Tree_Global_Ray;
+}
+else
+{
+	Tree_Coordinate_Ray :: Tree_Ray;
 }
 
 Tree_Pair_Order :: enum u8
@@ -56,7 +64,7 @@ tree_append_pair :: proc "contextless" (
 }
 
 tree_query_child :: proc "contextless" (
-	tree: ^Tree, child: ^Tree_Node_Child, query: util.Bounding_Box,
+	tree: ^Tree, child: ^Tree_Node_Child, query: Tree_Bounds,
 	output: util.Buffer(i32), output_count: ^int,
 ) -> Physics_Status
 {
@@ -78,7 +86,7 @@ tree_query_child :: proc "contextless" (
 }
 
 tree_query_overlaps :: proc "contextless" (
-	tree: ^Tree, query: util.Bounding_Box, output: util.Buffer(i32),
+	tree: ^Tree, query: Tree_Bounds, output: util.Buffer(i32),
 ) -> (int, Physics_Status)
 {
 	if tree == nil || tree.state != .Ready || output.memory == nil ||
@@ -104,20 +112,20 @@ tree_query_overlaps :: proc "contextless" (
 	return output_count, status;
 }
 
-tree_ray_intersection :: proc "contextless" (bounds: util.Bounding_Box, ray: Tree_Ray) -> (f32, Reference_State)
+tree_ray_intersection :: proc "contextless" (bounds: Tree_Bounds, ray: Tree_Coordinate_Ray) -> (Tree_Scalar, Reference_State)
 {
-	util.math_validate_bounding_box(bounds);
-	util.math_validate_vector3(ray.origin);
-	util.math_validate_vector3(ray.direction);
-	util.math_validate_f32(ray.maximum_t);
-	t_min := f32(0);
-	t_max := ray.maximum_t;
+	tree_validate_bounds(bounds);
+	tree_validate_position(ray.origin);
+	tree_validate_position(ray.direction);
+	tree_validate_scalar(ray.maximum_t);
+	t_min := Tree_Scalar(0);
+	t_max := max(Tree_Scalar);
 	for axis in 0 ..< 3
 	{
-		origin: f32;
-		direction: f32;
-		minimum: f32;
-		maximum: f32;
+		origin: Tree_Scalar;
+		direction: Tree_Scalar;
+		minimum: Tree_Scalar;
+		maximum: Tree_Scalar;
 		if axis == 0
 		{
 			origin=ray.origin.x;
@@ -139,7 +147,7 @@ tree_ray_intersection :: proc "contextless" (bounds: util.Bounding_Box, ray: Tre
 			minimum=bounds.min.z;
 			maximum=bounds.max.z;
 		}
-		if abs(direction) <= 1e-20
+		if direction == 0
 		{
 			if origin < minimum || origin > maximum
 			{
@@ -151,23 +159,35 @@ tree_ray_intersection :: proc "contextless" (bounds: util.Bounding_Box, ray: Tre
 			inverse := 1 / direction;
 			entry := (minimum - origin) * inverse;
 			exit := (maximum - origin) * inverse;
+			if abs(direction) < TREE_MINIMUM_NORMAL || abs(direction) > 1 / Tree_Scalar(TREE_MINIMUM_NORMAL)
+			{
+				entry = tree_ray_parameter_rare(minimum, origin, direction, 1);
+				exit = tree_ray_parameter_rare(maximum, origin, direction, 1);
+			}
+			else if abs(minimum - origin) > max(Tree_Scalar) || abs(maximum - origin) > max(Tree_Scalar)
+			{
+				entry = tree_ray_parameter_rare(minimum, origin, inverse, 0);
+				exit = tree_ray_parameter_rare(maximum, origin, inverse, 0);
+			}
 			if entry > exit
 			{
 				entry, exit = exit, entry;
 			}
 			t_min = tree_ordered_max(t_min, entry);
 			t_max = tree_ordered_min(t_max, exit);
-			if t_min > t_max
-			{
-				return 0, .Missing;
-			}
 		}
+	}
+	t_min = tree_ordered_max(Tree_Scalar(0), tree_ray_parameter_lower(t_min, 0));
+	t_max = tree_ordered_min(ray.maximum_t, -tree_ray_parameter_lower(-t_max, Tree_Bits(TREE_SIGN_BIT)));
+	if t_min > t_max
+	{
+		return 0, .Missing;
 	}
 	return t_min, .Present;
 }
 
 tree_ray_query_child :: proc "contextless" (
-	tree: ^Tree, child: ^Tree_Node_Child, ray: Tree_Ray,
+	tree: ^Tree, child: ^Tree_Node_Child, ray: Tree_Coordinate_Ray,
 	output: util.Buffer(i32), output_count: ^int,
 ) -> Physics_Status
 {
@@ -190,7 +210,7 @@ tree_ray_query_child :: proc "contextless" (
 }
 
 tree_ray_query :: proc "contextless" (
-	tree: ^Tree, ray: Tree_Ray, output: util.Buffer(i32),
+	tree: ^Tree, ray: Tree_Coordinate_Ray, output: util.Buffer(i32),
 ) -> (int, Physics_Status)
 {
 	if tree == nil || tree.state != .Ready || output.memory == nil || ray.maximum_t < 0
@@ -216,7 +236,7 @@ tree_ray_query :: proc "contextless" (
 }
 
 tree_sweep_query :: proc "contextless" (
-	tree: ^Tree, bounds: util.Bounding_Box, sweep: util.Vector3, maximum_t: f32, output: util.Buffer(i32),
+	tree: ^Tree, bounds: Tree_Bounds, sweep: Tree_Position, maximum_t: Tree_Scalar, output: util.Buffer(i32),
 ) -> (int, Physics_Status)
 {
 	if bounds.min.x > bounds.max.x || bounds.min.y > bounds.max.y || bounds.min.z > bounds.max.z
@@ -224,20 +244,50 @@ tree_sweep_query :: proc "contextless" (
 		return 0, .Invalid_Argument;
 	}
 	// a moving AABB intersects a target when the sweep point enters the target's Minkowski expansion
-	query_ray := Tree_Ray{direction=sweep, maximum_t=maximum_t};
+	query_ray := Tree_Coordinate_Ray{direction=sweep, maximum_t=maximum_t};
 	return tree_sweep_query_node(tree, 0, bounds, query_ray, output);
 }
 
 tree_sweep_query_child :: proc "contextless" (
-	tree: ^Tree, child: ^Tree_Node_Child, bounds: util.Bounding_Box, ray: Tree_Ray,
+	tree: ^Tree, child: ^Tree_Node_Child, bounds: Tree_Bounds, ray: Tree_Coordinate_Ray,
 	output: util.Buffer(i32), output_count: ^int,
 ) -> Physics_Status
 {
-	expanded := util.Bounding_Box{
-		min=util.vector3_subtract(child.min, bounds.max),
-		max=util.vector3_subtract(child.max, bounds.min),
+	expanded := Tree_Bounds{
+		min={child.min.x - bounds.max.x, child.min.y - bounds.max.y, child.min.z - bounds.max.z},
+		max={child.max.x - bounds.min.x, child.max.y - bounds.min.y, child.max.z - bounds.min.z},
 	};
-	_, hit := tree_ray_intersection(expanded, ray);
+	query_ray := ray;
+	// preserve finite Minkowski subtraction, including subnormal point
+	// bounds. recenter only axes whose endpoint subtraction overflows
+	if abs(expanded.min.x) > max(Tree_Scalar) || abs(expanded.max.x) > max(Tree_Scalar)
+	{
+		half_min := bounds.min.x * 0.5;
+		half_max := bounds.max.x * 0.5;
+		expansion := half_max - half_min;
+		query_ray.origin.x += half_max + half_min;
+		expanded.min.x = child.min.x - expansion;
+		expanded.max.x = child.max.x + expansion;
+	}
+	if abs(expanded.min.y) > max(Tree_Scalar) || abs(expanded.max.y) > max(Tree_Scalar)
+	{
+		half_min := bounds.min.y * 0.5;
+		half_max := bounds.max.y * 0.5;
+		expansion := half_max - half_min;
+		query_ray.origin.y += half_max + half_min;
+		expanded.min.y = child.min.y - expansion;
+		expanded.max.y = child.max.y + expansion;
+	}
+	if abs(expanded.min.z) > max(Tree_Scalar) || abs(expanded.max.z) > max(Tree_Scalar)
+	{
+		half_min := bounds.min.z * 0.5;
+		half_max := bounds.max.z * 0.5;
+		expansion := half_max - half_min;
+		query_ray.origin.z += half_max + half_min;
+		expanded.min.z = child.min.z - expansion;
+		expanded.max.z = child.max.z + expansion;
+	}
+	_, hit := tree_ray_intersection(expanded, query_ray);
 	if hit != .Present
 	{
 		return .Ok;
@@ -256,7 +306,7 @@ tree_sweep_query_child :: proc "contextless" (
 }
 
 tree_sweep_query_node :: proc "contextless" (
-	tree: ^Tree, node_index: int, bounds: util.Bounding_Box, ray: Tree_Ray, output: util.Buffer(i32),
+	tree: ^Tree, node_index: int, bounds: Tree_Bounds, ray: Tree_Coordinate_Ray, output: util.Buffer(i32),
 ) -> (int, Physics_Status)
 {
 	if tree == nil || tree.state != .Ready || output.memory == nil || ray.maximum_t < 0

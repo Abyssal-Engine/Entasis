@@ -76,38 +76,6 @@ custom_material :: proc "contextless" (
 	return .Allow;
 }
 
-Impulses1 :: struct
-{
-	values: [1]e.F32x8,
-}
-
-kernel1 :: proc "contextless" (
-	prestep_raw: rawptr, bodies: ^[4]e.Constraint_Kernel_Body_Wide,
-	_: f32, _: f32, impulses_raw: rawptr, mask: e.I32x8, phase: e.Constraint_Kernel_Phase,
-)
-{
-	prestep: ^Prestep = (^Prestep)(prestep_raw);
-	impulses: ^Impulses1 = (^Impulses1)(impulses_raw);
-	for index in 0..<1
-	{
-		body: ^e.Constraint_Kernel_Body_Wide = &bodies[index];
-		if phase == .Warmstart
-		{
-			v: e.F32x8 = simd.add(body.linear_velocity.x, simd.mul(impulses.values[index], body.inverse_mass));
-			body.linear_velocity.x = util.wide_select_f32(mask, v, body.linear_velocity.x);
-		}
-		else if phase == .Solve
-		{
-			dv: e.F32x8 = simd.sub(prestep.target, body.linear_velocity.x);
-			// inactive lanes must not produce 0/0, even though their outputs are masked
-			inverse_mass: e.F32x8 = util.wide_select_f32(mask, body.inverse_mass, e.F32x8(1));
-			di: e.F32x8 = simd.div(dv, inverse_mass);
-			body.linear_velocity.x = util.wide_select_f32(mask, simd.add(body.linear_velocity.x, simd.mul(di, inverse_mass)), body.linear_velocity.x);
-			impulses.values[index] = util.wide_select_f32(mask, simd.add(impulses.values[index], di), impulses.values[index]);
-		}
-	}
-}
-
 Impulses2 :: struct
 {
 	values: [2]e.F32x8,
@@ -211,8 +179,8 @@ owner_init :: proc(owner: ^Owner, workers, mode: int) -> e.Status
 	desc.capacity.bodies = BODY_COUNT;
 	desc.capacity.constraints = BODY_COUNT * 4;
 	desc.capacity.initial_constraints_per_type_batch = BODY_COUNT;
-	desc.solve.velocity_iterations = 4;
-	desc.solve.substeps = 1;
+	desc.solve.velocity_iterations = 1;
+	desc.solve.substeps = 4;
 	if mode == 4
 	{
 		desc.solve.fallback_batch_threshold = 1;
@@ -295,7 +263,7 @@ owner_init :: proc(owner: ^Owner, workers, mode: int) -> e.Status
 	registration: e.Custom_Constraint_Registration;
 	switch arity
 	{
-		case 1: registration = e.custom_constraint_registration(Description, Prestep, Impulses1, type_id, 1, access, access, validate_description, kernel1);
+		case 1: registration = e.custom_constraint_registration(Description, support.Velocity_Target_Prestep, support.Velocity_Target_Impulses, type_id, 1, access, access, validate_description, support.velocity_target_kernel);
 		case 2: registration = e.custom_constraint_registration(Description, Prestep, Impulses2, type_id, 2, access, access, validate_description, kernel2);
 		case 3: registration = e.custom_constraint_registration(Description, Prestep, Impulses3, type_id, 3, access, access, validate_description, kernel3);
 		case 4: registration = e.custom_constraint_registration(Description, Prestep, Impulses4, type_id, 4, access, access, validate_description, kernel4);

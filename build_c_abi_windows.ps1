@@ -7,7 +7,9 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$LlvmReadObjExe,
     [ValidateSet("Development", "Release")]
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32"
 )
 . (Join-Path $PSScriptRoot "scripts/windows/lib/c_abi_windows_common.ps1")
 
@@ -23,8 +25,13 @@ if (-not (Test-Path -LiteralPath $exportVerifier -PathType Container))
 {
     throw "Export verifier package was not found: $exportVerifier"
 }
-$runtimeDef = Resolve-RequiredFile (Join-Path $script:Root "generated\abi\entasis.def") "runtime DEF"
-$cookingDef = Resolve-RequiredFile (Join-Path $script:Root "generated\abi\entasis_cooking.def") "cooking DEF"
+$exportDirectory = "generated/abi"
+if ($Precision -eq "Mixed64")
+{
+    $exportDirectory += "/mixed64"
+}
+$runtimeDef = Resolve-RequiredFile (Join-Path $script:Root "$exportDirectory/entasis.def") "runtime DEF"
+$cookingDef = Resolve-RequiredFile (Join-Path $script:Root "$exportDirectory/entasis_cooking.def") "cooking DEF"
 
 
 Push-Location $script:Root
@@ -37,7 +44,7 @@ finally
     Pop-Location
 }
 
-$buildRoot = Get-CAbiBuildRoot $Configuration
+$buildRoot = Get-CAbiBuildRoot $Configuration $Precision
 $runtimeDll = Join-Path $buildRoot "entasis.dll"
 $runtimeImport = Join-Path $buildRoot "entasis.lib"
 $runtimeStatic = Join-Path $buildRoot "entasis_static.lib"
@@ -56,6 +63,7 @@ $knownArtifacts = @(
 Remove-Item -LiteralPath $knownArtifacts -Force -ErrorAction SilentlyContinue
 
 $commonArguments = @(
+    "-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())",
     "-collection:entasis=$(Join-Path $script:Root 'src')",
     "-target:$script:OdinTarget",
     "-microarch:$script:OdinMicroarch",
@@ -107,8 +115,8 @@ Assert-CAbiBuildArtifacts $buildRoot $Configuration
 Push-Location $script:Root
 try
 {
-    Invoke-Checked $odin @("run", $exportVerifier, "-vet", "-warnings-as-errors", "--", "--format", "coff", "--tool", $llvmReadObj, "runtime", $runtimeDll)
-    Invoke-Checked $odin @("run", $exportVerifier, "-vet", "-warnings-as-errors", "--", "--format", "coff", "--tool", $llvmReadObj, "cooking", $cookingDll)
+    Invoke-Checked $odin @("run", $exportVerifier, "-vet", "-warnings-as-errors", "--", "--precision", $Precision.ToLowerInvariant(), "--format", "coff", "--tool", $llvmReadObj, "runtime", $runtimeDll)
+    Invoke-Checked $odin @("run", $exportVerifier, "-vet", "-warnings-as-errors", "--", "--precision", $Precision.ToLowerInvariant(), "--format", "coff", "--tool", $llvmReadObj, "cooking", $cookingDll)
 }
 finally
 {

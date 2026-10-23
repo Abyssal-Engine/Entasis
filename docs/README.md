@@ -9,6 +9,7 @@ Start with [Odin](odin/GETTING-STARTED.md) to compile Entasis into your applicat
 - C ABI source builds: [Linux](c/BUILDING-LINUX.md) and [Windows](c/BUILDING-WINDOWS.md)
 - Prebuilt C SDK: use the README at the root of your extracted package. Its [consumer guide](../sdk/README.md) and [requirements](../sdk/BUILDING.md) are also available as repository templates
 - [Headless examples](odin/EXAMPLES.md): choose a program by physics task
+- [Large-world example](../examples/headless/large_world_precision/README.md): run frame conversion, origin shifting and mixed64 queries
 - [Physics viewer](../tools/physics_viewer/README.md): build the optional full-checkout tool for live examples, saved benchmark results and recording playback
 
 ## Integrate physics
@@ -17,6 +18,8 @@ Start with [Odin](odin/GETTING-STARTED.md) to compile Entasis into your applicat
 - [C API](c/API.md): initialization, resource lifetime, errors and feature usage
 - [Engine integration](odin/INTEGRATION.md): fixed updates, body mappings, application jobs and shutdown
 - [Cooking collision assets](odin/COOKING.md): prepare hulls, meshes and compounds, then import them into a world
+- [World precision](odin/reference/WORLD.md#precision-profiles-and-origin-frames): coordinate profiles, caller-owned frames and origin shifts
+- [Position views and snapshots](odin/reference/DATA-ACCESS.md#precision-and-borrowed-position-views): rounded views, direct-motion publication and global authoring values
 
 ## API reference
 
@@ -32,7 +35,7 @@ Odin references explain operations and their requirements. C references list dec
 | Filters, materials, contacts and triggers | [Collision](odin/reference/COLLISION.md) | [Collision](c/reference/COLLISION.md), [events](c/reference/EVENTS.md) |
 | Rays, sweeps, overlaps and distance | [Queries](odin/reference/QUERIES.md) | [Queries](c/reference/QUERIES.md) |
 | Batches and deferred commands | [Structural operations](odin/reference/STRUCTURAL-OPERATIONS.md) | [Command buffers](c/API.md#structural-command-buffers) |
-| State views and application properties | [Data access](odin/reference/DATA-ACCESS.md) | [Views](c/reference/VIEWS.md), [properties](c/reference/PROPERTIES.md) |
+| State views, snapshots and application properties | [Data access](odin/reference/DATA-ACCESS.md) | [Views](c/reference/VIEWS.md), [bodies](c/reference/BODIES.md), [properties](c/reference/PROPERTIES.md) |
 | Callbacks and manual stages | [Callbacks and stages](odin/reference/CALLBACKS-STAGES.md) | [Callbacks](c/API.md#callback-boundary) |
 | Profiling and solver inspection | [Profiling](odin/reference/PROFILING-INSPECTION.md#enable-profiling) | [Views and profiling](c/reference/VIEWS.md) |
 | Cooking and imports | [Cooking](odin/COOKING.md) | [Cooking](c/reference/COOKING.md) |

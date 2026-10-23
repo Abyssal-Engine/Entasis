@@ -2,17 +2,25 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 output_root="$ROOT/build/sdk/linux"
-if (($#)); then
-  (($# == 2)) && [[ "$1" == --output-root && -n "$2" && "$2" != --* ]] ||
-    { printf 'usage: package_linux_sdk.sh [--output-root <path>]\n' >&2; exit 2; }
-  output_root="$2"
-fi
+precision=float32
+declare -A seen=()
+while (($#)); do
+  option="$1"
+  case "$option" in --output-root|--precision) ;; *) printf 'unknown option: %s\n' "$option" >&2; exit 2 ;; esac
+  [[ -z "${seen[$option]:-}" ]] && (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || { printf 'invalid or repeated option: %s\n' "$option" >&2; exit 2; }
+  seen[$option]=1
+  case "$option" in --output-root) output_root="$2" ;; --precision) precision="$2" ;; esac
+  shift 2
+done
+case "$precision" in float32) high_define=0; suffix="" ;; mixed64) high_define=1; suffix="-mixed64" ;; *) printf 'invalid precision: %s\n' "$precision" >&2; exit 2 ;; esac
+if [[ "$precision" == mixed64 ]]; then output_root+="/mixed64"; fi
 [[ "$output_root" == /* ]] || output_root="$ROOT/$output_root"
 output_root="$(realpath -m "$output_root")"
 BUILD_DIR="$ROOT/build/c_abi/linux/release"
+if [[ "$precision" == mixed64 ]]; then BUILD_DIR+="/mixed64"; fi
 version="$(sed -n 's/^#define ENTASIS_VERSION_STRING "\(.*\)"/\1/p' "$ROOT/include/entasis/base.h")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || { printf 'invalid product version\n' >&2; exit 2; }
-install_name="Entasis-$version-linux-x86_64-v3-c-sdk"
+install_name="Entasis-$version-linux-x86_64-v3-c-sdk$suffix"
 install_root="$output_root/$install_name"
 archive="$output_root/$install_name.tar.gz"
 for output in "$install_root" "$archive"; do
@@ -30,7 +38,7 @@ cp "$ROOT/include/entasis/"*.h "$install_root/include/entasis/"
 for library in "${libraries[@]}"; do cp "$BUILD_DIR/$library" "$install_root/lib/"; done
 cp "$ROOT/sdk/examples/"* "$install_root/examples/"
 cp "$ROOT/sdk/README.md" "$install_root/README.md"
-cp "$ROOT/sdk/cmake/EntasisConfig.cmake" "$install_root/lib/cmake/Entasis/"
+sed -e "s/@ENTASIS_PRECISION@/$precision/g" -e "s/@ENTASIS_PRECISION_MIXED64@/$high_define/g" "$ROOT/sdk/cmake/EntasisConfig.cmake" > "$install_root/lib/cmake/Entasis/EntasisConfig.cmake"
 cp "$ROOT/sdk/BUILDING.md" "$install_root/share/doc/Entasis/BUILDING.md"
 cp -R "$ROOT/docs/c/." "$install_root/share/doc/Entasis/c/"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$install_root/share/licenses/Entasis/"
@@ -41,7 +49,7 @@ done
 sed "s/@ENTASIS_VERSION@/$version/g" "$ROOT/sdk/cmake/EntasisConfigVersion.cmake.in" > "$install_root/lib/cmake/Entasis/EntasisConfigVersion.cmake"
 for template in "$ROOT/sdk/linux/pkgconfig/"*.pc.in; do
   name="${template##*/}"
-  sed "s/@ENTASIS_VERSION@/$version/g" "$template" > "$install_root/lib/pkgconfig/${name%.in}"
+  sed -e "s/@ENTASIS_VERSION@/$version/g" -e "s/@ENTASIS_PRECISION_MIXED64@/$high_define/g" "$template" > "$install_root/lib/pkgconfig/${name%.in}"
 done
 awk -F= '$1 ~ /^(llvm|cmake|ninja|icu70)\./ && $1 !~ /\.hosts\.windows-amd64\./' "$ROOT/tools/toolchains.lock" > "$install_root/tools/toolchains.lock"
 tar -czf "$archive" -C "$output_root" "$install_name"

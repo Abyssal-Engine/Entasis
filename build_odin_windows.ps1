@@ -4,6 +4,8 @@ param(
     [string]$OdinExe,
     [ValidateSet("Development", "Release", "All")]
     [string]$Configuration = "Development",
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32",
     [ValidateNotNullOrEmpty()]
     [string]$Package
 )
@@ -31,7 +33,7 @@ Write-Host "EXAMPLE_BUILD_CONFIG configuration=$($Configuration.ToLowerInvariant
 
 function Build-Example([string]$SelectedPackage, [string]$SelectedConfiguration)
 {
-    Initialize-OdinProfile "examples" $SelectedPackage $SelectedConfiguration
+    Initialize-OdinProfile "examples" $SelectedPackage $SelectedConfiguration $Precision
     $configurationName = $SelectedConfiguration.ToLowerInvariant()
     Write-Host "[example build] $SelectedPackage configuration=$configurationName executable=$script:OdinProfileOutput"
     $arguments = @(

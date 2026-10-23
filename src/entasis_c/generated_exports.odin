@@ -4947,3 +4947,1210 @@ export_entasis_joint_break_stepper_update :: proc "c" (
 		diagnostic,
 	);
 }
+
+@(export, link_name="entasis_origin_frame_at")
+export_entasis_origin_frame_at :: proc "c" (
+	origin: ^Entasis_Global_Position,
+	result: ^Entasis_Origin_Frame,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_origin_frame_at(origin, result, diagnostic);
+}
+
+@(export, link_name="entasis_origin_frame_to_local")
+export_entasis_origin_frame_to_local :: proc "c" (
+	frame: ^Entasis_Origin_Frame,
+	position: ^Entasis_Global_Position,
+	result: ^Entasis_Vector3,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_origin_frame_to_local(frame, position, result, diagnostic);
+}
+
+@(export, link_name="entasis_origin_frame_to_global")
+export_entasis_origin_frame_to_global :: proc "c" (
+	frame: ^Entasis_Origin_Frame,
+	position: ^Entasis_Vector3,
+	result: ^Entasis_Global_Position,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_origin_frame_to_global(frame, position, result, diagnostic);
+}
+
+@(export, link_name="entasis_global_position_delta")
+export_entasis_global_position_delta :: proc "c" (
+	from: ^Entasis_Global_Position,
+	to: ^Entasis_Global_Position,
+	result: ^Entasis_Vector3,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_global_position_delta(from, to, result, diagnostic);
+}
+
+@(export, link_name="entasis_origin_frame_translate")
+export_entasis_origin_frame_translate :: proc "c" (
+	frame: ^Entasis_Origin_Frame,
+	delta: ^Entasis_Global_Position,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_origin_frame_translate(frame, delta, diagnostic);
+}
+
+@(export, link_name="entasis_world_shift_origin")
+export_entasis_world_shift_origin :: proc "c" (
+	world: ^Entasis_World,
+	frame: ^Entasis_Origin_Frame,
+	delta: ^Entasis_Vector3,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_shift_origin(world, frame, delta, diagnostic);
+}
+
+@(export, link_name="entasis_global_position")
+export_entasis_global_position :: proc "c" (x: f64, y: f64, z: f64) -> Entasis_Global_Position
+{
+	return abi_global_position(x, y, z);
+}
+
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_add_global")
+export_entasis_body_add_global :: proc "c" (
+	world: ^Entasis_World,
+	description: ^Entasis_Body_Description,
+	position: ^Entasis_Global_Position,
+	out_handle: ^Entasis_Body_Handle,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_add_global(world, description, position, out_handle, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_apply_global")
+export_entasis_body_apply_global :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	description: ^Entasis_Body_Description,
+	position: ^Entasis_Global_Position,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_apply_global(world, handle, description, position, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_set_global_pose")
+export_entasis_body_set_global_pose :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	value: ^Entasis_Global_Pose,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_set_global_pose(world, handle, value, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_get_global_pose")
+export_entasis_body_get_global_pose :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	out_state: ^Entasis_Global_Pose,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_get_global_pose(world, handle, out_state, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_add_global")
+export_entasis_static_add_global :: proc "c" (
+	world: ^Entasis_World,
+	description: ^Entasis_Static_Description,
+	position: ^Entasis_Global_Position,
+	awakening: Entasis_Awakening_Policy,
+	out_handle: ^Entasis_Static_Handle,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_add_global(world, description, position, awakening, out_handle, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_apply_global")
+export_entasis_static_apply_global :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	description: ^Entasis_Static_Description,
+	position: ^Entasis_Global_Position,
+	awakening: Entasis_Awakening_Policy,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_apply_global(world, handle, description, position, awakening, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_set_global_pose")
+export_entasis_static_set_global_pose :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	value: ^Entasis_Global_Pose,
+	awakening: Entasis_Awakening_Policy,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_set_global_pose(world, handle, value, awakening, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_get_global_pose")
+export_entasis_static_get_global_pose :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	out_state: ^Entasis_Global_Pose,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_get_global_pose(world, handle, out_state, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_add_global_filtered")
+export_entasis_static_add_global_filtered :: proc "c" (
+	world: ^Entasis_World,
+	description: ^Entasis_Static_Description,
+	position: ^Entasis_Global_Position,
+	filter: Entasis_Static_Awakening_Filter_Proc,
+	user_context: rawptr,
+	out_handle: ^Entasis_Static_Handle,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_add_global_filtered(world, description, position, filter, user_context, out_handle, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_apply_global_filtered")
+export_entasis_static_apply_global_filtered :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	description: ^Entasis_Static_Description,
+	position: ^Entasis_Global_Position,
+	filter: Entasis_Static_Awakening_Filter_Proc,
+	user_context: rawptr,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_apply_global_filtered(world, handle, description, position, filter, user_context, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_set_global_kinematic_target")
+export_entasis_body_set_global_kinematic_target :: proc "c" (
+	world: ^Entasis_World,
+	body: Entasis_Body_Handle,
+	target: ^Entasis_Global_Pose,
+	wake: Entasis_Body_Control_Wake,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_set_global_kinematic_target(world, body, target, wake, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_get_global_kinematic_target")
+export_entasis_body_get_global_kinematic_target :: proc "c" (
+	world: ^Entasis_World,
+	body: Entasis_Body_Handle,
+	out_target: ^Entasis_Global_Pose,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_get_global_kinematic_target(world, body, out_target, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_add_force_at_global_position")
+export_entasis_body_add_force_at_global_position :: proc "c" (
+	world: ^Entasis_World,
+	body: Entasis_Body_Handle,
+	force: Entasis_Vector3,
+	position: ^Entasis_Global_Position,
+	wake: Entasis_Body_Control_Wake,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_add_force_at_global_position(world, body, force, position, wake, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_world_init_global")
+export_entasis_world_init_global :: proc "c" (
+	world: ^Entasis_World,
+	description: ^Entasis_World_Description,
+	extensions: ^Entasis_World_Extensions,
+	pool: ^Entasis_Buffer_Pool,
+	callbacks: ^Entasis_Global_Velocity_Callbacks,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_init_global(world, description, extensions, pool, callbacks, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_add_batch_global")
+export_entasis_body_add_batch_global :: proc "c" (
+	world: ^Entasis_World,
+	descriptions: [^]Entasis_Body_Description,
+	count: u64,
+	positions: [^]Entasis_Global_Position,
+	position_count: u64,
+	out_handles: [^]Entasis_Body_Handle,
+	out_completed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_add_batch_global(
+		world,
+		descriptions,
+		count,
+		positions,
+		position_count,
+		out_handles,
+		out_completed,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_apply_batch_global")
+export_entasis_body_apply_batch_global :: proc "c" (
+	world: ^Entasis_World,
+	handles: [^]Entasis_Body_Handle,
+	descriptions: [^]Entasis_Body_Description,
+	count: u64,
+	positions: [^]Entasis_Global_Position,
+	position_count: u64,
+	out_completed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_apply_batch_global(
+		world,
+		handles,
+		descriptions,
+		count,
+		positions,
+		position_count,
+		out_completed,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_add_batch_global")
+export_entasis_static_add_batch_global :: proc "c" (
+	world: ^Entasis_World,
+	descriptions: [^]Entasis_Static_Description,
+	count: u64,
+	positions: [^]Entasis_Global_Position,
+	position_count: u64,
+	awakening: Entasis_Awakening_Policy,
+	out_handles: [^]Entasis_Static_Handle,
+	out_completed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_add_batch_global(
+		world,
+		descriptions,
+		count,
+		positions,
+		position_count,
+		awakening,
+		out_handles,
+		out_completed,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_apply_batch_global")
+export_entasis_static_apply_batch_global :: proc "c" (
+	world: ^Entasis_World,
+	handles: [^]Entasis_Static_Handle,
+	descriptions: [^]Entasis_Static_Description,
+	count: u64,
+	positions: [^]Entasis_Global_Position,
+	position_count: u64,
+	awakening: Entasis_Awakening_Policy,
+	out_completed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_apply_batch_global(
+		world,
+		handles,
+		descriptions,
+		count,
+		positions,
+		position_count,
+		awakening,
+		out_completed,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_world_apply_commands_global")
+export_entasis_world_apply_commands_global :: proc "c" (
+	world: ^Entasis_World,
+	buffer: ^Entasis_Command_Buffer,
+	positions: [^]Entasis_Global_Position,
+	position_count: u64,
+	out_processed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_apply_commands_global(world, buffer, positions, position_count, out_processed, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_world_export_global_poses")
+export_entasis_world_export_global_poses :: proc "c" (
+	world: ^Entasis_World,
+	references: [^]Entasis_Collidable_Reference,
+	count: u64,
+	output: [^]Entasis_Global_Pose,
+	capacity: u64,
+	frame: ^Entasis_Origin_Frame,
+	out_completed: ^u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_export_global_poses(world, references, count, output, capacity, frame, out_completed, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_get_global_state")
+export_entasis_body_get_global_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	output: ^Entasis_Global_Body_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_get_global_state(world, handle, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_apply_global_state")
+export_entasis_body_apply_global_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	state: ^Entasis_Global_Body_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_apply_global_state(world, handle, state, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_get_global_state")
+export_entasis_static_get_global_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	output: ^Entasis_Global_Static_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_get_global_state(world, handle, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_apply_global_state")
+export_entasis_static_apply_global_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Static_Handle,
+	state: ^Entasis_Global_Static_State,
+	awakening: Entasis_Awakening_Policy,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_apply_global_state(world, handle, state, awakening, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_constraint_get_global_target_state")
+export_entasis_constraint_get_global_target_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Constraint_Handle,
+	output: ^Entasis_Global_Constraint_Target_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_constraint_get_global_target_state(world, handle, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_constraint_apply_global_target_state")
+export_entasis_constraint_apply_global_target_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Constraint_Handle,
+	state: ^Entasis_Global_Constraint_Target_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_constraint_apply_global_target_state(world, handle, state, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_get_global_target_state")
+export_entasis_body_get_global_target_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	output: ^Entasis_Global_Kinematic_Target_State,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_get_global_target_state(world, handle, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_apply_global_target_state")
+export_entasis_body_apply_global_target_state :: proc "c" (
+	world: ^Entasis_World,
+	handle: Entasis_Body_Handle,
+	state: ^Entasis_Global_Kinematic_Target_State,
+	wake: Entasis_Body_Control_Wake,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_apply_global_target_state(world, handle, state, wake, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_body_add_global_state")
+export_entasis_body_add_global_state :: proc "c" (
+	world: ^Entasis_World,
+	state: ^Entasis_Global_Body_State,
+	output: ^Entasis_Body_Handle,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_body_add_global_state(world, state, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_static_add_global_state")
+export_entasis_static_add_global_state :: proc "c" (
+	world: ^Entasis_World,
+	state: ^Entasis_Global_Static_State,
+	awakening: Entasis_Awakening_Policy,
+	output: ^Entasis_Static_Handle,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_static_add_global_state(world, state, awakening, output, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_world_export_global_states")
+export_entasis_world_export_global_states :: proc "c" (
+	world: ^Entasis_World,
+	selection: ^Entasis_Global_State_Selection,
+	snapshot: ^Entasis_Global_State_Snapshot,
+	out_counts: ^Entasis_Global_State_Counts,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_export_global_states(world, selection, snapshot, out_counts, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_world_apply_global_states")
+export_entasis_world_apply_global_states :: proc "c" (
+	world: ^Entasis_World,
+	selection: ^Entasis_Global_State_Selection,
+	snapshot: ^Entasis_Global_State_Snapshot,
+	awakening: Entasis_Awakening_Policy,
+	target_wake: Entasis_Body_Control_Wake,
+	out_counts: ^Entasis_Global_State_Counts,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_world_apply_global_states(world, selection, snapshot, awakening, target_wake, out_counts, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_ray_cast_global_any")
+export_entasis_query_context_ray_cast_global_any :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	ray: Entasis_World_Precision_Segment,
+	filter: ^Entasis_Query_Filter,
+	out_hit: ^Entasis_Bool,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_ray_cast_global_any(
+		query_context,
+		ray,
+		filter,
+		out_hit,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_ray_cast_global_closest")
+export_entasis_query_context_ray_cast_global_closest :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	ray: Entasis_World_Precision_Segment,
+	filter: ^Entasis_Query_Filter,
+	out_hit: ^Entasis_Global_Ray_Hit,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_ray_cast_global_closest(
+		query_context,
+		ray,
+		filter,
+		out_hit,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_ray_cast_global_all")
+export_entasis_query_context_ray_cast_global_all :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	ray: Entasis_World_Precision_Segment,
+	filter: ^Entasis_Query_Filter,
+	hits: [^]Entasis_Global_Ray_Hit,
+	capacity: u64,
+	out_written: ^u64,
+	out_required: ^u64,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_ray_cast_global_all(
+		query_context,
+		ray,
+		filter,
+		hits,
+		capacity,
+		out_written,
+		out_required,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_sweep_global_any")
+export_entasis_query_context_sweep_global_any :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+	out_hit: ^Entasis_Bool,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_sweep_global_any(
+		query_context,
+		shape,
+		pose,
+		velocity,
+		maximum_t,
+		filter,
+		settings,
+		out_hit,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_sweep_global_closest")
+export_entasis_query_context_sweep_global_closest :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+	out_hit: ^Entasis_Global_Sweep_Hit,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_sweep_global_closest(
+		query_context,
+		shape,
+		pose,
+		velocity,
+		maximum_t,
+		filter,
+		settings,
+		out_hit,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_sweep_global_all")
+export_entasis_query_context_sweep_global_all :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+	hits: [^]Entasis_Global_Sweep_Hit,
+	capacity: u64,
+	out_written: ^u64,
+	out_required: ^u64,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_sweep_global_all(
+		query_context,
+		shape,
+		pose,
+		velocity,
+		maximum_t,
+		filter,
+		settings,
+		hits,
+		capacity,
+		out_written,
+		out_required,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_overlap_global_any")
+export_entasis_query_context_overlap_global_any :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	filter: ^Entasis_Query_Filter,
+	out_state: ^Entasis_Overlap_State,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_overlap_global_any(
+		query_context,
+		shape,
+		pose,
+		filter,
+		out_state,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_overlap_global_all")
+export_entasis_query_context_overlap_global_all :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	filter: ^Entasis_Query_Filter,
+	hits: [^]Entasis_Overlap_Hit,
+	capacity: u64,
+	out_written: ^u64,
+	out_required: ^u64,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_overlap_global_all(
+		query_context,
+		shape,
+		pose,
+		filter,
+		hits,
+		capacity,
+		out_written,
+		out_required,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_volume_global_all")
+export_entasis_query_context_volume_global_all :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	bounds: Entasis_Global_Bounds,
+	filter: ^Entasis_Query_Filter,
+	hits: [^]Entasis_Volume_Hit,
+	capacity: u64,
+	out_written: ^u64,
+	out_required: ^u64,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_volume_global_all(
+		query_context,
+		bounds,
+		filter,
+		hits,
+		capacity,
+		out_written,
+		out_required,
+		traversal_stack,
+		stack_capacity,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_shape_closest_point_global")
+export_entasis_query_context_shape_closest_point_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	point: Entasis_Global_Position,
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	settings: ^Entasis_Distance_Query_Settings,
+	out_result: ^Entasis_Global_Shape_Distance_Result,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_shape_closest_point_global(
+		query_context,
+		point,
+		shape,
+		pose,
+		settings,
+		out_result,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_shape_distance_global")
+export_entasis_query_context_shape_distance_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape_a: Entasis_Shape_Handle,
+	pose_a: Entasis_Global_Pose,
+	shape_b: Entasis_Shape_Handle,
+	pose_b: Entasis_Global_Pose,
+	settings: ^Entasis_Distance_Query_Settings,
+	out_result: ^Entasis_Global_Shape_Distance_Result,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_shape_distance_global(
+		query_context,
+		shape_a,
+		pose_a,
+		shape_b,
+		pose_b,
+		settings,
+		out_result,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_shape_penetration_global")
+export_entasis_query_context_shape_penetration_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape_a: Entasis_Shape_Handle,
+	pose_a: Entasis_Global_Pose,
+	shape_b: Entasis_Shape_Handle,
+	pose_b: Entasis_Global_Pose,
+	settings: ^Entasis_Distance_Query_Settings,
+	out_result: ^Entasis_Global_Shape_Distance_Result,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_shape_penetration_global(
+		query_context,
+		shape_a,
+		pose_a,
+		shape_b,
+		pose_b,
+		settings,
+		out_result,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_shape_depenetrate_global")
+export_entasis_query_context_shape_depenetrate_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	shape_a: Entasis_Shape_Handle,
+	pose_a: Entasis_Global_Pose,
+	shape_b: Entasis_Shape_Handle,
+	pose_b: Entasis_Global_Pose,
+	settings: ^Entasis_Distance_Query_Settings,
+	out_result: ^Entasis_Shape_Correction_Result,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_shape_depenetrate_global(
+		query_context,
+		shape_a,
+		pose_a,
+		shape_b,
+		pose_b,
+		settings,
+		out_result,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_collidable_shape_global_pose")
+export_entasis_query_context_collidable_shape_global_pose :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	collidable: Entasis_Collidable_Reference,
+	out_shape: ^Entasis_Shape_Handle,
+	out_pose: ^Entasis_Global_Pose,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_collidable_shape_global_pose(query_context, collidable, out_shape, out_pose, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_custom_constraint_register_position_space")
+export_entasis_custom_constraint_register_position_space :: proc "c" (
+	world: ^Entasis_World,
+	registration: ^Entasis_Custom_Constraint_Registration,
+	position_space: Entasis_Constraint_Position_Space,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_custom_constraint_register_position_space(world, registration, position_space, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_constraint_set_reaction_provider_position_space")
+export_entasis_constraint_set_reaction_provider_position_space :: proc "c" (
+	world: ^Entasis_World,
+	type_id: Entasis_Constraint_Type_ID,
+	provider: ^Entasis_Joint_Reaction_Provider,
+	position_space: Entasis_Constraint_Position_Space,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_constraint_set_reaction_provider_position_space(world, type_id, provider, position_space, diagnostic);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_ray_global_any")
+export_entasis_query_ray_global_any :: proc "c" (
+	segment: Entasis_World_Precision_Segment,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_ray_global_any(segment, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_ray_global_closest")
+export_entasis_query_ray_global_closest :: proc "c" (
+	segment: Entasis_World_Precision_Segment,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_ray_global_closest(segment, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_ray_global_all")
+export_entasis_query_ray_global_all :: proc "c" (
+	segment: Entasis_World_Precision_Segment,
+	output: Entasis_Query_Output,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_ray_global_all(segment, output, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_sweep_global_any")
+export_entasis_query_sweep_global_any :: proc "c" (
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+) -> Entasis_Global_Query
+{
+	return abi_query_sweep_global_any(shape, pose, velocity, maximum_t, filter, settings);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_sweep_global_closest")
+export_entasis_query_sweep_global_closest :: proc "c" (
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+) -> Entasis_Global_Query
+{
+	return abi_query_sweep_global_closest(shape, pose, velocity, maximum_t, filter, settings);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_sweep_global_all")
+export_entasis_query_sweep_global_all :: proc "c" (
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	maximum_t: f32,
+	output: Entasis_Query_Output,
+	filter: ^Entasis_Query_Filter,
+	settings: ^Entasis_Sweep_Settings,
+) -> Entasis_Global_Query
+{
+	return abi_query_sweep_global_all(shape, pose, velocity, maximum_t, output, filter, settings);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_overlap_global_any")
+export_entasis_query_overlap_global_any :: proc "c" (
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_overlap_global_any(shape, pose, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_overlap_global_all")
+export_entasis_query_overlap_global_all :: proc "c" (
+	shape: Entasis_Shape_Handle,
+	pose: Entasis_Global_Pose,
+	output: Entasis_Query_Output,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_overlap_global_all(shape, pose, output, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_volume_global_all")
+export_entasis_query_volume_global_all :: proc "c" (
+	bounds: Entasis_Global_Bounds,
+	output: Entasis_Query_Output,
+	filter: ^Entasis_Query_Filter,
+) -> Entasis_Global_Query
+{
+	return abi_query_volume_global_all(bounds, output, filter);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_query_batch_global")
+export_entasis_query_context_query_batch_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	queries: [^]Entasis_Global_Query,
+	query_count: u64,
+	results: [^]Entasis_Global_Query_Result,
+	result_capacity: u64,
+	scratch: ^Entasis_Global_Query_Scratch,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_query_batch_global(
+		query_context,
+		queries,
+		query_count,
+		results,
+		result_capacity,
+		scratch,
+		diagnostic,
+	);
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+@(export, link_name="entasis_query_context_distance_query_batch_global")
+export_entasis_query_context_distance_query_batch_global :: proc "c" (
+	query_context: ^Entasis_Query_Context,
+	queries: [^]Entasis_Global_Distance_Query,
+	count: u64,
+	results: [^]Entasis_Global_Distance_Query_Result,
+	result_capacity: u64,
+	diagnostic: ^Entasis_Diagnostic,
+) -> Entasis_Status
+{
+	return abi_query_context_distance_query_batch_global(
+		query_context,
+		queries,
+		count,
+		results,
+		result_capacity,
+		diagnostic,
+	);
+}
+
+}

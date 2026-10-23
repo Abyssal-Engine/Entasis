@@ -8,6 +8,15 @@ Header: `<entasis/bodies.h>`
 
 Use the [C API guide](../API.md) for setup and examples. The declarations below describe each type and operation. Structure sizes and alignments are in bytes
 
+Function families:
+
+- [Description constructors](#description-constructors)
+- [Body operations](#body-operations)
+- [Static operations](#static-operations)
+- [Body control and forces](#body-control-and-forces)
+- [Kinematic targets and axis locks](#kinematic-targets-and-axis-locks)
+- [Global states and snapshots](#global-states-and-snapshots)
+
 ## Scalar aliases
 
 ### `entasis_body_control_wake_t`
@@ -98,7 +107,7 @@ typedef entasis_bool_t (ENTASIS_CALL *entasis_static_awakening_filter_fn)(void *
 | `user_context` | `void *`                | caller-owned callback state, borrowed until the static mutation returns |
 | `body`         | `entasis_body_handle_t` | sleeping dynamic body whose island overlaps the changed static          |
 
-returns true to allow waking the body island
+returns nonzero to allow waking the body island, zero to reject
 
 ## Structures
 
@@ -193,6 +202,55 @@ Size `56`, alignment `4`
 | `angular_axes`    | `entasis_body_lock_axes_t`  | angular rows in the supplied reference orientation                                                |
 | `spring_settings` | `entasis_spring_settings_t` | finite positive angular frequency and nonnegative damping. existing constraint softness semantics |
 
+### `entasis_global_body_state_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+body authoring settings with an authoritative f64 pose
+
+shape identities remain borrowed from their world. this value does not capture sleep counters, contacts, solver impulses or pending kinematic targets
+
+Size `136`, alignment `8`
+
+| Field           | C type                             | Meaning                                                       |
+| --------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `pose`          | `entasis_global_pose_t`            | pose in the current simulation frame                          |
+| `velocity`      | `entasis_body_velocity_t`          | linear and angular velocity                                   |
+| `local_inertia` | `entasis_body_inertia_t`           | body-local inverse inertia and inverse mass                   |
+| `collidable`    | `entasis_collidable_description_t` | shape identity and collision settings                         |
+| `activity`      | `entasis_activity_description_t`   | sleep threshold and minimum under-threshold timestep settings |
+
+### `entasis_global_static_state_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+static authoring pose, shape and continuity settings
+
+shape identity remains borrowed from its world. positions use the current simulation frame
+
+Size `56`, alignment `8`
+
+| Field        | C type                           | Meaning                                     |
+| ------------ | -------------------------------- | ------------------------------------------- |
+| `pose`       | `entasis_global_pose_t`          | pose in the current simulation frame        |
+| `shape`      | `entasis_shape_handle_t`         | shape handle owned by the destination world |
+| `continuity` | `entasis_continuous_detection_t` | continuous collision detection settings     |
+
+### `entasis_global_kinematic_target_state_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+pending kinematic target presence and f64 pose
+
+does not record target execution phase history. applying a present state queues a new target
+
+Size `48`, alignment `8`
+
+| Field      | C type                             | Meaning                                                    |
+| ---------- | ---------------------------------- | ---------------------------------------------------------- |
+| `pose`     | `entasis_global_pose_t`            | current-frame target pose, ignored when presence is absent |
+| `presence` | `entasis_global_target_presence_t` | whether a pending target exists                            |
+
 ## Struct aliases
 
 ### `entasis_body_state_t`
@@ -213,7 +271,11 @@ typedef entasis_static_description_t entasis_static_state_t;
 
 ## Functions
 
-### `entasis_body_activity`
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
+### Description constructors
+
+#### `entasis_body_activity`
 
 constructs sleeping thresholds
 
@@ -230,7 +292,7 @@ ENTASIS_API entasis_activity_description_t ENTASIS_CALL entasis_body_activity(fl
 
 returns the activity description
 
-### `entasis_body_activity_default`
+#### `entasis_body_activity_default`
 
 returns the ordinary facade sleep policy
 
@@ -240,87 +302,7 @@ ENTASIS_API entasis_activity_description_t ENTASIS_CALL entasis_body_activity_de
 
 returns the default activity description
 
-### `entasis_body_add`
-
-adds one body
-
-allocation may occur when world capacity grows. ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add(entasis_world_t * world, const entasis_body_description_t * description, entasis_body_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter     | C type                               | Meaning                                                                      |
-| ------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`       | `entasis_world_t *`                  | target world                                                                 |
-| `description` | `const entasis_body_description_t *` | body description to copy                                                     |
-| `out_handle`  | `entasis_body_handle_t *`            | receives the created body handle                                             |
-| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_add_batch`
-
-adds a prefix of descriptions in input order after one capacity check
-
-out_handles must contain at least count entries. on failure, out_completed receives the number of successfully committed prefix entries and entries at or after that index remain invalid. allocation: the initial capacity check may grow world storage. ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_batch(entasis_world_t * world, const entasis_body_description_t * descriptions, uint64_t count, entasis_body_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                               | Meaning                                                                      |
-| --------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`                  | target world                                                                 |
-| `descriptions`  | `const entasis_body_description_t *` | input body description array                                                 |
-| `count`         | `uint64_t`                           | number of entries in the input arrays                                        |
-| `out_handles`   | `entasis_body_handle_t *`            | receives body handles in input order                                         |
-| `out_completed` | `uint64_t *`                         | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_apply`
-
-replaces the complete body description
-
-the body is awakened and broad-phase membership is updated when required. ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_description_t * description, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter     | C type                               | Meaning                                                                      |
-| ------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`       | `entasis_world_t *`                  | target world                                                                 |
-| `handle`      | `entasis_body_handle_t`              | target body handle                                                           |
-| `description` | `const entasis_body_description_t *` | body description to copy                                                     |
-| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_apply_batch`
-
-applies matching handles and descriptions in input order
-
-a failure stops the batch. out_completed reports the number of applied entries and identifies the first failing index. earlier changes remain applied. allocation may occur through body mutation. ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_description_t * descriptions, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                               | Meaning                                                                      |
-| --------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`                  | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`      | input body handles                                                           |
-| `descriptions`  | `const entasis_body_description_t *` | input body description array                                                 |
-| `count`         | `uint64_t`                           | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                         | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_dynamic`
+#### `entasis_body_dynamic`
 
 constructs a dynamic collidable body description
 
@@ -338,45 +320,7 @@ ENTASIS_API entasis_body_description_t ENTASIS_CALL entasis_body_dynamic(entasis
 
 returns the constructed body description
 
-### `entasis_body_get`
-
-copies the description of one active or sleeping body
-
-allocation: none. the returned value contains no pointers into simulation data
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get(entasis_world_t * world, entasis_body_handle_t handle, entasis_body_state_t * out_state, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                                      |
-| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
-| `out_state`  | `entasis_body_state_t *` | receives the copied body state                                               |
-| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_get_batch`
-
-copies body snapshots for a prefix of handles into caller-owned output storage
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_batch(entasis_world_t * world, const entasis_body_handle_t * handles, uint64_t count, entasis_body_state_t * out_states, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                          | Meaning                                                                      |
-| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`             | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
-| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
-| `out_states`    | `entasis_body_state_t *`        | receives copied body states in input order                                   |
-| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_kinematic`
+#### `entasis_body_kinematic`
 
 constructs a kinematic collidable body description
 
@@ -393,263 +337,7 @@ ENTASIS_API entasis_body_description_t ENTASIS_CALL entasis_body_kinematic(entas
 
 returns the constructed body description
 
-### `entasis_body_remove`
-
-removes a body and every connected constraint
-
-ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_remove(entasis_world_t * world, entasis_body_handle_t handle, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                                      |
-| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
-| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_remove_batch`
-
-removes handles in input order
-
-a failure stops the batch. out_completed reports how many bodies were removed and identifies the first failing index. earlier removals remain applied. ownership: owner thread only while the world is idle
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_remove_batch(entasis_world_t * world, const entasis_body_handle_t * handles, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                          | Meaning                                                                      |
-| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`             | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
-| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_activity`
-
-updates sleep thresholds and resets the activity counters
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_activity(entasis_world_t * world, entasis_body_handle_t handle, const entasis_activity_description_t * value, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                                   | Meaning                                                                      |
-| ------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`                      | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`                  | target body handle                                                           |
-| `value`      | `const entasis_activity_description_t *` | activity description                                                         |
-| `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_activity_batch`
-
-applies activity descriptions to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_activity_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_activity_description_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                                   | Meaning                                                                      |
-| --------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`                      | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`          | input body handles                                                           |
-| `values`        | `const entasis_activity_description_t *` | input activity description array                                             |
-| `count`         | `uint64_t`                               | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_collidable`
-
-updates shape, continuity, and speculative margins
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_collidable(entasis_world_t * world, entasis_body_handle_t handle, const entasis_collidable_description_t * value, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                                     | Meaning                                                                      |
-| ------------ | ------------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`                        | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`                    | target body handle                                                           |
-| `value`      | `const entasis_collidable_description_t *` | collidable description                                                       |
-| `diagnostic` | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_collidable_batch`
-
-applies collidable descriptions to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_collidable_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_collidable_description_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                                     | Meaning                                                                      |
-| --------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`                        | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`            | input body handles                                                           |
-| `values`        | `const entasis_collidable_description_t *` | input collidable description array                                           |
-| `count`         | `uint64_t`                                 | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                               | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_inertia`
-
-updates local inertia and handles dynamic/kinematic changes
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_inertia(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_inertia_t * value, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                           | Meaning                                                                      |
-| ------------ | -------------------------------- | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`              | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`          | target body handle                                                           |
-| `value`      | `const entasis_body_inertia_t *` | body inertia                                                                 |
-| `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_inertia_batch`
-
-applies inertia values to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_inertia_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_inertia_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                           | Meaning                                                                      |
-| --------------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`              | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`  | input body handles                                                           |
-| `values`        | `const entasis_body_inertia_t *` | input body inertia array                                                     |
-| `count`         | `uint64_t`                       | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                     | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_pose`
-
-updates the pose through the complete body mutation path
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_pose(entasis_world_t * world, entasis_body_handle_t handle, const entasis_rigid_pose_t * value, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                         | Meaning                                                                      |
-| ------------ | ------------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`            | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`        | target body handle                                                           |
-| `value`      | `const entasis_rigid_pose_t *` | rigid pose                                                                   |
-| `diagnostic` | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_pose_batch`
-
-applies poses to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_pose_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_rigid_pose_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                          | Meaning                                                                      |
-| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`             | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
-| `values`        | `const entasis_rigid_pose_t *`  | input rigid pose array                                                       |
-| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_shape`
-
-updates only the shape while retaining the other collidable settings
-
-it maintains shape reference counts and broad-phase membership
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_shape(entasis_world_t * world, entasis_body_handle_t handle, entasis_shape_handle_t shape, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                                      |
-| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
-| `shape`      | `entasis_shape_handle_t` | registered shape handle                                                      |
-| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_shape_batch`
-
-applies shape handles to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_shape_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_shape_handle_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                           | Meaning                                                                      |
-| --------------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`              | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`  | input body handles                                                           |
-| `values`        | `const entasis_shape_handle_t *` | input shape handle array                                                     |
-| `count`         | `uint64_t`                       | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                     | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_velocity`
-
-updates velocity and awakens a sleeping body
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_velocity(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_velocity_t * value, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                            | Meaning                                                                      |
-| ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`               | target world                                                                 |
-| `handle`     | `entasis_body_handle_t`           | target body handle                                                           |
-| `value`      | `const entasis_body_velocity_t *` | body velocity                                                                |
-| `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_set_velocity_batch`
-
-applies velocities to a prefix of body handles in input order
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_velocity_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_velocity_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter       | C type                            | Meaning                                                                      |
-| --------------- | --------------------------------- | ---------------------------------------------------------------------------- |
-| `world`         | `entasis_world_t *`               | target world                                                                 |
-| `handles`       | `const entasis_body_handle_t *`   | input body handles                                                           |
-| `values`        | `const entasis_body_velocity_t *` | input body velocity array                                                    |
-| `count`         | `uint64_t`                        | number of entries in the input arrays                                        |
-| `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
-| `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_shapeless`
+#### `entasis_body_shapeless`
 
 constructs a dynamic body with no broad-phase collidable
 
@@ -666,7 +354,7 @@ ENTASIS_API entasis_body_description_t ENTASIS_CALL entasis_body_shapeless(entas
 
 returns the constructed body description
 
-### `entasis_collidable`
+#### `entasis_collidable`
 
 constructs a body collidable description
 
@@ -685,7 +373,7 @@ ENTASIS_API entasis_collidable_description_t ENTASIS_CALL entasis_collidable(ent
 
 returns the collidable description
 
-### `entasis_pose`
+#### `entasis_pose`
 
 constructs a rigid pose
 
@@ -702,7 +390,528 @@ ENTASIS_API entasis_rigid_pose_t ENTASIS_CALL entasis_pose(entasis_vector3_t pos
 
 returns the rigid pose
 
-### `entasis_static_add`
+#### `entasis_static_body`
+
+constructs a static description using the supplied continuity settings
+
+```c
+ENTASIS_API entasis_static_description_t ENTASIS_CALL entasis_static_body(entasis_shape_handle_t shape, entasis_rigid_pose_t pose, entasis_continuous_detection_t continuity);
+```
+
+| Parameter    | C type                           | Meaning                                 |
+| ------------ | -------------------------------- | --------------------------------------- |
+| `shape`      | `entasis_shape_handle_t`         | registered shape handle                 |
+| `pose`       | `entasis_rigid_pose_t`           | rigid pose                              |
+| `continuity` | `entasis_continuous_detection_t` | continuous collision detection settings |
+
+returns the constructed static description
+
+#### `entasis_triangle`
+
+constructs a clockwise one-sided triangle
+
+```c
+ENTASIS_API entasis_triangle_t ENTASIS_CALL entasis_triangle(entasis_vector3_t a, entasis_vector3_t b, entasis_vector3_t c);
+```
+
+| Parameter | C type              | Meaning           |
+| --------- | ------------------- | ----------------- |
+| `a`       | `entasis_vector3_t` | triangle vertex A |
+| `b`       | `entasis_vector3_t` | triangle vertex B |
+| `c`       | `entasis_vector3_t` | triangle vertex C |
+
+returns the triangle
+
+#### `entasis_velocity`
+
+constructs body linear and angular velocity
+
+```c
+ENTASIS_API entasis_body_velocity_t ENTASIS_CALL entasis_velocity(entasis_vector3_t linear, entasis_vector3_t angular);
+```
+
+| Parameter | C type              | Meaning          |
+| --------- | ------------------- | ---------------- |
+| `linear`  | `entasis_vector3_t` | linear velocity  |
+| `angular` | `entasis_vector3_t` | angular velocity |
+
+returns the body velocity
+
+### Body operations
+
+#### `entasis_body_add`
+
+adds one body
+
+allocation may occur when world capacity grows. ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add(entasis_world_t * world, const entasis_body_description_t * description, entasis_body_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                               | Meaning                                                                      |
+| ------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                  | target world                                                                 |
+| `description` | `const entasis_body_description_t *` | body description to copy                                                     |
+| `out_handle`  | `entasis_body_handle_t *`            | receives the created body handle                                             |
+| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_add_global`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates a body at an f64 simulation-frame position
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_global(entasis_world_t * world, const entasis_body_description_t * description, const entasis_global_position_t * position, entasis_body_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                               | Meaning                                                                                 |
+| ------------- | ------------------------------------ | --------------------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                  | target world                                                                            |
+| `description` | `const entasis_body_description_t *` | required complete description, with its pose.position replaced by position              |
+| `position`    | `const entasis_global_position_t *`  | required finite f64 position in the current simulation frame                            |
+| `out_handle`  | `entasis_body_handle_t *`            | required handle output, initialized to the invalid handle and published only on success |
+| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed            |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_add_batch`
+
+adds a prefix of descriptions in input order after one capacity check
+
+out_handles must contain at least count entries. on failure, out_completed receives the number of successfully committed prefix entries and entries at or after that index remain invalid. allocation: the initial capacity check may grow world storage. ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_batch(entasis_world_t * world, const entasis_body_description_t * descriptions, uint64_t count, entasis_body_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                               | Meaning                                                                      |
+| --------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`                  | target world                                                                 |
+| `descriptions`  | `const entasis_body_description_t *` | input body description array                                                 |
+| `count`         | `uint64_t`                           | number of entries in the input arrays                                        |
+| `out_handles`   | `entasis_body_handle_t *`            | receives body handles in input order                                         |
+| `out_completed` | `uint64_t *`                         | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_add_batch_global`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates bodies from parallel description and position arrays
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. admits total addition capacity before row execution
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_batch_global(entasis_world_t * world, const entasis_body_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_body_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                               | Meaning                                                                                                                  |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `world`          | `entasis_world_t *`                  | target world                                                                                                             |
+| `descriptions`   | `const entasis_body_description_t *` | count complete descriptions, required when count is nonzero                                                              |
+| `count`          | `uint64_t`                           | number of rows in each parallel input array                                                                              |
+| `positions`      | `const entasis_global_position_t *`  | count f64 positions in the current simulation frame, required when count is nonzero                                      |
+| `position_count` | `uint64_t`                           | must equal count                                                                                                         |
+| `out_handles`    | `entasis_body_handle_t *`            | caller-owned space for count handles, required when count is nonzero. only the completed prefix contains created handles |
+| `out_completed`  | `uint64_t *`                         | optional completed-row count, initialized to zero before validation                                                      |
+| `diagnostic`     | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed                                             |
+
+returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+
+#### `entasis_body_apply`
+
+replaces the complete body description
+
+the body is awakened and broad-phase membership is updated when required. ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_description_t * description, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                               | Meaning                                                                      |
+| ------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                  | target world                                                                 |
+| `handle`      | `entasis_body_handle_t`              | target body handle                                                           |
+| `description` | `const entasis_body_description_t *` | body description to copy                                                     |
+| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_apply_global`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces the complete body description at an f64 simulation-frame position
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning. applying a body description wakes the body and cancels its pending kinematic target
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_description_t * description, const entasis_global_position_t * position, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                               | Meaning                                                                      |
+| ------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                  | target world                                                                 |
+| `handle`      | `entasis_body_handle_t`              | target body handle                                                           |
+| `description` | `const entasis_body_description_t *` | required complete description, with its pose.position replaced by position   |
+| `position`    | `const entasis_global_position_t *`  | required finite f64 position in the current simulation frame                 |
+| `diagnostic`  | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_apply_batch`
+
+applies matching handles and descriptions in input order
+
+a failure stops the batch. out_completed reports the number of applied entries and identifies the first failing index. earlier changes remain applied. allocation may occur through body mutation. ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_description_t * descriptions, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                               | Meaning                                                                      |
+| --------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`                  | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`      | input body handles                                                           |
+| `descriptions`  | `const entasis_body_description_t *` | input body description array                                                 |
+| `count`         | `uint64_t`                           | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                         | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_apply_batch_global`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces complete body descriptions from parallel description and position arrays
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. repeated handles are applied in order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_batch_global(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                               | Meaning                                                                             |
+| ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
+| `world`          | `entasis_world_t *`                  | target world                                                                        |
+| `handles`        | `const entasis_body_handle_t *`      | count existing handles in application order, required when count is nonzero         |
+| `descriptions`   | `const entasis_body_description_t *` | count complete descriptions, required when count is nonzero                         |
+| `count`          | `uint64_t`                           | number of rows in each parallel input array                                         |
+| `positions`      | `const entasis_global_position_t *`  | count f64 positions in the current simulation frame, required when count is nonzero |
+| `position_count` | `uint64_t`                           | must equal count                                                                    |
+| `out_completed`  | `uint64_t *`                         | optional completed-row count, initialized to zero before validation                 |
+| `diagnostic`     | `entasis_diagnostic_t *`             | optional diagnostic output, or NULL when detailed failure data is not needed        |
+
+returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+
+#### `entasis_body_get`
+
+copies the description of one active or sleeping body
+
+allocation: none. the returned value contains no pointers into simulation data
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get(entasis_world_t * world, entasis_body_handle_t handle, entasis_body_state_t * out_state, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                                      |
+| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
+| `out_state`  | `entasis_body_state_t *` | receives the copied body state                                               |
+| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_get_batch`
+
+copies body snapshots for a prefix of handles into caller-owned output storage
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_batch(entasis_world_t * world, const entasis_body_handle_t * handles, uint64_t count, entasis_body_state_t * out_states, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                          | Meaning                                                                      |
+| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`             | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
+| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
+| `out_states`    | `entasis_body_state_t *`        | receives copied body states in input order                                   |
+| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_remove`
+
+removes a body and every connected constraint
+
+ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_remove(entasis_world_t * world, entasis_body_handle_t handle, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                                      |
+| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
+| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_remove_batch`
+
+removes handles in input order
+
+a failure stops the batch. out_completed reports how many bodies were removed and identifies the first failing index. earlier removals remain applied. ownership: owner thread only while the world is idle
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_remove_batch(entasis_world_t * world, const entasis_body_handle_t * handles, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                          | Meaning                                                                      |
+| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`             | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
+| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_activity`
+
+updates sleep thresholds and resets the activity counters
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_activity(entasis_world_t * world, entasis_body_handle_t handle, const entasis_activity_description_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                   | Meaning                                                                      |
+| ------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                      | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`                  | target body handle                                                           |
+| `value`      | `const entasis_activity_description_t *` | activity description                                                         |
+| `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_activity_batch`
+
+applies activity descriptions to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_activity_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_activity_description_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                                   | Meaning                                                                      |
+| --------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`                      | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`          | input body handles                                                           |
+| `values`        | `const entasis_activity_description_t *` | input activity description array                                             |
+| `count`         | `uint64_t`                               | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_collidable`
+
+updates shape, continuity, and speculative margins
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_collidable(entasis_world_t * world, entasis_body_handle_t handle, const entasis_collidable_description_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                     | Meaning                                                                      |
+| ------------ | ------------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                        | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`                    | target body handle                                                           |
+| `value`      | `const entasis_collidable_description_t *` | collidable description                                                       |
+| `diagnostic` | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_collidable_batch`
+
+applies collidable descriptions to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_collidable_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_collidable_description_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                                     | Meaning                                                                      |
+| --------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`                        | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`            | input body handles                                                           |
+| `values`        | `const entasis_collidable_description_t *` | input collidable description array                                           |
+| `count`         | `uint64_t`                                 | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                               | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_inertia`
+
+updates local inertia and handles dynamic/kinematic changes
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_inertia(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_inertia_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                           | Meaning                                                                      |
+| ------------ | -------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`              | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`          | target body handle                                                           |
+| `value`      | `const entasis_body_inertia_t *` | body inertia                                                                 |
+| `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_inertia_batch`
+
+applies inertia values to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_inertia_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_inertia_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                           | Meaning                                                                      |
+| --------------- | -------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`              | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`  | input body handles                                                           |
+| `values`        | `const entasis_body_inertia_t *` | input body inertia array                                                     |
+| `count`         | `uint64_t`                       | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                     | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_pose`
+
+updates the pose through the complete body mutation path
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_pose(entasis_world_t * world, entasis_body_handle_t handle, const entasis_rigid_pose_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                         | Meaning                                                                      |
+| ------------ | ------------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`            | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`        | target body handle                                                           |
+| `value`      | `const entasis_rigid_pose_t *` | rigid pose                                                                   |
+| `diagnostic` | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_global_pose`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+sets the body position and orientation while retaining its other description fields
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. wakes the body and cancels its pending kinematic target
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_global_pose(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_pose_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                          | Meaning                                                                      |
+| ------------ | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`             | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`         | target body handle                                                           |
+| `value`      | `const entasis_global_pose_t *` | required finite current-frame position and valid orientation                 |
+| `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_set_pose_batch`
+
+applies poses to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_pose_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_rigid_pose_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                          | Meaning                                                                      |
+| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`             | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *` | input body handles                                                           |
+| `values`        | `const entasis_rigid_pose_t *`  | input rigid pose array                                                       |
+| `count`         | `uint64_t`                      | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_shape`
+
+updates only the shape while retaining the other collidable settings
+
+it maintains shape reference counts and broad-phase membership
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_shape(entasis_world_t * world, entasis_body_handle_t handle, entasis_shape_handle_t shape, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                                      |
+| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
+| `shape`      | `entasis_shape_handle_t` | registered shape handle                                                      |
+| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_shape_batch`
+
+applies shape handles to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_shape_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_shape_handle_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                           | Meaning                                                                      |
+| --------------- | -------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`              | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`  | input body handles                                                           |
+| `values`        | `const entasis_shape_handle_t *` | input shape handle array                                                     |
+| `count`         | `uint64_t`                       | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                     | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_velocity`
+
+updates velocity and awakens a sleeping body
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_velocity(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_velocity_t * value, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                            | Meaning                                                                      |
+| ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`               | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`           | target body handle                                                           |
+| `value`      | `const entasis_body_velocity_t *` | body velocity                                                                |
+| `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_set_velocity_batch`
+
+applies velocities to a prefix of body handles in input order
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_velocity_batch(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_velocity_t * values, uint64_t count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                            | Meaning                                                                      |
+| --------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`               | target world                                                                 |
+| `handles`       | `const entasis_body_handle_t *`   | input body handles                                                           |
+| `values`        | `const entasis_body_velocity_t *` | input body velocity array                                                    |
+| `count`         | `uint64_t`                        | number of entries in the input arrays                                        |
+| `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
+| `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_body_get_global_pose`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies the current f64 position and orientation of a body
+
+requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. clears out_state before world admission and publishes the pose only on success
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_pose(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_pose_t * out_state, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                    | Meaning                                                                      |
+| ------------ | ------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`       | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`   | target body handle                                                           |
+| `out_state`  | `entasis_global_pose_t *` | required caller-owned pose output, zero on failure                           |
+| `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+### Static operations
+
+#### `entasis_static_add`
 
 adds one static and applies the selected awakening policy
 
@@ -720,9 +929,30 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add(entasis_world_t * w
 | `out_handle`  | `entasis_static_handle_t *`            | receives the created static handle                                           |
 | `diagnostic`  | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_static_add_global`
 
-### `entasis_static_add_batch`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates a static at an f64 simulation-frame position
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global(entasis_world_t * world, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_awakening_policy_t awakening, entasis_static_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                                 | Meaning                                                                                 |
+| ------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                    | target world                                                                            |
+| `description` | `const entasis_static_description_t *` | required complete description, with its pose.position replaced by position              |
+| `position`    | `const entasis_global_position_t *`    | required finite f64 position in the current simulation frame                            |
+| `awakening`   | `entasis_awakening_policy_t`           | static mutation awakening policy                                                        |
+| `out_handle`  | `entasis_static_handle_t *`            | required handle output, initialized to the invalid handle and published only on success |
+| `diagnostic`  | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed            |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_add_batch`
 
 adds a prefix of descriptions in input order after one capacity check
 
@@ -742,9 +972,33 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_batch(entasis_world
 | `out_completed` | `uint64_t *`                           | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_static_add_batch_global`
 
-### `entasis_static_apply`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates statics from parallel description and position arrays
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. admits total addition capacity before row execution
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_batch_global(entasis_world_t * world, const entasis_static_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_awakening_policy_t awakening, entasis_static_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                                 | Meaning                                                                                                                  |
+| ---------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `world`          | `entasis_world_t *`                    | target world                                                                                                             |
+| `descriptions`   | `const entasis_static_description_t *` | count complete descriptions, required when count is nonzero                                                              |
+| `count`          | `uint64_t`                             | number of rows in each parallel input array                                                                              |
+| `positions`      | `const entasis_global_position_t *`    | count f64 positions in the current simulation frame, required when count is nonzero                                      |
+| `position_count` | `uint64_t`                             | must equal count                                                                                                         |
+| `awakening`      | `entasis_awakening_policy_t`           | static mutation awakening policy                                                                                         |
+| `out_handles`    | `entasis_static_handle_t *`            | caller-owned space for count handles, required when count is nonzero. only the completed prefix contains created handles |
+| `out_completed`  | `uint64_t *`                           | optional completed-row count, initialized to zero before validation                                                      |
+| `diagnostic`     | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed                                             |
+
+returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+
+#### `entasis_static_apply`
 
 replaces the complete static description and applies the selected awakening policy to overlapping sleeping bodies
 
@@ -762,9 +1016,30 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply(entasis_world_t *
 | `awakening`   | `entasis_awakening_policy_t`           | static mutation awakening policy                                             |
 | `diagnostic`  | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_static_apply_global`
 
-### `entasis_static_apply_batch`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces the complete static description at an f64 simulation-frame position
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global(entasis_world_t * world, entasis_static_handle_t handle, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                                 | Meaning                                                                      |
+| ------------- | -------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                    | target world                                                                 |
+| `handle`      | `entasis_static_handle_t`              | target static handle                                                         |
+| `description` | `const entasis_static_description_t *` | required complete description, with its pose.position replaced by position   |
+| `position`    | `const entasis_global_position_t *`    | required finite f64 position in the current simulation frame                 |
+| `awakening`   | `entasis_awakening_policy_t`           | static mutation awakening policy                                             |
+| `diagnostic`  | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_apply_batch`
 
 applies matching handles and descriptions in input order
 
@@ -784,25 +1059,33 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_batch(entasis_wor
 | `out_completed` | `uint64_t *`                           | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_static_apply_batch_global`
 
-### `entasis_static_body`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
 
-constructs a static description using the supplied continuity settings
+replaces complete static descriptions from parallel description and position arrays
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. repeated handles are applied in order
 
 ```c
-ENTASIS_API entasis_static_description_t ENTASIS_CALL entasis_static_body(entasis_shape_handle_t shape, entasis_rigid_pose_t pose, entasis_continuous_detection_t continuity);
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_batch_global(entasis_world_t * world, const entasis_static_handle_t * handles, const entasis_static_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_awakening_policy_t awakening, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
 ```
 
-| Parameter    | C type                           | Meaning                                 |
-| ------------ | -------------------------------- | --------------------------------------- |
-| `shape`      | `entasis_shape_handle_t`         | registered shape handle                 |
-| `pose`       | `entasis_rigid_pose_t`           | rigid pose                              |
-| `continuity` | `entasis_continuous_detection_t` | continuous collision detection settings |
+| Parameter        | C type                                 | Meaning                                                                             |
+| ---------------- | -------------------------------------- | ----------------------------------------------------------------------------------- |
+| `world`          | `entasis_world_t *`                    | target world                                                                        |
+| `handles`        | `const entasis_static_handle_t *`      | count existing handles in application order, required when count is nonzero         |
+| `descriptions`   | `const entasis_static_description_t *` | count complete descriptions, required when count is nonzero                         |
+| `count`          | `uint64_t`                             | number of rows in each parallel input array                                         |
+| `positions`      | `const entasis_global_position_t *`    | count f64 positions in the current simulation frame, required when count is nonzero |
+| `position_count` | `uint64_t`                             | must equal count                                                                    |
+| `awakening`      | `entasis_awakening_policy_t`           | static mutation awakening policy                                                    |
+| `out_completed`  | `uint64_t *`                           | optional completed-row count, initialized to zero before validation                 |
+| `diagnostic`     | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed        |
 
-returns the constructed static description
+returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
 
-### `entasis_static_get`
+#### `entasis_static_get`
 
 copies the description of one static
 
@@ -819,9 +1102,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get(entasis_world_t * w
 | `out_state`  | `entasis_static_state_t *` | receives the copied static state                                             |
 | `diagnostic` | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_get_batch`
+#### `entasis_static_get_batch`
 
 copies static snapshots for a prefix of handles into caller-owned output storage
 
@@ -838,9 +1119,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get_batch(entasis_world
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_remove`
+#### `entasis_static_remove`
 
 removes one static and applies the selected awakening policy
 
@@ -857,9 +1136,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_remove(entasis_world_t 
 | `awakening`  | `entasis_awakening_policy_t` | static mutation awakening policy                                             |
 | `diagnostic` | `entasis_diagnostic_t *`     | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_remove_batch`
+#### `entasis_static_remove_batch`
 
 removes handles in input order using one awakening policy
 
@@ -878,9 +1155,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_remove_batch(entasis_wo
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_set_continuity`
+#### `entasis_static_set_continuity`
 
 updates only continuous-detection settings
 
@@ -896,9 +1171,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_continuity(entasis_
 | `awakening`  | `entasis_awakening_policy_t`             | static mutation awakening policy                                             |
 | `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_set_pose`
+#### `entasis_static_set_pose`
 
 updates only the pose
 
@@ -914,9 +1187,29 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_pose(entasis_world_
 | `awakening`  | `entasis_awakening_policy_t`   | static mutation awakening policy                                             |
 | `diagnostic` | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_static_set_global_pose`
 
-### `entasis_static_set_pose_batch`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+sets the static position and orientation while retaining its other description fields
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. retains the shape and continuous collision settings
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_global_pose(entasis_world_t * world, entasis_static_handle_t handle, const entasis_global_pose_t * value, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                          | Meaning                                                                      |
+| ------------ | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`             | target world                                                                 |
+| `handle`     | `entasis_static_handle_t`       | target static handle                                                         |
+| `value`      | `const entasis_global_pose_t *` | required finite current-frame position and valid orientation                 |
+| `awakening`  | `entasis_awakening_policy_t`    | static mutation awakening policy                                             |
+| `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_set_pose_batch`
 
 applies poses to a prefix of static handles in input order
 
@@ -934,9 +1227,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_pose_batch(entasis_
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_set_shape`
+#### `entasis_static_set_shape`
 
 updates only the shape
 
@@ -952,40 +1243,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_shape(entasis_world
 | `awakening`  | `entasis_awakening_policy_t` | static mutation awakening policy                                             |
 | `diagnostic` | `entasis_diagnostic_t *`     | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_triangle`
-
-constructs a clockwise one-sided triangle
-
-```c
-ENTASIS_API entasis_triangle_t ENTASIS_CALL entasis_triangle(entasis_vector3_t a, entasis_vector3_t b, entasis_vector3_t c);
-```
-
-| Parameter | C type              | Meaning           |
-| --------- | ------------------- | ----------------- |
-| `a`       | `entasis_vector3_t` | triangle vertex A |
-| `b`       | `entasis_vector3_t` | triangle vertex B |
-| `c`       | `entasis_vector3_t` | triangle vertex C |
-
-returns the triangle
-
-### `entasis_velocity`
-
-constructs body linear and angular velocity
-
-```c
-ENTASIS_API entasis_body_velocity_t ENTASIS_CALL entasis_velocity(entasis_vector3_t linear, entasis_vector3_t angular);
-```
-
-| Parameter | C type              | Meaning          |
-| --------- | ------------------- | ---------------- |
-| `linear`  | `entasis_vector3_t` | linear velocity  |
-| `angular` | `entasis_vector3_t` | angular velocity |
-
-returns the body velocity
-
-### `entasis_static_add_filtered`
+#### `entasis_static_add_filtered`
 
 adds a static with caller-filtered sleeping-island awakening
 
@@ -1006,7 +1264,31 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_filtered(entasis_wo
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_static_remove_filtered`
+#### `entasis_static_add_global_filtered`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates a static with caller-selected sleeping-body awakening
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position. the filter receives stable sleeping-body handles on the calling thread and must not reenter world mutation. description validation precedes filter calls, but awakening side effects can remain if later storage growth fails
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global_filtered(entasis_world_t * world, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_static_awakening_filter_fn filter, void * user_context, entasis_static_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter      | C type                                 | Meaning                                                                                 |
+| -------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `world`        | `entasis_world_t *`                    | caller-owned initialized world handle                                                   |
+| `description`  | `const entasis_static_description_t *` | required complete static description, with pose.position replaced by position           |
+| `position`     | `const entasis_global_position_t *`    | required finite f64 position in the current simulation frame                            |
+| `filter`       | `entasis_static_awakening_filter_fn`   | optional sleeping-body awakening filter, NULL uses ordinary overlapping-body awakening  |
+| `user_context` | `void *`                               | caller-owned filter state borrowed only until this call returns                         |
+| `out_handle`   | `entasis_static_handle_t *`            | required handle output, initialized to the invalid handle and published only on success |
+| `diagnostic`   | `entasis_diagnostic_t *`               | optional output diagnostic                                                              |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_remove_filtered`
 
 removes a static with caller-filtered sleeping-island awakening
 
@@ -1024,7 +1306,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_remove_filtered(entasis
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_static_apply_filtered`
+#### `entasis_static_apply_filtered`
 
 replaces a static and filters awakening over the union of old and new bounds
 
@@ -1043,7 +1325,54 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_filtered(entasis_
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_body_control_configuration_default`
+#### `entasis_static_apply_global_filtered`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces a static description with caller-selected sleeping-body awakening
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position. the filter receives stable sleeping-body handles on the calling thread and must not reenter world mutation. description validation precedes filter calls, but awakening side effects can remain if later storage growth fails
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global_filtered(entasis_world_t * world, entasis_static_handle_t handle, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_static_awakening_filter_fn filter, void * user_context, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter      | C type                                 | Meaning                                                                                |
+| -------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
+| `world`        | `entasis_world_t *`                    | caller-owned initialized world handle                                                  |
+| `handle`       | `entasis_static_handle_t`              | existing static handle                                                                 |
+| `description`  | `const entasis_static_description_t *` | required complete static description, with pose.position replaced by position          |
+| `position`     | `const entasis_global_position_t *`    | required finite f64 position in the current simulation frame                           |
+| `filter`       | `entasis_static_awakening_filter_fn`   | optional sleeping-body awakening filter, NULL uses ordinary overlapping-body awakening |
+| `user_context` | `void *`                               | caller-owned filter state borrowed only until this call returns                        |
+| `diagnostic`   | `entasis_diagnostic_t *`               | optional output diagnostic                                                             |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_get_global_pose`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies the current f64 position and orientation of a static
+
+requires an idle world or an active read phase. does not wake objects or allocate. clears out_state before world admission and publishes the pose only on success
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get_global_pose(entasis_world_t * world, entasis_static_handle_t handle, entasis_global_pose_t * out_state, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                    | Meaning                                                                      |
+| ------------ | ------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`       | target world                                                                 |
+| `handle`     | `entasis_static_handle_t` | target static handle                                                         |
+| `out_state`  | `entasis_global_pose_t *` | required caller-owned pose output, zero on failure                           |
+| `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+### Body control and forces
+
+#### `entasis_body_control_configuration_default`
 
 constructs the versioned body-control defaults
 
@@ -1053,7 +1382,7 @@ ENTASIS_API entasis_body_control_configuration_t ENTASIS_CALL entasis_body_contr
 
 returns the initialized descriptor
 
-### `entasis_world_enable_body_control`
+#### `entasis_world_enable_body_control`
 
 enables sparse optional force, damping and kinematic-target storage
 
@@ -1071,7 +1400,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_enable_body_control(enta
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_world_disable_body_control`
+#### `entasis_world_disable_body_control`
 
 disables body controls and releases their storage
 
@@ -1088,7 +1417,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_disable_body_control(ent
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_control_reserve`
+#### `entasis_body_control_reserve`
 
 reserves control tables and active-index bindings without shrinking
 
@@ -1107,7 +1436,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_control_reserve(entasis_w
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_add_force`
+#### `entasis_body_add_force`
 
 accumulates world-space force or linear acceleration
 
@@ -1128,7 +1457,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_force(entasis_world_t
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_add_torque`
+#### `entasis_body_add_torque`
 
 accumulates world-space torque or angular acceleration
 
@@ -1149,7 +1478,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_torque(entasis_world_
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_add_force_at_position`
+#### `entasis_body_add_force_at_position`
 
 accumulates a fixed world-space force and moment about the current center of mass
 
@@ -1170,7 +1499,30 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_force_at_position(ent
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_clear_inputs`
+#### `entasis_body_add_force_at_global_position`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+queues a force and the torque induced at an f64 application point
+
+requires the owner thread and exclusive access to an idle world and enabled body control. subtracts the body center in f64 before narrowing the lever arm to f32. the resulting local wrench is fixed at submission. nonfinite or unrepresentable lever arms reject before queuing input
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_force_at_global_position(entasis_world_t * world, entasis_body_handle_t body, entasis_vector3_t force, const entasis_global_position_t * position, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                              | Meaning                                                                       |
+| ------------ | ----------------------------------- | ----------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                 | idle live world. mutations reject read phases and callback reentry            |
+| `body`       | `entasis_body_handle_t`             | live body handle                                                              |
+| `force`      | `entasis_vector3_t`                 | finite world-oriented force vector                                            |
+| `position`   | `const entasis_global_position_t *` | required force application point in the current simulation frame              |
+| `wake`       | `entasis_body_control_wake_t`       | explicit wake policy. choose ENTASIS_BODY_CONTROL_WAKE for the native default |
+| `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output                                                    |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_clear_inputs`
 
 cancels pending force and torque without changing velocity
 
@@ -1186,7 +1538,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_clear_inputs(entasis_worl
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_set_damping`
+#### `entasis_body_set_damping`
 
 sets per-body exponential damping
 
@@ -1205,7 +1557,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_damping(entasis_world
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_get_damping`
+#### `entasis_body_get_damping`
 
 reads the optional damping settings
 
@@ -1222,7 +1574,9 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_damping(entasis_world
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_set_kinematic_target`
+### Kinematic targets and axis locks
+
+#### `entasis_body_set_kinematic_target`
 
 queues a next-step kinematic target
 
@@ -1242,7 +1596,29 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_kinematic_target(enta
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_get_kinematic_target`
+#### `entasis_body_set_global_kinematic_target`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+queues an f64 target pose for the next kinematic integration
+
+requires the owner thread and exclusive access to an idle world, enabled body control and a kinematic body. derives linear and shortest-arc angular velocity for ordinary integration. the queued target expires after a successful or failed step
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_global_kinematic_target(entasis_world_t * world, entasis_body_handle_t body, const entasis_global_pose_t * target, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                          | Meaning                                                            |
+| ------------ | ------------------------------- | ------------------------------------------------------------------ |
+| `world`      | `entasis_world_t *`             | idle live world. mutations reject read phases and callback reentry |
+| `body`       | `entasis_body_handle_t`         | live body handle                                                   |
+| `target`     | `const entasis_global_pose_t *` | required target pose in the current simulation frame               |
+| `wake`       | `entasis_body_control_wake_t`   | whether to wake a sleeping body when queuing the target            |
+| `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output                                         |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_get_kinematic_target`
 
 reads a pending target. expired or absent targets return NOT_FOUND
 
@@ -1259,7 +1635,28 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_kinematic_target(enta
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_clear_kinematic_target`
+#### `entasis_body_get_global_kinematic_target`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies a kinematic body's pending f64 target pose
+
+requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. requires enabled body control. out_target is unchanged on failure
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_kinematic_target(entasis_world_t * world, entasis_body_handle_t body, entasis_global_pose_t * out_target, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                    | Meaning                                                                     |
+| ------------ | ------------------------- | --------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`       | live world with body control enabled, idle or within an explicit read phase |
+| `body`       | `entasis_body_handle_t`   | live body handle                                                            |
+| `out_target` | `entasis_global_pose_t *` | required caller-owned pose output, unchanged on failure                     |
+| `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output                                                  |
+
+returns ENTASIS_STATUS_NOT_FOUND when no pending target remains, otherwise ENTASIS_STATUS_OK or the validation or state failure
+
+#### `entasis_body_clear_kinematic_target`
 
 cancels a pending target and clears an expired target-derived velocity
 
@@ -1277,7 +1674,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_clear_kinematic_target(en
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_axis_lock_default`
+#### `entasis_body_axis_lock_default`
 
 creates a descriptor with no axes and spring frequency 30 Hz, damping ratio 1
 
@@ -1291,7 +1688,7 @@ ENTASIS_API entasis_body_axis_lock_t ENTASIS_CALL entasis_body_axis_lock_default
 
 returns copied defaults. select axes before applying
 
-### `entasis_body_set_axis_lock`
+#### `entasis_body_set_axis_lock`
 
 sets or updates a physical axis lock on a dynamic body
 
@@ -1310,7 +1707,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_axis_lock(entasis_wor
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_get_axis_lock`
+#### `entasis_body_get_axis_lock`
 
 copies active or sleeping lock settings without awakening
 
@@ -1329,7 +1726,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_axis_lock(entasis_wor
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_body_clear_axis_lock`
+#### `entasis_body_clear_axis_lock`
 
 removes only the owned axis lock, leaving explicit joints intact
 
@@ -1346,3 +1743,201 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_clear_axis_lock(entasis_w
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output           |
 
 returns ENTASIS_STATUS_OK or the original failure status
+
+### Global states and snapshots
+
+#### `entasis_world_export_global_poses`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies body and static poses in caller-selected reference order
+
+requires an idle world or an active read phase. does not wake objects or allocate. validates capacity and the optional frame before copying. a later invalid reference preserves the written prefix and leaves the remaining output unchanged. no handle remapping occurs
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_export_global_poses(entasis_world_t * world, const entasis_collidable_reference_t * references, uint64_t count, entasis_global_pose_t * output, uint64_t capacity, const entasis_origin_frame_t * frame, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter       | C type                                   | Meaning                                                                                            |
+| --------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `world`         | `entasis_world_t *`                      | target world                                                                                       |
+| `references`    | `const entasis_collidable_reference_t *` | count live collidable references, required when count is nonzero                                   |
+| `count`         | `uint64_t`                               | number of selected references                                                                      |
+| `output`        | `entasis_global_pose_t *`                | caller-owned space for capacity poses, required when count is nonzero and disjoint from references |
+| `capacity`      | `uint64_t`                               | must cover count poses                                                                             |
+| `frame`         | `const entasis_origin_frame_t *`         | optional application origin added in f64, NULL keeps positions in the current simulation frame     |
+| `out_completed` | `uint64_t *`                             | optional written-pose count, initialized to zero before validation                                 |
+| `diagnostic`    | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed                       |
+
+returns ENTASIS_STATUS_OK when every reference succeeds or the first failure, with out_completed reporting the written prefix
+
+#### `entasis_body_get_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies the body's authoring description with its authoritative f64 pose
+
+requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. output is unchanged on failure. returned shape handles retain their world-owned lifetime
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_state(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_body_state_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                          | Meaning                                                                      |
+| ------------ | ------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`             | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`         | live target handle                                                           |
+| `output`     | `entasis_global_body_state_t *` | required caller-owned authoring state, unchanged on failure                  |
+| `diagnostic` | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+#### `entasis_body_apply_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces a body's authoring description from an f64 state value
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame. wakes the body and cancels its pending kinematic target
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global_state(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_body_state_t * state, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                | Meaning                                                                      |
+| ------------ | ------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                   | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`               | live target handle                                                           |
+| `state`      | `const entasis_global_body_state_t *` | required complete authoring state, borrowed for this call                    |
+| `diagnostic` | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_get_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies the static's authoring description with its authoritative f64 pose
+
+requires an idle world or an active read phase. does not wake objects or allocate. output is unchanged on failure. returned shape handles retain their world-owned lifetime
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get_global_state(entasis_world_t * world, entasis_static_handle_t handle, entasis_global_static_state_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                            | Meaning                                                                      |
+| ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`               | target world                                                                 |
+| `handle`     | `entasis_static_handle_t`         | live target handle                                                           |
+| `output`     | `entasis_global_static_state_t *` | required caller-owned authoring state, unchanged on failure                  |
+| `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+#### `entasis_static_apply_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces a static's authoring description from an f64 state value
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global_state(entasis_world_t * world, entasis_static_handle_t handle, const entasis_global_static_state_t * state, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                  | Meaning                                                                      |
+| ------------ | --------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                     | target world                                                                 |
+| `handle`     | `entasis_static_handle_t`               | live target handle                                                           |
+| `state`      | `const entasis_global_static_state_t *` | required complete authoring state, borrowed for this call                    |
+| `awakening`  | `entasis_awakening_policy_t`            | static awakening policy                                                      |
+| `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_get_global_target_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies a kinematic body's target presence and pending f64 pose
+
+requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. an absent or expired target, including missing body-control storage, produces an absent state with ENTASIS_STATUS_OK. output is unchanged on failure
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_target_state(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_kinematic_target_state_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                      | Meaning                                                                      |
+| ------------ | ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                         | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`                     | live target handle                                                           |
+| `output`     | `entasis_global_kinematic_target_state_t *` | required caller-owned target state, unchanged on failure                     |
+| `diagnostic` | `entasis_diagnostic_t *`                    | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+#### `entasis_body_apply_global_target_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+sets or clears a kinematic body's pending f64 target
+
+requires the owner thread and exclusive access to an idle world and a kinematic body. a present state requires enabled body control and queues its current-frame pose. an absent state clears the target, ignores pose and succeeds without allocating missing control storage
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global_target_state(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_kinematic_target_state_t * state, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                            | Meaning                                                                      |
+| ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                               | target world                                                                 |
+| `handle`     | `entasis_body_handle_t`                           | live target handle                                                           |
+| `state`      | `const entasis_global_kinematic_target_state_t *` | required target presence and, when present, current-frame pose               |
+| `wake`       | `entasis_body_control_wake_t`                     | whether to wake the body when applying a present target                      |
+| `diagnostic` | `entasis_diagnostic_t *`                          | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_body_add_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates a body from an f64 authoring state value
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_global_state(entasis_world_t * world, const entasis_global_body_state_t * state, entasis_body_handle_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                | Meaning                                                                                 |
+| ------------ | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                   | target world                                                                            |
+| `state`      | `const entasis_global_body_state_t *` | required complete authoring state, borrowed for this call                               |
+| `output`     | `entasis_body_handle_t *`             | required handle output, initialized to the invalid handle and published only on success |
+| `diagnostic` | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed            |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_static_add_global_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+creates a static from an f64 authoring state value
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global_state(entasis_world_t * world, const entasis_global_static_state_t * state, entasis_awakening_policy_t awakening, entasis_static_handle_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                  | Meaning                                                                                 |
+| ------------ | --------------------------------------- | --------------------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                     | target world                                                                            |
+| `state`      | `const entasis_global_static_state_t *` | required complete authoring state, borrowed for this call                               |
+| `awakening`  | `entasis_awakening_policy_t`            | static awakening policy                                                                 |
+| `output`     | `entasis_static_handle_t *`             | required handle output, initialized to the invalid handle and published only on success |
+| `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed            |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure

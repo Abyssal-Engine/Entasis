@@ -85,7 +85,7 @@ require_odin() {
 
 test_scope_to_package() {
   case "$1" in
-    root|scene-stability|benchmark-support|benchmark-report|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
+    precision-bounds|precision-broadphase|precision-storage|precision-collisions|precision-constraints|precision-targets|precision-mutations|precision-callbacks|precision-queries|precision-snapshots|benchmark-precision|root|scene-stability|benchmark-support|benchmark-report|benchmark-query|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
       printf '%s\n' "${1//-/_}"
       ;;
     *) return 1 ;;
@@ -97,8 +97,12 @@ test_package_path() {
     printf '%s/tests\n' "$ROOT"
   elif [[ "$1" == scene_stability ]]; then
     printf '%s/benchmarks/scene_stability\n' "$ROOT"
+  elif [[ "$1" == benchmark_precision ]]; then
+    printf '%s/benchmarks/large_world_precision\n' "$ROOT"
   elif [[ "$1" == benchmark_support ]]; then
     printf '%s/benchmarks/benchmark_support\n' "$ROOT"
+  elif [[ "$1" == benchmark_query ]]; then
+    printf '%s/benchmarks/query_extensions\n' "$ROOT"
   elif [[ "$1" == benchmark_report ]]; then
     printf '%s/tools/benchmark_report\n' "$ROOT"
   elif [[ "$1" == physics_viewer ]]; then
@@ -113,6 +117,7 @@ safe_name() {
 }
 
 benchmark_exists() {
+  [[ "$1" != large_world_precision ]] || return 0
   local candidate
   for candidate in "${BENCHMARK_PACKAGES[@]}"; do
     [[ "$candidate" == "$1" ]] && return 0
@@ -141,8 +146,11 @@ example_exists() {
 example_binary() {
   local package="$1"
   local configuration="$2"
+  local precision="${3:-float32}"
+  local profile_path="$configuration"
+  if [[ "$precision" == mixed64 ]]; then profile_path+="/mixed64"; fi
   case "$configuration" in
-    development|release) printf '%s/build/examples/%s/%s' "$ROOT" "$configuration" "$package" ;;
+    development|release) printf '%s/build/examples/%s/%s' "$ROOT" "$profile_path" "$package" ;;
     *) fail_usage "unknown build configuration: $configuration" ;;
   esac
 }
@@ -221,11 +229,17 @@ configure_odin_profile() {
   local artifact_group="$1"
   local package="$2"
   local configuration="$3"
+  local precision="${4:-float32}"
+  local math_checks="${5:-off}"
   local output_dir="$ROOT/build/$artifact_group/$configuration"
+  if [[ "$precision" == mixed64 ]]; then output_dir+="/mixed64"; fi
+  if [[ "$math_checks" == on ]]; then output_dir+="/math-checks"; fi
   mkdir -p "$output_dir"
   ODIN_PROFILE_OUTPUT="$output_dir/$(safe_name "$package")"
   rm -f "$ODIN_PROFILE_OUTPUT" "$ODIN_PROFILE_OUTPUT.o"
   set_odin_profile "$configuration"
+  if [[ "$package" != benchmark_report ]]; then ODIN_PROFILE_ARGUMENTS+=(-define:ENTASIS_PRECISION="$precision"); fi
+  if [[ "$math_checks" == on ]]; then ODIN_PROFILE_ARGUMENTS+=(-define:CHECKMATH=1); fi
   printf 'BUILD_PROFILE package=%s configuration=%s executable=%s symbols=embedded\n' \
     "$package" "$configuration" "$ODIN_PROFILE_OUTPUT"
 }
@@ -237,7 +251,11 @@ run_test_package() {
   local test_threads="${4:-$ODIN_TEST_THREADS}"
   local path
   path="$(test_package_path "$package")"
-  configure_odin_profile tests "$package" "$configuration"
+  local precision="${5:-float32}"
+  local math_checks="${6:-off}"
+  local precision_candidate="${7:-}"
+  if [[ "$package" == benchmark_precision ]]; then package="benchmark_precision/$precision_candidate"; fi
+  configure_odin_profile tests "$package" "$configuration" "$precision" "$math_checks"
   printf '[test] %s\n' "$package"
   local arguments=(
     test "$path"
@@ -254,6 +272,7 @@ run_test_package() {
     -define:ODIN_TEST_THREADS="$test_threads"
     -define:ODIN_TEST_FANCY=false
   )
+  if [[ -n "$precision_candidate" ]]; then arguments+=(-define:ENTASIS_PRECISION_CANDIDATE="$precision_candidate"); fi
   if [[ "$package" == scene_stability ]]; then arguments+=(-define:ENTASIS_BENCHMARK_COMPONENTS=common); fi
   if [[ -n "$test_names" ]]; then
     arguments+=( -define:ODIN_TEST_NAMES="$test_names" )

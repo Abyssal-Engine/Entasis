@@ -37,7 +37,7 @@ Keep ready worlds, pools and contexts at stable addresses. Do not copy them. Own
 
 One owner thread controls world lifecycle and structural mutation
 
-`world_step` may dispatch internal work through the included dispatcher or a caller-owned blocking dispatcher. The call does not return until all dispatched workers complete
+`world_step` may dispatch internal work through the included dispatcher or a caller-owned blocking dispatcher. The call does not return until all dispatched workers complete. See [simulation repeatability limits](../LIMITS.md#accuracy-and-sampling)
 
 The ordinary sequence is to step, read body state and run queries on the owner thread. Queries are synchronous. Physics worker count does not require extra application synchronization in this sequence
 

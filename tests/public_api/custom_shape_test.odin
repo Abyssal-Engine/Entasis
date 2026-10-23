@@ -180,12 +180,12 @@ custom_sphere_sweep_child :: proc "contextless" (
 
 register_custom_sphere :: proc(
 	t: ^testing.T, world: ^entasis.World,
-) -> (entasis.Shape_Type_ID, bool)
+) -> (entasis.Shape_Type_ID, entasis.Status)
 {
 	next_id, next_status := entasis.custom_shape_next_type_id(world);
 	if !testing.expect_value(t, next_status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, next_status;
 	}
 	registration := entasis.custom_shape_registration(
 		Custom_Sphere,
@@ -199,11 +199,11 @@ register_custom_sphere :: proc(
 	type_id, status := entasis.custom_shape_register(world, registration);
 	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
 	if !testing.expect_value(t, type_id, next_id)
 	{
-		return {}, false;
+		return {}, .Invalid_Description;
 	}
 	_, status = entasis.collision_task_register(
 		world,
@@ -218,7 +218,7 @@ register_custom_sphere :: proc(
 	);
 	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
 	_, status = entasis.collision_task_register(
 		world,
@@ -233,7 +233,7 @@ register_custom_sphere :: proc(
 	);
 	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
 	_, status = entasis.sweep_task_register(
 		world,
@@ -241,7 +241,7 @@ register_custom_sphere :: proc(
 	);
 	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
 	_, status = entasis.sweep_task_register(
 		world,
@@ -254,9 +254,9 @@ register_custom_sphere :: proc(
 	);
 	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
-	return type_id, true;
+	return type_id, .Ok;
 }
 
 @(test)
@@ -270,8 +270,8 @@ custom_shape_registration_ray_collision_and_sweep_use_registered_tasks :: proc(t
 		return;
 	}
 	defer entasis.world_destroy(&world);
-	type_id, ok := register_custom_sphere(t, &world);
-	if !ok
+	type_id, registration_status := register_custom_sphere(t, &world);
+	if registration_status != .Ok
 	{
 		return;
 	}

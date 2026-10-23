@@ -398,6 +398,10 @@ sweep_task_registry_test :: proc "contextless" (
 	maximum_t >= 0 && minimum_progression > 0 && convergence_threshold > 0 &&
 	maximum_iteration_count > 0
 	{
+		if filter != nil && filter(user_context, 0, 0, 0) == .Reject
+		{
+			return {state=.Miss, t0=maximum_t, t1=maximum_t, child_a=-1, child_b=-1}, .Ok;
+		}
 		if type_a == SPHERE_TYPE_ID && type_b == BOX_TYPE_ID
 		{
 			result, handled := sweep_sphere_box_axial_linear(

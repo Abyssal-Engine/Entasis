@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/toolchain_common.sh"
-compiler=clang archive=""
+compiler=clang archive="" precision=float32
 declare -A seen=()
 while (($#)); do
   option="$1"
-  case "$option" in --compiler|--archive) ;; *) toolchain_usage_error "unknown option: $option" ;; esac
+  case "$option" in --compiler|--archive|--precision) ;; *) toolchain_usage_error "unknown option: $option" ;; esac
   [[ -z "${seen[$option]:-}" ]] || toolchain_usage_error "repeated option: $option"
   seen[$option]=1
   (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || toolchain_usage_error "$option requires a value"
-  case "$option" in --compiler) compiler="$2" ;; --archive) archive="$2" ;; esac
+  case "$option" in --compiler) compiler="$2" ;; --archive) archive="$2" ;; --precision) precision="$2" ;; esac
   shift 2
 done
 case "$compiler" in gcc|clang|all) ;; *) toolchain_usage_error "--compiler must be gcc, clang, or all" ;; esac
+case "$precision" in float32) high_define=0; sdk_subdir=""; sdk_suffix="" ;; mixed64) high_define=1; sdk_subdir="/mixed64"; sdk_suffix="-mixed64" ;; *) toolchain_usage_error "invalid precision: $precision" ;; esac
 if [[ -z "$archive" ]]; then
   version="$(sed -n 's/^#define ENTASIS_VERSION_STRING "\(.*\)"/\1/p' "$TOOLCHAIN_ROOT/include/entasis/base.h")"
-  archive="$TOOLCHAIN_ROOT/build/sdk/linux/Entasis-$version-linux-x86_64-v3-c-sdk.tar.gz"
+  archive="$TOOLCHAIN_ROOT/build/sdk/linux$sdk_subdir/Entasis-$version-linux-x86_64-v3-c-sdk$sdk_suffix.tar.gz"
 fi
 [[ "$archive" == /* && -f "$archive" ]] || toolchain_usage_error "archive must name an existing absolute path: $archive"
 PKG_CONFIG_BIN="$(toolchain_system pkg-config)"
@@ -26,6 +27,7 @@ toolchain_extract "$archive" "$extraction"
 roots=("$extraction"/*)
 ((${#roots[@]} == 1)) && [[ -d "${roots[0]}" ]] || toolchain_usage_error "expected one SDK archive root"
 sdk="${roots[0]}"
+rg -q "set\(Entasis_PRECISION \"$precision\"\)" "$sdk/lib/cmake/Entasis/EntasisConfig.cmake" || toolchain_usage_error "SDK profile differs from selection"
 # reuse the source command's selected consumer tools without copying local machine paths into the archive
 declare -A selection=()
 if [[ -f "$TOOLCHAIN_ROOT/toolchains.local" ]]; then toolchain_read_settings "$TOOLCHAIN_ROOT/toolchains.local" selection; fi
@@ -105,6 +107,13 @@ for lane in "${lanes[@]}"; do
         printf 'static consumer depends on Entasis shared libraries: %s\n' "$binary" >&2; exit 1
       fi
     done
+  done
+  for language in c cpp; do
+    compile="$cc" standard=c11
+    if [[ "$language" == cpp ]]; then compile="$cxx"; standard=c++20; fi
+    binary="$build/manual-$language"
+    "$compile" "-std=$standard" "-DENTASIS_PRECISION_MIXED64=$high_define" -I"$sdk/include" "$sdk/examples/minimal.$language" -L"$sdk/lib" -lentasis -lentasis_cooking "-Wl,-rpath,$sdk/lib" -o "$binary"
+    "$binary"
   done
   for binary in "$sdk/build/examples/$lane/entasis_c_static" "$sdk/build/examples/$lane/entasis_cpp_static"; do
     if readelf -d "$binary" | grep -E 'NEEDED.*libentasis'; then printf 'unexpected shared dependency: %s\n' "$binary" >&2; exit 1; fi

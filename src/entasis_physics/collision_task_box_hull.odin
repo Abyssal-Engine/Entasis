@@ -202,7 +202,7 @@ box_convex_hull_test_source :: proc "contextless" (
 	face_origin := convex_hull_get_point(hull, previous_point_index);
 	previous_vertex := face_origin;
 	maximum_vertex_containment_dots: [4]f32;
-	candidates: [MAXIMUM_MANIFOLD_CANDIDATE_COUNT]Manifold_Candidate_Scalar;
+	candidates: [MAXIMUM_MANIFOLD_CANDIDATE_COUNT]Manifold_Candidate_Scalar = ---;
 	candidate_count := 0;
 	for face_vertex in 0 ..< face_vertex_count
 	{

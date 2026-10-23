@@ -5,6 +5,7 @@ package entasis_physics
 
 import util "entasis:entasis_utilities"
 import "core:math"
+import "core:simd"
 
 Shape_Ray_Hit :: struct
 {
@@ -196,7 +197,7 @@ box_ray_test :: proc "contextless" (box: Box, pose: Rigid_Pose, ray: Tree_Ray) -
 			direction=d.z;
 			extent=half_extent.z;
 		}
-		if abs(direction) <= 1e-15
+		if direction == 0
 		{
 			if origin < -extent || origin > extent
 			{
@@ -411,28 +412,40 @@ convex_hull_ray_test :: proc "contextless" (
 	latest_entry := -f32(math.F32_MAX);
 	earliest_exit := f32(math.F32_MAX);
 	entry_normal: util.Vector3;
-	for face_index in 0 ..< int(hull.face_start_indices.length)
+	face_count: int = int(hull.face_start_indices.length);
+	for bundle_index in 0 ..< (face_count+util.PRODUCTION_LANE_COUNT-1)/util.PRODUCTION_LANE_COUNT
 	{
-		normal, offset := convex_hull_get_face_plane(hull, face_index);
-		numerator := offset - util.vector3_dot(normal, o);
-		denominator := util.vector3_dot(normal, d);
-		if abs(denominator) <= 1e-14
+		bundle: Hull_Bounding_Plane_Bundle = hull.bounding_planes.memory[bundle_index];
+		lane_count: int = min(util.PRODUCTION_LANE_COUNT, face_count-bundle_index*util.PRODUCTION_LANE_COUNT);
+		numerator: util.F32x8 = bundle.offset - (bundle.normal.x*o.x + bundle.normal.y*o.y + bundle.normal.z*o.z);
+		denominator: util.F32x8 = bundle.normal.x*d.x + bundle.normal.y*d.y + bundle.normal.z*d.z;
+		active: util.I32x8 = transmute(util.I32x8)simd.lanes_lt(util.I32x8{0, 1, 2, 3, 4, 5, 6, 7}, util.I32x8(i32(lane_count)));
+		parallel: util.I32x8 = transmute(util.I32x8)simd.lanes_le(simd.abs(denominator), util.F32x8(1e-14));
+		// producer-owned bundles include padding, skipped divisions use zero over one
+		divide: util.I32x8 = active & ~parallel;
+		plane_times: util.F32x8 = util.wide_select_f32(divide, numerator, {}) / util.wide_select_f32(divide, denominator, util.F32x8(1));
+		for lane in 0 ..< lane_count
 		{
-			if numerator < 0
+			lane_numerator: f32 = simd.extract(numerator, lane);
+			lane_denominator: f32 = simd.extract(denominator, lane);
+			if abs(lane_denominator) <= 1e-14
 			{
-				return shape_ray_miss(), .Ok;
+				if lane_numerator < 0
+				{
+					return shape_ray_miss(), .Ok;
+				}
+				continue;
 			}
-			continue;
-		}
-		plane_t := numerator / denominator;
-		if denominator > 0
-		{
-			earliest_exit = min(earliest_exit, plane_t);
-		}
-		else if plane_t > latest_entry
-		{
-			latest_entry=plane_t;
-			entry_normal=normal;
+			plane_t: f32 = simd.extract(plane_times, lane);
+			if lane_denominator > 0
+			{
+				earliest_exit = min(earliest_exit, plane_t);
+			}
+			else if plane_t > latest_entry
+			{
+				latest_entry = plane_t;
+				entry_normal = util.vector3_wide_read_slot(bundle.normal, lane);
+			}
 		}
 	}
 	if earliest_exit < 0 || latest_entry > earliest_exit
@@ -452,14 +465,42 @@ compound_ray_test :: proc "contextless" (
 	{
 		return shape_ray_miss(), .Invalid_Description;
 	}
+	q: util.Quaternion = pose.orientation;
+	x2: f32 = q.x+q.x;
+	y2: f32 = q.y+q.y;
+	z2: f32 = q.z+q.z;
+	xx2: f32 = q.x*x2;
+	xy2: f32 = q.x*y2;
+	xz2: f32 = q.x*z2;
+	yy2: f32 = q.y*y2;
+	yz2: f32 = q.y*z2;
+	zz2: f32 = q.z*z2;
+	wx2: f32 = q.w*x2;
+	wy2: f32 = q.w*y2;
+	wz2: f32 = q.w*z2;
+	c00: f32 = (f32(1)-yy2)-zz2;
+	c01: f32 = xy2-wz2;
+	c02: f32 = xz2+wy2;
+	c10: f32 = xy2+wz2;
+	c11: f32 = (f32(1)-xx2)-zz2;
+	c12: f32 = yz2-wx2;
+	c20: f32 = xz2-wy2;
+	c21: f32 = yz2+wx2;
+	c22: f32 = (f32(1)-xx2)-yy2;
 	best := shape_ray_miss();
 	best_t := ray.maximum_t;
 	for child_index in 0 ..< children.length
 	{
 		child := children.memory[child_index];
-		child_pose := rigid_pose_concatenate(
-			{orientation=child.local_orientation, position=child.local_position}, pose,
-		);
+		v: util.Vector3 = child.local_position;
+		child_pose: Rigid_Pose = {
+			orientation=util.quaternion_concatenate(child.local_orientation, pose.orientation),
+			position={
+				(((v.x*c00)+(v.y*c01))+(v.z*c02))+pose.position.x,
+				(((v.x*c10)+(v.y*c11))+(v.z*c12))+pose.position.y,
+				(((v.x*c20)+(v.y*c21))+(v.z*c22))+pose.position.z,
+			},
+		};
 		child_ray := ray;
 		child_ray.maximum_t = best_t;
 		hit, status := shape_registry_ray_test(registry, child.shape_index, child_pose, child_ray);
@@ -477,6 +518,57 @@ compound_ray_test :: proc "contextless" (
 	return best, .Ok;
 }
 
+@(private="file")
+mesh_ray_test_bundle :: proc "contextless" (
+	triangle: Triangle_Wide, origin, direction: util.Vector3_Wide,
+) -> (util.F32x8, util.Vector3_Wide, util.I32x8)
+{
+	ab: util.Vector3_Wide = util.vector3_wide_subtract(triangle.b, triangle.a);
+	ac: util.Vector3_Wide = util.vector3_wide_subtract(triangle.c, triangle.a);
+	normal: util.Vector3_Wide = util.vector3_wide_cross(ac, ab);
+	dn: util.F32x8 = simd.neg(util.vector3_wide_dot(direction, normal));
+	// complement scalar rejection predicates so unordered intermediates retain their behavior
+	mask: util.I32x8 = util.I32x8(-1) & ~transmute(util.I32x8)simd.lanes_le(dn, util.F32x8(0));
+	if simd.reduce_or(mask) == 0
+	{
+		return {}, {}, {};
+	}
+	ao: util.Vector3_Wide = util.vector3_wide_subtract(origin, triangle.a);
+	numerator: util.F32x8 = util.vector3_wide_dot(ao, normal);
+	mask &= ~transmute(util.I32x8)simd.lanes_lt(numerator, util.F32x8(0));
+	if simd.reduce_or(mask) == 0
+	{
+		return {}, {}, {};
+	}
+	ao_cross_d: util.Vector3_Wide = util.vector3_wide_cross(ao, direction);
+	v: util.F32x8 = simd.neg(util.vector3_wide_dot(ac, ao_cross_d));
+	mask &= ~(transmute(util.I32x8)simd.lanes_lt(v, util.F32x8(0)) | transmute(util.I32x8)simd.lanes_gt(v, dn));
+	if simd.reduce_or(mask) == 0
+	{
+		return {}, {}, {};
+	}
+	w: util.F32x8 = util.vector3_wide_dot(ab, ao_cross_d);
+	mask &= ~(transmute(util.I32x8)simd.lanes_lt(w, util.F32x8(0)) | transmute(util.I32x8)simd.lanes_gt(simd.add(v, w), dn));
+	if simd.reduce_or(mask) == 0
+	{
+		return {}, {}, {};
+	}
+	normal_length: util.F32x8 = simd.sqrt(util.vector3_wide_dot(normal, normal));
+	mask &= ~transmute(util.I32x8)simd.lanes_le(normal_length, util.F32x8(1e-20));
+	if simd.reduce_or(mask) == 0
+	{
+		return {}, {}, {};
+	}
+	// only rejected lanes receive division sentinels. accepted operands stay exact
+	numerator = util.wide_select_f32(mask, numerator, {});
+	dn = util.wide_select_f32(mask, dn, util.F32x8(1));
+	normal = util.vector3_wide_select(mask, normal, {});
+	normal_length = util.wide_select_f32(mask, normal_length, util.F32x8(1));
+	t: util.F32x8 = simd.div(numerator, dn);
+	inverse_length: util.F32x8 = simd.div(util.F32x8(1), normal_length);
+	return t, util.vector3_wide_scale(normal, inverse_length), mask;
+}
+
 mesh_ray_test :: proc "contextless" (mesh: ^Mesh, pose: Rigid_Pose, ray: Tree_Ray) -> (Shape_Ray_Hit, Physics_Status)
 {
 	status := shape_ray_valid(ray);
@@ -489,7 +581,41 @@ mesh_ray_test :: proc "contextless" (mesh: ^Mesh, pose: Rigid_Pose, ray: Tree_Ra
 	d := util.quaternion_transform(ray.direction, inverse_orientation);
 	best := shape_ray_miss();
 	best_t := ray.maximum_t;
-	for triangle_index in 0 ..< mesh.triangles.length
+	origin_wide: util.Vector3_Wide = util.vector3_wide_broadcast(o);
+	direction_wide: util.Vector3_Wide = util.vector3_wide_broadcast(d);
+	triangle_index: int;
+	for triangle_index+util.PRODUCTION_LANE_COUNT <= int(mesh.triangles.length)
+	{
+		bundle: Triangle_Wide;
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			triangle: Triangle = mesh.triangles.memory[triangle_index+lane];
+			triangle.a = util.vector3_multiply(triangle.a, mesh.scale);
+			triangle.b = util.vector3_multiply(triangle.b, mesh.scale);
+			triangle.c = util.vector3_multiply(triangle.c, mesh.scale);
+			triangle_wide_write_slot_trusted(&bundle, lane, triangle);
+		}
+		t: util.F32x8;
+		local_normal: util.Vector3_Wide;
+		mask: util.I32x8;
+		t, local_normal, mask = #force_inline mesh_ray_test_bundle(bundle, origin_wide, direction_wide);
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			lane_t: f32 = simd.extract(t, lane);
+			if simd.extract(mask, lane) != 0 && lane_t <= best_t
+			{
+				best = {
+					t=lane_t,
+					normal=util.quaternion_transform(util.vector3_wide_read_slot(local_normal, lane), pose.orientation),
+					child_index=i32(triangle_index+lane),
+					state=.Present,
+				};
+				best_t = lane_t;
+			}
+		}
+		triangle_index += util.PRODUCTION_LANE_COUNT;
+	}
+	for ; triangle_index < int(mesh.triangles.length); triangle_index += 1
 	{
 		triangle := mesh.triangles.memory[triangle_index];
 		a := util.vector3_multiply(triangle.a, mesh.scale);

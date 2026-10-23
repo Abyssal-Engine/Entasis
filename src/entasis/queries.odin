@@ -902,27 +902,38 @@ query_batch_ray_run :: proc "contextless" (
 			rays[lane] = queries[start + lane].ray_data.ray;
 		}
 		physics.simulation_ray_query_batch(&data.simulation, rays[:count], completions[:count], callbacks, data.pool);
-		for lane in 0 ..< count
+		// the outer range admits only nonempty chunks
+		remaining: int = count;
+		for
 		{
-			completion := completions[lane];
+			lane: int = count - remaining;
+			completion: ^physics.Ray_Query_Batch_Completion = &completions[lane];
 			result := &results[start + lane];
-			result^ = {status=completion.status, ray_hit={child_index=-1}};
-			if completion.status == .Ok
+			if completion.status == .Ok && completion.presence == .Present
 			{
-				if completion.presence == .Present
-				{
-					result.hit = completion.presence == .Present;
-					result.count = 1;
-					result.ray_hit = transmute(Ray_Hit)completion.hit;
-				}
-				else
-				{
-					result.status = .Not_Found;
-				}
+				result^ = {
+					status=.Ok,
+					count=1,
+					hit=completion.presence == .Present,
+					ray_hit=transmute(Ray_Hit)completion.hit,
+				};
+			}
+			else if completion.status == .Ok
+			{
+				result^ = {status=.Not_Found, ray_hit={child_index=-1}};
+			}
+			else
+			{
+				result^ = {status=completion.status, ray_hit={child_index=-1}};
 			}
 			if overall == .Ok && result.status != .Ok
 			{
 				overall = result.status;
+			}
+			remaining -= 1;
+			if remaining == 0
+			{
+				break;
 			}
 		}
 	}

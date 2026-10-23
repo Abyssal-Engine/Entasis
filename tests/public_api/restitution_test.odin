@@ -3,12 +3,11 @@ package public_api_tests
 import "base:runtime"
 import "core:math"
 import "core:mem"
-import "core:simd"
-import "core:sync"
 import "core:testing"
 import e "entasis:entasis"
 import p "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
+import support "../../benchmarks/benchmark_support"
 
 Restitution_Test_Scene :: struct
 {
@@ -464,47 +463,11 @@ restitution_world_impacts_use_integrated_velocity_before_warmstart :: proc (t: ^
 	}
 }
 
-Restitution_Test_Integration :: struct
-{
-	counts: [64]i32,
-	gravity: f32,
-}
-
-restitution_test_integrator_initialize :: proc "contextless" (user_context: rawptr, simulation: ^p.Simulation) -> p.Physics_Status
-{
-	return .Ok;
-}
-
-restitution_test_integrator_prepare :: proc "contextless" (user_context: rawptr, dt: f32) -> p.Physics_Status
-{
-	return .Ok;
-}
-
-restitution_test_integrator_dispose :: proc "contextless" (user_context: rawptr)
-{
-}
-
-restitution_test_integrator_velocity :: proc "contextless" (
-	user_context: rawptr, indices: util.I32x8, position: util.Vector3_Wide,
-	orientation: util.Quaternion_Wide, inertia: p.Body_Inertia_Wide,
-	mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^p.Body_Velocity_Wide,
-)
-{
-	state: ^Restitution_Test_Integration = (^Restitution_Test_Integration)(user_context);
-	for lane in 0 ..< util.PRODUCTION_LANE_COUNT
-	{
-		if simd.extract(mask, lane) == 0
-		{
-			continue;
-		}
-		index: i32 = simd.extract(indices, lane);
-		if index >= 0
-		{
-			_ = sync.atomic_add_explicit(&state.counts[index], 1, .Relaxed);
-		}
-	}
-	velocity.linear.y = simd.add(velocity.linear.y, simd.mul(util.F32x8(state.gravity), dt));
-}
+Restitution_Test_Integration :: support.Counted_Gravity;
+restitution_test_integrator_initialize :: support.counted_gravity_initialize;
+restitution_test_integrator_prepare :: support.counted_gravity_prepare;
+restitution_test_integrator_dispose :: support.counted_gravity_dispose;
+restitution_test_integrator_velocity :: support.counted_gravity_velocity;
 
 @(test)
 restitution_fallback_integrates_joint_owned_bodies_once_per_substep :: proc (t: ^testing.T)
@@ -533,8 +496,8 @@ restitution_fallback_integrates_joint_owned_bodies_once_per_substep :: proc (t: 
 				simulation, _ := e.world_borrow_simulation(&world);
 				shape, _ := e.shape_add(&world, e.sphere(1));
 				inertia, _ := e.shape_inertia(e.sphere(1), 1);
-				type_id, valid := register_velocity_target_constraint(t, &world);
-				if !valid
+				type_id, registration_status := register_velocity_target_constraint(t, &world);
+				if registration_status != .Ok
 				{
 					_ = e.world_destroy(&world);
 					return;
@@ -895,8 +858,8 @@ restitution_parallel_responsibility_rebuild_preserves_target_ranges :: proc (t: 
 			return;
 		}
 		simulation, _ := e.world_borrow_simulation(&world);
-		type_id, valid := register_velocity_target_constraint(t, &world);
-		if !valid
+		type_id, registration_status := register_velocity_target_constraint(t, &world);
+		if registration_status != .Ok
 		{
 			_ = e.world_destroy(&world);
 			return;

@@ -1,5 +1,7 @@
 package public_api_tests
 
+import util "entasis:entasis_utilities"
+
 import "core:testing"
 import entasis "entasis:entasis"
 import physics "entasis:entasis_physics"
@@ -335,4 +337,88 @@ disposed_or_stepping_world_rejects_direct_view_acquisition :: proc(t: ^testing.T
 	simulation.state = .Ready;
 	testing.expect_value(t, entasis.world_destroy(&world), entasis.Status.Ok);
 	testing.expect(t, !entasis.body_view_valid(&world, idle_view));
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	Direct_Position_Stage :: enum u8
+	{
+		Step,
+		Predict,
+		Sleep,
+		Collision,
+		Solve,
+		Optimize,
+	}
+
+	direct_position_stage :: proc(world: ^entasis.World, simulation: ^physics.Simulation, stage: Direct_Position_Stage) -> entasis.Status
+	{
+		switch stage
+		{
+			case .Step:
+				return entasis.world_step(world, 1.0 / 60);
+			case .Predict:
+				return physics.simulation_predict_bounding_boxes(simulation, 1.0 / 60);
+			case .Sleep:
+				return physics.simulation_sleep(simulation);
+			case .Collision:
+				return physics.simulation_collision_detection(simulation, 1.0 / 60);
+			case .Solve:
+				return physics.simulation_solve(simulation, 1.0 / 60);
+			case .Optimize:
+				return physics.simulation_incrementally_optimize_data_structures(simulation);
+		}
+		return .Invalid_Argument;
+	}
+
+	@(test)
+	direct_motion_positions_publish_at_stage_boundary :: proc(t: ^testing.T)
+	{
+		for stage in Direct_Position_Stage
+		{
+			world: entasis.World;
+			testing.expect_value(t, entasis.world_init(&world, view_world_description()), entasis.Status.Ok);
+			shape: entasis.Shape_Handle;
+			status: entasis.Status;
+			shape, status = entasis.shape_add(&world, entasis.sphere(0.5));
+			testing.expect_value(t, status, entasis.Status.Ok);
+			handles: [3]entasis.Body_Handle;
+			positions: [3]entasis.Global_Position = {{1e9 + 0.002, 0, 0}, {1e9 + 2.002, 0, 0}, {1e9 + 4.002, 0, 0}};
+			for index in 0 ..< len(handles)
+			{
+				description: entasis.Body_Description = view_body_description({});
+				if index == 0
+				{
+					description.collidable = entasis.collidable(shape);
+				}
+				handles[index], status = entasis.body_add_global(&world, description, positions[index]);
+				testing.expect_value(t, status, entasis.Status.Ok);
+			}
+			simulation: ^physics.Simulation = view_low_level_simulation(world);
+			active: ^physics.Body_Set = &simulation.bodies.sets.memory[physics.BODIES_ACTIVE_SET_INDEX];
+			active.dynamics_state.memory[0].motion.pose.position = {32, 0, 0};
+			active.dynamics_state.memory[1].motion.pose.position = {f32(transmute(f32)u32(0x7fc00000)), 0, 0};
+			testing.expect_value(t, direct_position_stage(&world, simulation, stage), entasis.Status.Invalid_Argument);
+			for index in 0 ..< len(handles)
+			{
+				pose: entasis.Global_Pose;
+				pose, status = entasis.body_get_global_pose(&world, handles[index]);
+				testing.expect_value(t, status, entasis.Status.Ok);
+				testing.expect_value(t, pose.position, positions[index]);
+			}
+			testing.expect(t, active.dynamics_state.memory[1].motion.pose.position.x != active.dynamics_state.memory[1].motion.pose.position.x);
+			active.dynamics_state.memory[1].motion.pose.position = {64, 0, 0};
+			testing.expect_value(t, direct_position_stage(&world, simulation, stage), entasis.Status.Ok);
+			positions[0] = {32, 0, 0};
+			positions[1] = {64, 0, 0};
+			for index in 0 ..< len(handles)
+			{
+				pose: entasis.Global_Pose;
+				pose, status = entasis.body_get_global_pose(&world, handles[index]);
+				testing.expect_value(t, status, entasis.Status.Ok);
+				testing.expect_value(t, pose.position, positions[index]);
+			}
+			testing.expect_value(t, entasis.world_destroy(&world), entasis.Status.Ok);
+		}
+	}
 }

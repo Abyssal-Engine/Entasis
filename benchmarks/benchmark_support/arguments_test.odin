@@ -1,6 +1,8 @@
 package benchmark_support
 
 import "core:testing"
+import trace "../spatial_query_trace"
+import entasis "entasis:entasis"
 import "core:encoding/csv"
 import "core:strconv"
 import observations "../scene_observation"
@@ -15,7 +17,10 @@ admit_test :: proc(workload: Workload, extra: []string) -> (Options, string)
 	defer delete(arguments);
 	arguments[0] = "--worker-count=1";
 	arguments[1] = "--output=unused.csv";
-	copy(arguments[2:], extra);
+	for index in 0 ..< len(extra)
+	{
+		arguments[index+2] = extra[index];
+	}
 	return parse_options(workload, arguments);
 }
 
@@ -248,7 +253,7 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 		defer delete(data);
 		physical_buffer: [4096]u8;
 		physical: string = observations.physical_csv(sample.physical, physical_buffer[:]);
-		row: string = fmt.aprintf("2,3,0,0,5,5,0,0,0,0,0,ok,ok,1.250000000,\"shape=box\"%s%s,,,off,native_step_sum\n", values, physical);
+		row: string = fmt.aprintf("2,3,0,0,5,5,0,0,0,0,0,ok,ok,1.250000000,\"shape=box\",%s%s%s,,,off,native_step_sum\n", entasis.PRECISION_NAME, values, physical);
 		defer delete(row);
 		expected: string = fmt.aprintf("%s%s%s%s\n%s%s", CSV_HEADER, header, observations.PHYSICAL_HEADER, RECORDING_HEADER, row, row);
 		defer delete(expected);
@@ -334,4 +339,119 @@ verification_admission_preserves_workload_defaults :: proc(t: ^testing.T)
 		}
 	}
 	testing.expect(t, BENCHMARK_COMPONENTS == "common" || BENCHMARK_COMPONENTS == "all")
+}
+
+@(test)
+spatial_query_ray_pattern_arguments_preserve_default_and_reject_invalid_values :: proc(t: ^testing.T)
+{
+	baseline, baseline_status := trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv"});
+	explicit, explicit_status := trace.parse_arguments({"query", "--output=unused.csv", "--ray-pattern=axial", "--worker-count=1"});
+	oblique, oblique_status := trace.parse_arguments({"query", "--worker-count=64", "--output=unused.csv", "--ray-pattern=oblique"});
+	testing.expect_value(t, baseline_status, trace.Argument_Status.Ok);
+	testing.expect_value(t, explicit_status, trace.Argument_Status.Ok);
+	testing.expect_value(t, oblique_status, trace.Argument_Status.Ok);
+	testing.expect_value(t, oblique.worker_count, 64);
+	testing.expect_value(t, baseline.worker_count, explicit.worker_count);
+	testing.expect_value(t, baseline.output_path, explicit.output_path);
+	testing.expect_value(t, baseline.ray_pattern, trace.Ray_Pattern.Axial);
+	testing.expect_value(t, explicit.ray_pattern, trace.Ray_Pattern.Axial);
+	testing.expect_value(t, oblique.ray_pattern, trace.Ray_Pattern.Oblique);
+	for arguments in ([][]string{
+		{"query", "--worker-count=1", "--output=unused.csv", "--ray-pattern="},
+		{"query", "--worker-count=1", "--output=unused.csv", "--ray-pattern=unknown"},
+		{"query", "--worker-count=1", "--output=unused.csv", "--ray-pattern=axial", "--ray-pattern=oblique"},
+		{"query", "--worker-count=1", "--ray-pattern=oblique"},
+		{"query", "--output=unused.csv", "--ray-pattern=oblique"},
+		{"query", "--worker-count=0", "--output=unused.csv"},
+		{"query", "--worker-count=65", "--output=unused.csv"},
+		{"query", "--worker-count=1", "--output="},
+		{"query", "--worker-count=1", "--worker-count=2"},
+		{"query", "--output=a.csv", "--output=b.csv"},
+		{"query", "--worker-count=1", "--output=unused.csv", "--unknown=axial"},
+	})
+	{
+		_, status := trace.parse_arguments(arguments);
+		testing.expect_value(t, status, trace.Argument_Status.Invalid);
+	}
+	testing.expect_value(t, baseline.warmup_batches, 10);
+	testing.expect_value(t, baseline.measured_batches, 100);
+	for family in ([]string{"all", "ray", "sphere-cast", "aabb-presence"})
+	{
+		family_option: string = strings.concatenate({"--query-family=", family}, context.temp_allocator);
+		args, status := trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv", family_option, "--warmup-batches=2", "--measured-batches=1000000"});
+		testing.expect_value(t, status, trace.Argument_Status.Ok);
+		testing.expect_value(t, args.query_family, family);
+		testing.expect_value(t, args.warmup_batches, 2);
+		testing.expect_value(t, args.measured_batches, 1_000_000);
+		_, status = trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv", family_option}, .Reject);
+		testing.expect_value(t, status, trace.Argument_Status.Invalid);
+	}
+	for option in ([]string{"--warmup-batches=", "--measured-batches=0", "--warmup-batches=-1", "--measured-batches=+1", "--measured-batches=1000001", "--measured-batches=999999999999999999999999", "--warmup-batches=1.0", "--query-family=Ray"})
+	{
+		_, status := trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv", option});
+		testing.expect_value(t, status, trace.Argument_Status.Invalid);
+	}
+	for options in ([][]string{{"--query-family=ray", "--query-family=all"}, {"--warmup-batches=1", "--warmup-batches=2"}, {"--measured-batches=1", "--measured-batches=2"}, {"--query-family=sphere-cast", "--ray-pattern=oblique"}, {"--query-family=aabb-presence", "--ray-pattern=oblique"}})
+	{
+		_, status := trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv", options[0], options[1]});
+		testing.expect_value(t, status, trace.Argument_Status.Invalid);
+	}
+
+}
+
+@(test)
+spatial_query_oblique_generation_preserves_constructed_hits_and_misses :: proc(t: ^testing.T)
+{
+	arguments, argument_status := trace.parse_arguments({"query", "--worker-count=1", "--output=unused.csv", "--ray-pattern=oblique"});
+	testing.expect_value(t, argument_status, trace.Argument_Status.Ok);
+	faces, octants: u32;
+	invalid_geometry: int;
+	for index in 0 ..< trace.RAY_QUERY_COUNT
+	{
+		origin, direction := trace.query_generate(index, arguments.ray_pattern);
+		origins: [3]f32 = {origin.x, origin.y, origin.z};
+		directions: [3]f32 = {direction.x, direction.y, direction.z};
+		sample: int = index / 2;
+		slot: int = sample % 10_000;
+		center: [3]f32 = {2*f32(slot%25)-24, 2*f32(slot/625), 2*f32((slot/25)%25)-24};
+		scene_minimum: [3]f32 = {-24.5, -0.5, -24.5};
+		scene_maximum: [3]f32 = {24.5, 30.5, 24.5};
+		entry: f32 = 0;
+		exit: f32 = 64;
+		octant: u32;
+		for component in 0 ..< 3
+		{
+			if directions[component] < 0
+			{
+				octant |= 1 << u32(component);
+			}
+			expected_magnitude: f32 = 1 if component == (sample%6)/2 else 1.0/64.0;
+			if abs(directions[component]) != expected_magnitude
+			{
+				invalid_geometry += 1;
+			}
+			minimum: f32 = center[component]-0.5 if index%2 == 0 else scene_minimum[component];
+			maximum: f32 = center[component]+0.5 if index%2 == 0 else scene_maximum[component];
+			a: f32 = (minimum-origins[component])/directions[component];
+			b: f32 = (maximum-origins[component])/directions[component];
+			entry = max(entry, min(a, b));
+			exit = min(exit, max(a, b));
+		}
+		if (index%2 == 0 && entry > exit) || (index%2 != 0 && entry <= exit)
+		{
+			invalid_geometry += 1;
+		}
+		faces |= 1 << u32(sample%6);
+		octants |= 1 << octant;
+	}
+	testing.expect_value(t, invalid_geometry, 0);
+	testing.expect_value(t, faces, u32(63));
+	testing.expect_value(t, octants, u32(255));
+	for index in trace.RAY_QUERY_COUNT ..< trace.QUERY_COUNT_PER_BATCH
+	{
+		origin, direction := trace.query_generate(index, .Axial);
+		oblique_origin, oblique_direction := trace.query_generate(index, arguments.ray_pattern);
+		testing.expect_value(t, origin, oblique_origin);
+		testing.expect_value(t, direction, oblique_direction);
+	}
 }

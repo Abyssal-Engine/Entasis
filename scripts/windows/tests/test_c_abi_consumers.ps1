@@ -7,18 +7,22 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Development", "Release")]
     [string]$Configuration,
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32",
     [ValidateSet("Msvc", "ClangCl", "All")]
     [string]$Compiler = "Msvc",
-    [ValidateSet("Smoke", "All", "Lifecycle", "Queries", "Callbacks", "Stages", "Memory", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions", "Allocators", "Triggers", "Body-Control", "Restitution", "Compatibility")]
+    [ValidateSet("Smoke", "All", "Lifecycle", "Queries", "Callbacks", "Stages", "Memory", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions", "Allocators", "Triggers", "Body-Control", "Restitution", "Large-Worlds", "Compatibility")]
     [string]$Scope = "All",
     [ValidateNotNullOrEmpty()]
     [string]$BaselineRoot,
     [ValidateSet("Original", "Cumulative")]
-    [string]$CompatibilityFixtures = "Original"
+    [string]$CompatibilityFixtures = "Original",
+    [ValidateSet("Matching", "Different")]
+    [string]$CompatibilityLayout = "Different"
 )
 . (Join-Path $PSScriptRoot "../lib/c_abi_windows_common.ps1")
 
-$buildRoot = Get-CAbiBuildRoot $Configuration
+$buildRoot = Get-CAbiBuildRoot $Configuration $Precision
 if ($Scope -eq "Compatibility")
 {
     if ([string]::IsNullOrWhiteSpace($BaselineRoot) -or [IO.Path]::IsPathRooted($BaselineRoot))
@@ -51,7 +55,7 @@ elseif ($PSBoundParameters.ContainsKey("BaselineRoot"))
     [Console]::Error.WriteLine("-BaselineRoot is only valid for Compatibility")
     exit 2
 }
-if ($Scope -ne "Compatibility" -and $PSBoundParameters.ContainsKey("CompatibilityFixtures"))
+if ($Scope -ne "Compatibility" -and ($PSBoundParameters.ContainsKey("CompatibilityFixtures") -or $PSBoundParameters.ContainsKey("CompatibilityLayout")))
 {
     [Console]::Error.WriteLine("-CompatibilityFixtures is only valid for Compatibility")
     exit 2
@@ -93,6 +97,17 @@ $runtimeCTests = @(
 )
 $runtimeCppTests = @("smoke_cpp20", "constraints_dynamics_cpp20", "queries_properties_cpp20", "extensions_cpp20", "custom_shapes_cpp20", "custom_tasks_cpp20", "custom_constraints_cpp20", "triggers_cpp20")
 $cookingTests = @("smoke_cooking_c11", "cooking_assets_c11", "compound_tasks_c11", "allocators_c11", "extensions_semantic_c11", "triggers_tasks_c11")
+# Cumulative retains the pre-precision membership for genuine old consumers
+$legacyRuntimeCTests = $runtimeCTests
+$legacyRuntimeCppTests = $runtimeCppTests
+$legacyCookingTests = $cookingTests
+$runtimeCTests += "origin_precision_c11"
+$runtimeCppTests += "origin_precision_cpp20"
+if ($Precision -eq "Mixed64")
+{
+    $runtimeCTests += "global_precision_c11"
+    $runtimeCppTests += "global_precision_cpp20"
+}
 if ($Scope -eq "Smoke")
 {
     $runtimeCTests = @("smoke_c11")
@@ -102,6 +117,17 @@ if ($Scope -eq "Smoke")
 
 switch ($Scope)
 {
+    "Large-Worlds"
+    {
+        $runtimeCTests = @("origin_precision_c11")
+        $runtimeCppTests = @("origin_precision_cpp20")
+        $cookingTests = @()
+        if ($Precision -eq "Mixed64")
+        {
+            $runtimeCTests += "global_precision_c11"
+            $runtimeCppTests += "global_precision_cpp20"
+        }
+    }
     "Triggers"
     {
         $runtimeCTests = @("triggers_c11")
@@ -202,6 +228,9 @@ if ($Scope -eq "Compatibility")
     if ($CompatibilityFixtures -eq "Cumulative")
     {
         $baselineConsumerRoot = Join-Path $baselineConsumerRoot "all"
+        $runtimeCTests = $legacyRuntimeCTests
+        $runtimeCppTests = $legacyRuntimeCppTests
+        $cookingTests = $legacyCookingTests
     }
     else
     {
@@ -351,6 +380,11 @@ foreach ($lane in $lanes)
     }
     $commonCFlags = @("/nologo", "/std:c11", "/O2", "/W4", "/WX", "/I$includeRoot", "/I$testRoot")
     $commonCppFlags = @("/nologo", "/std:c++20", "/O2", "/W4", "/WX", "/EHsc", "/I$includeRoot", "/I$testRoot")
+    if ($Precision -eq "Mixed64" -and $Scope -ne "Compatibility")
+    {
+        $commonCFlags += "/DENTASIS_PRECISION_MIXED64=1"
+        $commonCppFlags += "/DENTASIS_PRECISION_MIXED64=1"
+    }
     if ($laneName -eq "msvc")
     {
         $commonCFlags += "/experimental:c11atomics"
@@ -482,7 +516,7 @@ foreach ($lane in $lanes)
             {
                 $baselineBuild
             }
-            $expected = if ($pair -in @("old-old", "new-new"))
+            $expected = if ($pair -in @("old-old", "new-new") -or $CompatibilityLayout -eq "Matching")
             {
                 "accept"
             }

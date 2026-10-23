@@ -19,7 +19,7 @@ See [Building Entasis](BUILDING.md) for source-build prerequisites. SDK consumer
 
 - **Continuous sensor crossings:** triggers detect overlap at collision samples. An object can pass through a sensor between samples without an event. See [trigger detection](odin/reference/COLLISION.md#detection-and-filtering)
 - **Character controller:** there is no built-in controller with stair climbing, wall sliding and ground handling. The [character-controller example](../examples/headless/character_controller/main.odin) demonstrates ground probing and swept movement using existing queries
-- **Whole-world snapshots:** there is no built-in capture/restore of an exact running simulation. Recreating application objects, shapes, bodies and constraints does not restore all solver and feature history
+- **Whole-world snapshots:** there is no built-in capture/restore of an exact running simulation. [Global authoring snapshots](odin/reference/DATA-ACCESS.md#global-authoring-snapshots) copy selected body/static and target values, without restoring topology, solver/contact history or object identities
 - **Cooked asset persistence:** cooking and import operate in memory. There is no built-in cooked-asset byte format for saving and reloading prepared shapes. See [saving prepared shapes](odin/COOKING.md#saving-prepared-shapes)
 - **Solid-volume mesh queries:** closed-mesh containment is not provided. Current [mesh queries](odin/reference/SHAPES.md#meshes) and mesh sensors operate on triangle surfaces
 
@@ -31,11 +31,14 @@ See [Building Entasis](BUILDING.md) for source-build prerequisites. SDK consumer
 
 ## Accuracy and sampling
 
-- **Coordinate precision:** positions, velocities and collision geometry use 32-bit floating-point values. Precision decreases farther from the origin. There is no double-precision simulation mode
+- **Simulation repeatability:** parallel stepping does not guarantee bitwise-identical simulation results, including repeated runs with the same worker count. Selecting one worker does not guarantee identical results across builds or platforms
+- **Coordinate precision:** the default `float32` profile keeps float positions and supports explicit origin shifting. The opt-in `mixed64` profile stores world positions and tree endpoints in f64. Shape geometry, orientations, velocities, contacts and solver arithmetic remain f32. Relative geometry must fit the local-float accuracy budget. See [precision profiles and origin frames](odin/reference/WORLD.md#precision-profiles-and-origin-frames)
 - **Collision sampling:** the default timestep performs full collision detection once per world step. Solver substeps refine solving and integration without adding collision or trigger samples. See [substeps](odin/reference/WORLD.md#substeps)
 - **Continuous collision and restitution:** continuous collision detection uses sweep estimates followed by contact generation, not exact time-of-impact simulation. Restitution uses the resulting contact solve rather than exact impact-time response. See [continuous collision settings](odin/reference/BODIES-STATICS.md#continuous-collision-detection) and [restitution](odin/reference/COLLISION.md#restitution)
 - **Composite separation:** a successful correction is checked within tolerance but is not guaranteed to be the shortest translation. Numerical iteration budgets do not provide one total work bound across all composite leaves. See [distance and separation queries](odin/reference/QUERIES.md#closest-point-distance-and-separation)
 - **Joint break timing:** thresholds are sampled after solved substeps, but crossed joints remain active until the complete step succeeds and pending removal can finish. See [removal and notification](odin/reference/CONSTRAINTS.md#removal-and-notification-retry)
+
+F64 spacing still grows with coordinate magnitude, and shape kernels still operate on local f32 geometry. Mixed64 body/static positions and their conservative envelopes must fit the finite binary32 coordinate range used by the float caches. Local extents, separations and sweep motion must also remain representable. Legacy float authoring, views, visualization and recording can round absolute positions. See [global query coordinates](odin/reference/QUERIES.md#high-query-coordinates) for result and callback frames
 
 ## Feature compatibility
 

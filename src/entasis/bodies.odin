@@ -1,5 +1,7 @@
 package entasis
 
+import util "entasis:entasis_utilities"
+
 import "core:math"
 import physics "entasis:entasis_physics"
 
@@ -191,7 +193,7 @@ body_set_velocity :: #force_inline proc (
 		return status;
 	}
 	state.velocity = body_velocity;
-	return body_apply(world, handle, state);
+	return body_apply_preserving_position(world, handle, state);
 }
 
 // body_set_inertia updates local inertia and handles dynamic/kinematic changes
@@ -205,7 +207,7 @@ body_set_inertia :: #force_inline proc (
 		return status;
 	}
 	state.local_inertia = inertia;
-	return body_apply(world, handle, state);
+	return body_apply_preserving_position(world, handle, state);
 }
 
 // body_set_activity updates sleep thresholds and resets the activity counters
@@ -219,7 +221,7 @@ body_set_activity :: #force_inline proc (
 		return status;
 	}
 	state.activity = activity;
-	return body_apply(world, handle, state);
+	return body_apply_preserving_position(world, handle, state);
 }
 
 // body_set_collidable updates shape, continuity, and speculative margins
@@ -233,7 +235,7 @@ body_set_collidable :: #force_inline proc (
 		return status;
 	}
 	state.collidable = value;
-	return body_apply(world, handle, state);
+	return body_apply_preserving_position(world, handle, state);
 }
 
 // body_set_shape updates only the shape while retaining the other collidable
@@ -248,5 +250,10 @@ body_set_shape :: #force_inline proc (
 		return status;
 	}
 	state.collidable.shape = shape;
-	return body_apply(world, handle, state);
+	return body_apply_preserving_position(world, handle, state);
+}
+
+when util.PRECISION_MODE == .Float_Coordinates
+{
+	body_apply_preserving_position :: body_apply;
 }

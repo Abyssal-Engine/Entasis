@@ -22,38 +22,78 @@ abi_per_body_context :: struct
 	angular_damping_dt:     util.F32x8,
 }
 
-abi_world_resource :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	header:           shared.World_Header,
-	allocator:        shared.Allocator,
-	world:            entasis.World,
-	pool_header:      ^abi_buffer_pool_header,
-	thread_pool:      ^abi_thread_pool_resource,
-	external_bridge:  abi_external_dispatch_bridge,
-	narrow_policy:    entasis.Default_Narrow_Policy,
-	// uses the existing eight-byte gap before the 32-byte-aligned policy
-	custom_constraints: ^abi_custom_constraint_binding,
-	uniform_policy:   entasis.Uniform_Gravity_Policy,
-	planetary_policy: entasis.Planetary_Gravity_Policy,
-	per_body_policy:  abi_per_body_context,
-	layer_material:   abi_layer_material_context,
-	property_resource:       ^abi_collision_property_resource,
-	active_contact_trackers: i32,
-	_reserved0:             i32,
-	stage_callbacks: Entasis_Timestep_Callbacks,
-	custom_timestepper: Entasis_Timestepper,
-	substep_scheduler: Entasis_Substep_Scheduler,
-	velocity_callbacks: Entasis_Velocity_Callbacks,
-	contact_callbacks: Entasis_Contact_Callbacks,
-	pose_simulation: ^physics.Simulation,
-	step_scope_simulation: ^physics.Simulation,
-	step_scope_dispatcher: ^util.Thread_Dispatcher_Boundary,
-	step_scope_generation: u64,
-	step_scope_live: abi_Scope_State,
-	step_scope_executing: abi_Execution_State,
-	custom_shapes: ^abi_custom_shape_binding,
-	custom_tasks: ^abi_custom_task_binding,
+	abi_world_resource :: struct
+	{
+		header:           shared.World_Header,
+		allocator:        shared.Allocator,
+		world:            entasis.World,
+		pool_header:      ^abi_buffer_pool_header,
+		thread_pool:      ^abi_thread_pool_resource,
+		external_bridge:  abi_external_dispatch_bridge,
+		narrow_policy:    entasis.Default_Narrow_Policy,
+		// uses the existing eight-byte gap before the 32-byte-aligned policy
+		custom_constraints: ^abi_custom_constraint_binding,
+		uniform_policy:   entasis.Uniform_Gravity_Policy,
+		planetary_policy: entasis.Planetary_Gravity_Policy,
+		per_body_policy:  abi_per_body_context,
+		layer_material:   abi_layer_material_context,
+		property_resource:       ^abi_collision_property_resource,
+		active_contact_trackers: i32,
+		_reserved0:             i32,
+		stage_callbacks: Entasis_Timestep_Callbacks,
+		custom_timestepper: Entasis_Timestepper,
+		substep_scheduler: Entasis_Substep_Scheduler,
+		velocity_callbacks: Entasis_Velocity_Callbacks,
+		global_velocity_callbacks: Entasis_Global_Velocity_Callbacks,
+		contact_callbacks: Entasis_Contact_Callbacks,
+		pose_simulation: ^physics.Simulation,
+		step_scope_simulation: ^physics.Simulation,
+		step_scope_dispatcher: ^util.Thread_Dispatcher_Boundary,
+		step_scope_generation: u64,
+		step_scope_live: abi_Scope_State,
+		step_scope_executing: abi_Execution_State,
+		custom_shapes: ^abi_custom_shape_binding,
+		custom_tasks: ^abi_custom_task_binding,
+	}
 }
+else
+{
+	abi_world_resource :: struct
+	{
+		header:           shared.World_Header,
+		allocator:        shared.Allocator,
+		world:            entasis.World,
+		pool_header:      ^abi_buffer_pool_header,
+		thread_pool:      ^abi_thread_pool_resource,
+		external_bridge:  abi_external_dispatch_bridge,
+		narrow_policy:    entasis.Default_Narrow_Policy,
+		// uses the existing eight-byte gap before the 32-byte-aligned policy
+		custom_constraints: ^abi_custom_constraint_binding,
+		uniform_policy:   entasis.Uniform_Gravity_Policy,
+		planetary_policy: entasis.Planetary_Gravity_Policy,
+		per_body_policy:  abi_per_body_context,
+		layer_material:   abi_layer_material_context,
+		property_resource:       ^abi_collision_property_resource,
+		active_contact_trackers: i32,
+		_reserved0:             i32,
+		stage_callbacks: Entasis_Timestep_Callbacks,
+		custom_timestepper: Entasis_Timestepper,
+		substep_scheduler: Entasis_Substep_Scheduler,
+		velocity_callbacks: Entasis_Velocity_Callbacks,
+		contact_callbacks: Entasis_Contact_Callbacks,
+		pose_simulation: ^physics.Simulation,
+		step_scope_simulation: ^physics.Simulation,
+		step_scope_dispatcher: ^util.Thread_Dispatcher_Boundary,
+		step_scope_generation: u64,
+		step_scope_live: abi_Scope_State,
+		step_scope_executing: abi_Execution_State,
+		custom_shapes: ^abi_custom_shape_binding,
+		custom_tasks: ^abi_custom_task_binding,
+	}
+}
+
 
 abi_world_get :: #force_inline proc "contextless" (
 	handle: ^Entasis_World,
@@ -570,8 +610,13 @@ abi_world_init_internal :: proc "contextless" (
 	pool: ^Entasis_Buffer_Pool,
 	diagnostic: ^Entasis_Diagnostic,
 	extensions_input: ^Entasis_World_Extensions = nil,
+	global_callbacks_input: rawptr = nil,
 ) -> Entasis_Status
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		global_callbacks: rawptr = global_callbacks_input;
+	}
 	description := description_input;
 	extensions := extensions_input;
 	if world == nil || world.opaque != nil || description == nil
@@ -583,6 +628,24 @@ abi_world_init_internal :: proc "contextless" (
 			(extensions.contact_callbacks != nil && (description.use_narrow_policy != 0 || description.narrow_policy_v1 != nil))))
 	{
 		return abi_status_finish(.Invalid_Description, diagnostic, .World_Initialize);
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_callbacks != nil
+		{
+			global_input: ^Entasis_Global_Velocity_Callbacks = cast(^Entasis_Global_Velocity_Callbacks)global_callbacks;
+			if abi_global_velocity_callbacks_validate(global_input) != .Ok || description.use_pose_policy != 0 ||
+				(extensions != nil && extensions.velocity_callbacks != nil)
+			{
+				return abi_status_finish(.Invalid_Description, diagnostic, .World_Initialize);
+			}
+		}
+		global_copy: Entasis_Global_Velocity_Callbacks;
+		if global_callbacks != nil
+		{
+			global_copy = (cast(^Entasis_Global_Velocity_Callbacks)global_callbacks)^;
+			global_callbacks = &global_copy;
+		}
 	}
 	// copy descriptors before the first application allocation. only explicitly
 	// borrowed user data survives. callback-table pointers below are call-local
@@ -682,6 +745,13 @@ abi_world_init_internal :: proc "contextless" (
 		return abi_status_finish(convert_status, diagnostic, .World_Initialize);
 	}
 	abi_world_extensions_bind(resource, &low, extensions);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_callbacks != nil
+		{
+			abi_global_velocity_callbacks_bind(resource, &low, cast(^Entasis_Global_Velocity_Callbacks)global_callbacks);
+		}
+	}
 	context = runtime.default_context();
 	status := entasis.Status.Ok;
 	if pool_header == nil

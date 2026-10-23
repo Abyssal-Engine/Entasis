@@ -123,11 +123,18 @@ Ray_Query_Callbacks :: struct
 	user_context: rawptr,
 }
 
+Ray_Query_Delivery :: enum u8
+{
+	Stored,
+	Callback,
+}
+
 Ray_Query_Collector :: struct
 {
 	hits:      util.Buffer(Ray_Query_Hit),
 	count:     int,
 	mode:      Query_Collection_Mode,
+	delivery:  Ray_Query_Delivery,
 	callbacks: Ray_Query_Callbacks,
 }
 
@@ -368,7 +375,7 @@ ray_query_collector_initialize :: proc "contextless" (
 	return .Ok;
 }
 
-ray_query_collector_add :: proc "contextless" (
+ray_query_collector_add :: #force_inline proc "contextless" (
 	collector: ^Ray_Query_Collector, hit: Ray_Query_Hit,
 ) -> Physics_Status
 {
@@ -398,13 +405,30 @@ ray_query_collector_add :: proc "contextless" (
 	return .Ok;
 }
 
-ray_query_collector_report :: proc "contextless" (
+ray_query_collector_report :: #force_inline proc "contextless" (
 	collector: ^Ray_Query_Collector, ray: Tree_Ray, hit: Ray_Query_Hit, maximum_t: ^f32,
 ) -> Physics_Status
 {
-	if maximum_t == nil
+	if collector == nil || maximum_t == nil
 	{
 		return .Invalid_Argument;
+	}
+	// a callback-only collector streams local hits into a differently typed
+	// caller-owned result (the high-coordinate query path). ordinary stored
+	// collectors and their initializer retain the existing capacity contract
+	if collector.delivery == .Callback
+	{
+		if collector.callbacks.hit == nil
+		{
+			return .Invalid_Argument;
+		}
+		callback_hit: Ray_Query_Hit = hit;
+		callback_maximum: f32 = maximum_t^;
+		status: Physics_Status = collector.callbacks.hit(
+			collector.callbacks.user_context, ray, &callback_hit, &callback_maximum,
+		);
+		maximum_t^ = min(maximum_t^, callback_maximum);
+		return status;
 	}
 	status := ray_query_collector_add(collector, hit);
 	if status != .Ok
@@ -952,7 +976,7 @@ ray_batcher_add :: proc "contextless" (
 
 ray_batcher_targets_match :: proc "contextless" (a, b: Shape_Query_Target) -> Reference_State
 {
-	if a.shape != b.shape
+	if a.shape != b.shape || a.target_id != b.target_id
 	{
 		return .Missing;
 	}
@@ -1092,16 +1116,25 @@ query_overlap_resolved :: proc "contextless" (
 	{
 		return .Invalid_Argument;
 	}
-	query_raw, _, query_status := shape_registry_resolve(shapes, query_shape);
+	query_raw: rawptr;
+	query_batch: ^Shape_Batch;
+	query_status: Physics_Status;
+	query_raw, query_batch, query_status = shape_registry_resolve(shapes, query_shape);
 	if query_status != .Ok
 	{
 		return query_status;
 	}
-	query_bounds, bounds_status := shape_registry_compute_world_bounds(shapes, query_shape, query_pose);
+	local_bounds: Shape_Bounds;
+	bounds_status: Physics_Status;
+	local_bounds, bounds_status = shape_batch_compute_bounds(query_batch, query_raw, query_pose.orientation, shapes);
 	if bounds_status != .Ok
 	{
 		return bounds_status;
 	}
+	query_bounds: util.Bounding_Box = {
+		min=util.vector3_add(local_bounds.min, query_pose.position),
+		max=util.vector3_add(local_bounds.max, query_pose.position),
+	};
 	query_context := Query_Overlap_Tree_Context{
 		query_shape=query_shape, query_raw=query_raw, query_pose=query_pose,
 		resolver=resolver, shapes=shapes, collision_tasks=collision_tasks,
@@ -1118,11 +1151,11 @@ query_overlap_resolved :: proc "contextless" (
 		batcher.collision.traversal_pool = pool;
 		defer batcher.collision.traversal_pool = previous_pool
 		return tree_volume_traverse(
-			tree, query_bounds, query_overlap_tree_leaf, &query_context, query_context.pool,
+			tree, tree_bounds_from_local(query_bounds), query_overlap_tree_leaf, &query_context, query_context.pool,
 		);
 	}
 	return tree_volume_traverse(
-		tree, query_bounds, query_overlap_tree_leaf, &query_context, query_context.pool,
+		tree, tree_bounds_from_local(query_bounds), query_overlap_tree_leaf, &query_context, query_context.pool,
 	);
 }
 
@@ -1171,6 +1204,10 @@ query_overlap_tree_leaf :: proc "contextless" (user_context: rawptr, leaf_index:
 	}
 	if task.kind == .Convex
 	{
+		if query_filter_child(query_context.collector.filter, query_context.collector.user_context, target.target_id, 0) != .Allow
+		{
+			return .Ok;
+		}
 		manifold, status := collision_task_registry_test_convex(
 			query_context.collision_tasks, query_type, target_type, query_context.query_raw, target_raw,
 			query_context.query_pose, target.pose, 0, query_context.shapes,
@@ -1241,7 +1278,7 @@ query_volume_resolved :: proc "contextless" (
 	}
 	query_context := Query_Volume_Tree_Context{resolver=resolver, collector=collector};
 	return tree_volume_traverse(
-		tree, volume, query_volume_tree_leaf, &query_context, pool,
+		tree, tree_bounds_from_local(volume), query_volume_tree_leaf, &query_context, pool,
 	);
 }
 
@@ -1619,6 +1656,10 @@ query_overlap_any_tree_leaf :: proc "contextless" (user_context: rawptr, leaf_in
 	}
 	if task.kind == .Convex
 	{
+		if query_filter_child(query.filter, query.user_context, target.target_id, 0) != .Allow
+		{
+			return .Ok;
+		}
 		manifold: Convex_Contact_Manifold;
 		manifold, status = collision_task_registry_test_convex(query.collision_tasks, query_type, target_type,
 			query.query_raw, target_raw, query.query_pose, target.pose, 0, query.shapes);
@@ -1732,11 +1773,11 @@ query_overlap_any_resolved :: proc "contextless" (
 			collision.traversal_pool = previous_pool;
 		}
 	}
-	status = tree_volume_traverse(tree, bounds, query_overlap_any_tree_leaf, &query, pool);
+	status = tree_volume_traverse(tree, tree_bounds_from_local(bounds), query_overlap_any_tree_leaf, &query, pool);
 	if status == .Ok
 	{
 		query.resolver = second_resolver;
-		status = tree_volume_traverse(second_tree, bounds, query_overlap_any_tree_leaf, &query, pool);
+		status = tree_volume_traverse(second_tree, tree_bounds_from_local(bounds), query_overlap_any_tree_leaf, &query, pool);
 	}
 	if query.state == .Intersecting && status == .Not_Found
 	{

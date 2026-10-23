@@ -402,3 +402,70 @@ disposed_world_rejects_body_and_static_lifecycle_calls :: proc(t: ^testing.T)
 		entasis.Status.Disposed,
 	);
 }
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	@(test)
+	legacy_bounds_enclose_high_positions :: proc(t: ^testing.T)
+	{
+		world: entasis.World;
+		testing.expect_value(t, entasis.world_init(&world, body_static_world_description()), entasis.Status.Ok);
+		defer entasis.world_destroy(&world);
+		shape: entasis.Shape_Handle;
+		status: entasis.Status;
+		shape, status = entasis.shape_add(&world, entasis.sphere(0.5));
+		testing.expect_value(t, status, entasis.Status.Ok);
+		position: entasis.Global_Position = {1e9 + 0.002, -1e9 - 0.002, 1e9 + 0.002};
+		body: entasis.Body_Handle;
+		body, status = entasis.body_add_global(&world, entasis.body_kinematic(shape, entasis.pose()), position);
+		testing.expect_value(t, status, entasis.Status.Ok);
+		fixed: entasis.Static_Handle;
+		fixed, status = entasis.static_add_global(&world, entasis.static_body(shape, entasis.pose()), position, .None);
+		testing.expect_value(t, status, entasis.Status.Ok);
+		for kind in 0 ..< 2
+		{
+			bounds: entasis.Bounding_Box;
+			if kind == 0
+			{
+				bounds, status = entasis.body_bounds(&world, body);
+			}
+			else
+			{
+				bounds, status = entasis.static_bounds(&world, fixed);
+			}
+			testing.expect_value(t, status, entasis.Status.Ok);
+			testing.expect(t, f64(bounds.min.x) <= position.x - 0.5 && f64(bounds.max.x) >= position.x + 0.5);
+			testing.expect(t, f64(bounds.min.y) <= position.y - 0.5 && f64(bounds.max.y) >= position.y + 0.5);
+			testing.expect(t, f64(bounds.min.z) <= position.z - 0.5 && f64(bounds.max.z) >= position.z + 0.5);
+		}
+		// a borrowed simulation can contain a finite high envelope that the legacy
+		// output cannot enclose, the export boundary must reject that conversion
+		simulation: ^physics.Simulation;
+		simulation, status = entasis.world_borrow_simulation(&world);
+		testing.expect_value(t, status, entasis.Status.Ok);
+		for kind in 0 ..< 2
+		{
+			tree: ^physics.Tree = &simulation.broad_phase.active_tree;
+			if kind == 1
+			{
+				tree = &simulation.broad_phase.static_tree;
+			}
+			bounds: physics.Global_Bounds;
+			bounds, status = physics.tree_get_leaf_bounds(tree, 0);
+			testing.expect_value(t, status, entasis.Status.Ok);
+			bounds.max.x = f64(max(f32)) * 2;
+			testing.expect_value(t, physics.tree_update_bounds(tree, 0, bounds), physics.Physics_Status.Ok);
+			legacy: entasis.Bounding_Box;
+			if kind == 0
+			{
+				legacy, status = entasis.body_bounds(&world, body);
+			}
+			else
+			{
+				legacy, status = entasis.static_bounds(&world, fixed);
+			}
+			testing.expect_value(t, status, entasis.Status.Invalid_Argument);
+			testing.expect_value(t, legacy, entasis.Bounding_Box{});
+		}
+	}
+}

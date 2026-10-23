@@ -740,7 +740,16 @@ verify_source_oracle :: proc(
 	);
 	for lane in 0 ..< 3
 	{
-		prestep := numeric_bundle_signature(&result.prestep.bytes[0], int(record.prestep_bundle_size), lane);
+		prestep_size: int = int(record.prestep_bundle_size);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if type_id == physics.ONE_BODY_LINEAR_SERVO_TYPE_ID
+			{
+				// appended target words carry opaque f64 bits, the source oracle covers the float prefix
+				prestep_size = size_of(physics.One_Body_Linear_Servo_Prestep);
+			}
+		}
+		prestep := numeric_bundle_signature(&result.prestep.bytes[0], prestep_size, lane);
 		warmstart := velocity_signature(&result.warmstarted_bodies, int(record.body_count), lane);
 		solve := velocity_signature(&result.bodies, int(record.body_count), lane);
 		impulse := numeric_bundle_signature(&result.impulses.bytes[0], int(record.impulse_bundle_size), lane);
@@ -1246,7 +1255,7 @@ restitution_capture_contact_velocity_and_reversed_pair :: proc (t: ^testing.T)
 	testing.expect_value(t, target.active_mask, util.I32x8(-1));
 	reversed: [2]physics.Constraint_Contact_Body_Wide = {bodies[1], bodies[0]};
 	other: physics.Restitution_Target_Wide = physics.restitution_capture_normal(
-		&reversed[0], util.vector3_wide_negate(normal), offset_b, offset_a,
+		&reversed[0], {y=util.F32x8(-1)}, offset_b, offset_a,
 		util.F32x8(0), util.F32x8(0.5), util.F32x8(1), util.I32x8(-1), 2,
 	);
 	testing.expect_value(t, other, target);
@@ -1291,7 +1300,11 @@ restitution_test_normal_impacts :: proc (t: ^testing.T, $body_count: int)
 				&bodies[0], normal, {}, {}, util.F32x8(0), util.F32x8(10),
 				scale, util.F32x8(2), soft, 60, &target, body_count,
 			);
-			impulse: util.F32x8 = util.wide_select_f32(mask, util.F32x8(1), util.F32x8(0));
+			impulse: util.F32x8;
+			for lane in 0 ..< lane_count
+			{
+				impulse = simd.replace(impulse, lane, 1);
+			}
 			// capture precedes this retained warmstart impulse. recomputing the
 			// target after warmstart would violate the analytic result below
 			physics.constraint_contact_penetration_apply(
@@ -1521,7 +1534,10 @@ restitution_test_cached_contact_response :: proc (
 				cached_bodies: [2]physics.Constraint_Kernel_Body_Wide = bodies;
 				impulses, cached_impulses: [12]util.F32x8;
 				// a retained normal impulse exercises capture-before-warmstart
-				impulses[2] = util.wide_select_f32(mask, util.F32x8(0.25), util.F32x8(0));
+				for lane in 0 ..< count
+				{
+					impulses[2] = simd.replace(impulses[2], lane, 0.25);
+				}
 				cached_impulses = impulses;
 				when contact_count == 4
 				{
@@ -1565,13 +1581,13 @@ restitution_expect_cached_state :: proc (
 		{
 			a: ^physics.Constraint_Kernel_Body_Wide = &expected[body_index];
 			b: ^physics.Constraint_Kernel_Body_Wide = &actual[body_index];
-			for difference in ([6]util.F32x8{
-					a.linear_velocity.x-b.linear_velocity.x, a.linear_velocity.y-b.linear_velocity.y,
-					a.linear_velocity.z-b.linear_velocity.z, a.angular_velocity.x-b.angular_velocity.x,
-					a.angular_velocity.y-b.angular_velocity.y, a.angular_velocity.z-b.angular_velocity.z,
+			for difference in ([6]f32{
+					simd.extract(a.linear_velocity.x, lane)-simd.extract(b.linear_velocity.x, lane), simd.extract(a.linear_velocity.y, lane)-simd.extract(b.linear_velocity.y, lane),
+					simd.extract(a.linear_velocity.z, lane)-simd.extract(b.linear_velocity.z, lane), simd.extract(a.angular_velocity.x, lane)-simd.extract(b.angular_velocity.x, lane),
+					simd.extract(a.angular_velocity.y, lane)-simd.extract(b.angular_velocity.y, lane), simd.extract(a.angular_velocity.z, lane)-simd.extract(b.angular_velocity.z, lane),
 			})
 			{
-				testing.expect(t, abs(simd.extract(difference, lane)) < 0.0001);
+				testing.expect(t, abs(difference) < 0.0001);
 			}
 		}
 	}
@@ -1579,7 +1595,7 @@ restitution_expect_cached_state :: proc (
 	{
 		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
 		{
-			testing.expect(t, abs(simd.extract(expected_impulses[index]-actual_impulses[index], lane)) < 0.0001);
+			testing.expect(t, abs((simd.extract(expected_impulses[index], lane)-simd.extract(actual_impulses[index], lane))) < 0.0001);
 		}
 	}
 }

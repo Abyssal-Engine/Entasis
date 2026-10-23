@@ -1,5 +1,7 @@
 package entasis_c
 
+import util "entasis:entasis_utilities"
+
 import "base:runtime"
 import entasis "entasis:entasis"
 import physics "entasis:entasis_physics"
@@ -100,8 +102,17 @@ abi_joint_break_reserve :: proc "contextless" (
 abi_constraint_set_reaction_provider :: proc "contextless" (
 	world: ^Entasis_World, type_id: Entasis_Constraint_Type_ID,
 	provider: ^Entasis_Joint_Reaction_Provider, diagnostic: ^Entasis_Diagnostic,
+	position_space: u8 = 0,
 ) -> Entasis_Status
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_space > 1
+		{
+			return abi_status_finish(.Invalid_Argument, diagnostic, .None);
+		}
+	}
+
 	selected: Entasis_Joint_Reaction_Provider;
 	if provider != nil
 	{
@@ -133,6 +144,10 @@ abi_constraint_set_reaction_provider :: proc "contextless" (
 	if provider != nil
 	{
 		core = {read=abi_joint_reaction_provider_bridge, user_context=binding};
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		core.position_space = entasis.Constraint_Position_Space(position_space);
 	}
 	context = runtime.default_context();
 	status: entasis.Status = entasis.constraint_set_reaction_provider(&owner.world, entasis.Constraint_Type_ID(type_id), core);

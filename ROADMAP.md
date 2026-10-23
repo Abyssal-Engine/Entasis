@@ -1,8 +1,8 @@
 # Entasis roadmap
 
-Updated: 2026-10-05
+Updated: 2026-10-23
 
-The proposed development order starts with collision geometry and queries, then gameplay, reusable assets, simulation snapshots, large-world precision and destruction. All milestones are planned, with no scheduled release dates
+The proposed development order starts with collision geometry and queries, then gameplay, reusable assets, simulation snapshots, large-world precision and destruction. There are no scheduled release dates
 
 For features available today, see the [project overview](README.md#features) and [current limitations](docs/LIMITS.md)
 
@@ -14,7 +14,7 @@ For features available today, see the [project overview](README.md#features) and
 | 2 | Character controller and gameplay | Capsule character movement, better fast-moving collision and sensor detection, and finer control over bodies and joints |
 | 3 | Reusable collision assets | Direct use of application-owned composite geometry and saved prepared shapes |
 | 4 | Simulation snapshots | Capture and restore a running simulation within the same process and engine build |
-| 5 | Large-world precision | A coordinate approach chosen from measured physics accuracy, query accuracy, simulation time and memory use |
+| 5 | Large-world precision | Evaluate accuracy, runtime cost and memory for origin shifting and mixed64 across supported world layouts |
 | 6 | Destruction | Offline fracture preparation and runtime fracturing, with detached pieces simulated as rigid bodies |
 
 ## 1. Collision geometry and queries
@@ -62,9 +62,7 @@ Start with identical serial replay after restoring worlds that use built-in geom
 
 ## 5. Large-world precision
 
-Compare origin shifting, higher-precision coordinates and separate local worlds for independent areas. Measure physics and query accuracy far from the origin alongside simulation time and memory use
-
-This milestone ends with a choice of coordinate approach for the supported world layouts. No precision strategy is selected yet
+[Origin shifting and the mixed64 profile](docs/odin/reference/WORLD.md#precision-profiles-and-origin-frames) are available. Evaluate physics and query accuracy, simulation time and memory across supported world layouts, including comparisons with separate local worlds
 
 ## 6. Destruction
 

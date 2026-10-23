@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/linux/lib/common.sh"
 
+precision="float32"
+precision_count=0
 odin=""
 odin_count=0
 configuration="development"
@@ -10,6 +12,13 @@ package=""
 package_count=0
 while (($# > 0)); do
   case "$1" in
+    --precision)
+      ((precision_count += 1))
+      ((precision_count == 1)) || fail_usage "--precision may be supplied only once"
+      (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "--precision requires a value"
+      precision="$2"
+      shift 2
+      ;;
     --odin)
       ((odin_count += 1))
       ((odin_count <= 1)) || fail_usage "--odin may be supplied only once"
@@ -47,6 +56,7 @@ else
   package_names="$(example_packages)"
   mapfile -t packages <<< "$package_names"
 fi
+case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
 require_odin "$odin"
 configurations=("$configuration")
 if [[ "$configuration" == all ]]; then configurations=(development release); fi
@@ -55,7 +65,7 @@ printf 'EXAMPLE_BUILD_CONFIG configuration=%s packages=%s\n' "$configuration" "$
 build_example() {
   local selected_package="$1"
   local selected_configuration="$2"
-  configure_odin_profile examples "$selected_package" "$selected_configuration"
+  configure_odin_profile examples "$selected_package" "$selected_configuration" "$precision"
   printf '[example build] %s configuration=%s executable=%s\n' \
     "$selected_package" "$selected_configuration" "$ODIN_PROFILE_OUTPUT"
   "$ODIN_BIN" build "$ROOT/examples/headless/$selected_package" \

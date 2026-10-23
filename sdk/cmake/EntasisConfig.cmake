@@ -1,3 +1,5 @@
+set(Entasis_PRECISION "@ENTASIS_PRECISION@")
+set(_ENTASIS_PRECISION_MIXED64 @ENTASIS_PRECISION_MIXED64@)
 include(CMakeFindDependencyMacro)
 if(NOT WIN32)
     find_dependency(Threads)
@@ -70,6 +72,12 @@ if(NOT TARGET Entasis::cooking_static)
     endif()
 endif()
 
+foreach(_ENTASIS_TARGET runtime runtime_static cooking cooking_static)
+    set_property(TARGET Entasis::${_ENTASIS_TARGET} APPEND PROPERTY
+        INTERFACE_COMPILE_DEFINITIONS "ENTASIS_PRECISION_MIXED64=${_ENTASIS_PRECISION_MIXED64}")
+endforeach()
+unset(_ENTASIS_TARGET)
+unset(_ENTASIS_PRECISION_MIXED64)
 unset(_ENTASIS_PREFIX)
 unset(_ENTASIS_INCLUDE)
 unset(_ENTASIS_LIB)

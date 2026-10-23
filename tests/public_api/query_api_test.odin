@@ -24,6 +24,46 @@ query_reject_every_child :: proc "contextless" (
 	return false;
 }
 
+Query_Primitive_Filter_State :: struct
+{
+	target: entasis.Collidable_Reference,
+	accepted_child: i32,
+	targets, children, errors: int,
+}
+
+query_primitive_target_filter :: proc "contextless" (user: rawptr, target: entasis.Collidable_Reference) -> bool
+{
+	state: ^Query_Primitive_Filter_State = (^Query_Primitive_Filter_State)(user);
+	state.targets += 1;
+	if target != state.target
+	{
+		state.errors += 1;
+	}
+	return true;
+}
+
+query_primitive_child_filter :: proc "contextless" (user: rawptr, target: entasis.Collidable_Reference, child: i32) -> bool
+{
+	state: ^Query_Primitive_Filter_State = (^Query_Primitive_Filter_State)(user);
+	state.children += 1;
+	if target != state.target || child != 0 || state.targets != state.children
+	{
+		state.errors += 1;
+	}
+	return child == state.accepted_child;
+}
+
+query_primitive_sweep_filter :: proc "contextless" (user: rawptr, pair, child_a, child_b: i32) -> physics.Collision_Testing_State
+{
+	state: ^Query_Primitive_Filter_State = (^Query_Primitive_Filter_State)(user);
+	state.children += 1;
+	if pair != 0 || child_a != 0 || child_b != 0
+	{
+		state.errors += 1;
+	}
+	return .Allow if state.accepted_child == 0 else .Reject;
+}
+
 Query_Test_Scene :: struct
 {
 	world:          entasis.World,
@@ -267,6 +307,36 @@ query_callbacks_filter_targets_and_children_without_allocation :: proc(t: ^testi
 	);
 	testing.expect_value(t, child_status, entasis.Status.Ok);
 	testing.expect_value(t, child_count, 0);
+	query_context: entasis.Query_Context;
+	testing.expect_value(t, entasis.query_context_init(&query_context, &scene.world), entasis.Status.Ok);
+	defer entasis.query_context_destroy(&query_context);
+	reference: entasis.Collidable_Reference;
+	reference, _ = entasis.static_collidable_reference(&scene.world, scene.static_body);
+	overlaps: [8]entasis.Overlap_Hit;
+	for accepted in ([2]i32{-1, 0})
+	{
+		for route in 0..<2
+		{
+			state: Query_Primitive_Filter_State = {target=reference, accepted_child=accepted};
+			filter: entasis.Query_Filter = {include=entasis.COLLIDABLE_STATIC,
+				allow=query_primitive_target_filter, allow_child=query_primitive_child_filter, user_context=&state};
+			count: int;
+			status: entasis.Status;
+			if route == 0
+			{
+				count, status = entasis.overlap_all(&scene.world, scene.sphere_shape, entasis.pose({5, 0, 0}), overlaps[:], filter);
+			}
+			else
+			{
+				count, status = entasis.overlap_all_with_context(&query_context, scene.sphere_shape, entasis.pose({5, 0, 0}), overlaps[:], filter);
+			}
+			testing.expect_value(t, status, entasis.Status.Ok);
+			testing.expect_value(t, count, int(accepted+1));
+			testing.expect_value(t, state.targets, 1);
+			testing.expect_value(t, state.children, 1);
+			testing.expect_value(t, state.errors, 0);
+		}
+	}
 }
 
 @(test)
@@ -465,6 +535,68 @@ sweep_overlap_and_volume_helpers_use_registered_shapes_and_filters :: proc(t: ^t
 	testing.expect_value(t, entasis.collidable_mobility(sweep_hit.collidable), entasis.Body_Mobility.Dynamic);
 	testing.expect(t, sweep_hit.sweep.t1 >= 0);
 	testing.expect(t, sweep_hit.sweep.t1 <= 5);
+	reference: entasis.Collidable_Reference;
+	reference, _ = entasis.static_collidable_reference(&scene.world, scene.static_body);
+	simulation: ^physics.Simulation;
+	simulation, _ = entasis.world_borrow_simulation(&scene.world);
+	for angle in ([2]f32{0, 0.25})
+	{
+		box_pose: entasis.Rigid_Pose = entasis.pose({5, 0, 0});
+		box_pose.orientation = util.quaternion_from_axis_angle({0, 0, 1}, angle);
+		testing.expect_value(t, entasis.static_set_pose(&scene.world, scene.static_body, box_pose), entasis.Status.Ok);
+		for accepted in ([2]i32{-1, 0})
+		{
+			state: Query_Primitive_Filter_State = {target=reference, accepted_child=accepted};
+			pose: entasis.Rigid_Pose = entasis.pose({0, 0, 0});
+			pose.orientation = util.quaternion_from_axis_angle({0, 0, 1}, angle);
+			hit: entasis.Sweep_Hit;
+			status: entasis.Status;
+			hit, status = entasis.sweep_closest(&scene.world, scene.sphere_shape, pose, entasis.velocity({1, 0, 0}), 10,
+				{include=entasis.COLLIDABLE_STATIC, allow=query_primitive_target_filter,
+				allow_child=query_primitive_child_filter, user_context=&state});
+			testing.expect_value(t, status, entasis.Status.Ok if accepted == 0 else entasis.Status.Not_Found);
+			if accepted == 0
+			{
+				testing.expect_value(t, hit.sweep.state, physics.Sweep_Hit_State.Hit);
+				testing.expect_value(t, hit.collidable, reference);
+			}
+			else
+			{
+				testing.expect_value(t, hit.sweep.state, physics.Sweep_Hit_State.Miss);
+			}
+			testing.expect_value(t, state.targets, 1);
+			testing.expect_value(t, state.children, 1);
+			testing.expect_value(t, state.errors, 0);
+			for order in 0..<2
+			{
+				state = {accepted_child=accepted};
+				shapes: [2]physics.Typed_Index = {scene.sphere_shape, scene.box_shape};
+				poses: [2]physics.Rigid_Pose = {pose, box_pose};
+				velocities: [2]physics.Body_Velocity = {{linear={1, 0, 0}}, {}};
+				result: physics.Sweep_Result;
+				result, status = physics.sweep_task_registry_test(&simulation.sweep_tasks,
+					shapes[order], shapes[1-order], poses[order], poses[1-order], velocities[order], velocities[1-order],
+					10, 1e-5, 1e-5, 64, &simulation.shapes, &simulation.collision_tasks,
+					query_primitive_sweep_filter, &state, &scene.pool);
+				testing.expect_value(t, status, entasis.Status.Ok);
+				testing.expect_value(t, state.children, 1);
+				testing.expect_value(t, state.errors, 0);
+				if accepted == -1
+				{
+					testing.expect_value(t, result.state, physics.Sweep_Hit_State.Miss);
+					testing.expect_value(t, result.t0, f32(10));
+					testing.expect_value(t, result.t1, f32(10));
+					testing.expect_value(t, result.child_a, i32(-1));
+					testing.expect_value(t, result.child_b, i32(-1));
+				}
+				else
+				{
+					testing.expect_value(t, result.state, physics.Sweep_Hit_State.Hit);
+				}
+			}
+		}
+	}
+	testing.expect_value(t, entasis.static_set_pose(&scene.world, scene.static_body, entasis.pose({5, 0, 0})), entasis.Status.Ok);
 
 	overlap_hits: [8]entasis.Overlap_Hit;
 	overlap_count, overlap_status := entasis.overlap_all(

@@ -1,5 +1,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32",
     [ValidateSet("Msvc", "ClangCl", "All")]
     [string]$Compiler = "Msvc",
     [ValidateNotNullOrEmpty()]
@@ -14,10 +16,19 @@ param(
     [string]$NinjaExe
 )
 . (Join-Path $PSScriptRoot "../lib/toolchain_common.ps1")
+$sdkSubdir = ""
+$sdkSuffix = ""
+$highDefine = 0
+if ($Precision -eq "Mixed64")
+{
+    $sdkSubdir = "/mixed64"
+    $sdkSuffix = "-mixed64"
+    $highDefine = 1
+}
 if ($Archive.Length -eq 0)
 {
     $manifest = Get-Content -LiteralPath (Join-Path $script:ToolchainRoot "tools/abi/abi_manifest.json") -Raw | ConvertFrom-Json
-    $Archive = Join-Path $script:ToolchainRoot "build/sdk/windows/Entasis-$($manifest.product.version_string)-windows-x86_64-v3-c-sdk.zip"
+    $Archive = Join-Path $script:ToolchainRoot "build/sdk/windows$sdkSubdir/Entasis-$($manifest.product.version_string)-windows-x86_64-v3-c-sdk$sdkSuffix.zip"
 }
 if (-not [IO.Path]::IsPathFullyQualified($Archive) -or -not (Test-Path -LiteralPath $Archive -PathType Leaf))
 {
@@ -45,6 +56,11 @@ if ($children.Count -ne 1 -or -not $children[0].PSIsContainer)
     throw "Expected one SDK archive root"
 }
 $sdk = $children[0].FullName
+$config = Get-Content -LiteralPath (Join-Path $sdk "lib/cmake/Entasis/EntasisConfig.cmake") -Raw
+if (-not $config.Contains('set(Entasis_PRECISION "' + $Precision.ToLowerInvariant() + '")'))
+{
+    throw "SDK profile differs from selection"
+}
 $selection = @{ roots = $roots }
 if ($VsDevCmd.Length -gt 0)
 {
@@ -123,6 +139,41 @@ try
     }
     foreach ($lane in $lanes)
     {
+        $compilerExe = if ($lane -eq "msvc")
+        {
+            (Get-Command cl.exe).Source
+        }
+        else
+        {
+            $clang
+        }
+        $manualRoot = Join-Path $sdk "build/manual/$lane"
+        $null = New-Item -ItemType Directory -Force -Path $manualRoot
+        foreach ($language in @("c", "cpp"))
+        {
+            $standard = if ($language -eq "c")
+            {
+                "/std:c11"
+            }
+            else
+            {
+                "/std:c++20"
+            }
+            $binary = Join-Path $manualRoot "$language.exe"
+            & $compilerExe /nologo $standard "/DENTASIS_PRECISION_MIXED64=$highDefine" "/I$(Join-Path $sdk 'include')" `
+                (Join-Path $sdk "examples/minimal.$language") "/Fo$(Join-Path $manualRoot "$language.obj")" "/Fe:$binary" `
+                /link (Join-Path $sdk "lib/entasis.lib") (Join-Path $sdk "lib/entasis_cooking.lib")
+            if ($LASTEXITCODE -ne 0)
+            {
+                exit $LASTEXITCODE
+            }
+            Copy-Item -Path (Join-Path $sdk "bin/*.dll") -Destination $manualRoot
+            & $binary
+            if ($LASTEXITCODE -ne 0)
+            {
+                exit $LASTEXITCODE
+            }
+        }
         foreach ($name in @("entasis_c_static", "entasis_cpp_static"))
         {
             $binary = Join-Path $sdk "build/examples/$lane/$name.exe"

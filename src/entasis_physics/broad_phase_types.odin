@@ -28,7 +28,7 @@ Broad_Phase_Pair_Visitor_Proc :: #type proc "contextless" (
 ) -> Physics_Status;
 Broad_Phase_Body_Migration :: struct
 {
-	bounds:      util.Bounding_Box,
+	bounds:      Tree_Bounds,
 	reference:   Collidable_Reference,
 	handle:      Body_Handle,
 	source_tree: Broad_Phase_Tree,
@@ -45,7 +45,7 @@ Broad_Phase_Body_Description_Change_State :: enum u8
 }
 Broad_Phase_Body_Description_Change :: struct
 {
-	bounds:           util.Bounding_Box,
+	bounds:           Tree_Bounds,
 	reference:        Collidable_Reference,
 	handle:           Body_Handle,
 	source_tree:      Broad_Phase_Tree,

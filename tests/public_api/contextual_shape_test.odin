@@ -26,6 +26,7 @@ Contextual_Shape_State :: struct
 	scale: f32,
 	calls: [6]i32,
 	failure: e.Status,
+	bounds_failure_call: i32,
 	child: e.Shape_Handle,
 	forward_child: Contextual_Child_Forwarding,
 }
@@ -36,8 +37,8 @@ contextual_shape_bounds_test :: proc "contextless" (
 ) -> e.Status
 {
 	state: ^Contextual_Shape_State = (^Contextual_Shape_State)(user_context);
-	sync.atomic_add_explicit(&state.calls[0], 1, .Relaxed);
-	if state.failure != .Ok
+	bounds_call: i32 = sync.atomic_add_explicit(&state.calls[0], 1, .Relaxed) + 1;
+	if state.failure != .Ok && (state.bounds_failure_call == 0 || bounds_call == state.bounds_failure_call)
 	{
 		result.max = {123, 123, 123};
 		return state.failure;
@@ -384,6 +385,149 @@ contextual_shapes_callback_errors_do_not_publish_partial_results :: proc(t: ^tes
 	testing.expect_value(t, e.shape_remove(&world, handle), e.Status.Ok);
 	testing.expect_value(t, e.shape_remove(&world, handle), e.Status.Not_Found);
 	testing.expect_value(t, state.calls[5], i32(2));
+
+	state = {scale=1};
+	query_shape: e.Shape_Handle;
+	query_type: e.Shape_Type_ID;
+	query_shape, query_type, ok = contextual_sphere_add(t, &world, &state);
+	if ok != .Ok
+	{
+		return;
+	}
+	query_context: e.Query_Context;
+	if !testing.expect_value(t, e.query_context_init(&query_context, &world), e.Status.Ok)
+	{
+		return;
+	}
+	defer _ = e.query_context_destroy(&query_context);
+	hits: [2]e.Overlap_Hit;
+	count: int;
+	status: e.Status;
+	for route in 0..<2
+	{
+		for failure_call in ([2]i32{0, 2})
+		{
+			state.calls = {};
+			state.failure = .Ok if failure_call == 0 else .Invalid_Description;
+			state.bounds_failure_call = failure_call;
+			if route == 0
+			{
+				count, status = e.overlap_all(&world, query_shape, e.pose(), hits[:]);
+			}
+			else
+			{
+				count, status = e.overlap_all_with_context(&query_context, query_shape, e.pose(), hits[:]);
+			}
+			testing.expect_value(t, count, 0);
+			testing.expect_value(t, status, state.failure);
+			testing.expect_value(t, state.calls[0], i32(2));
+		}
+	}
+
+	simulation: ^e.Simulation;
+	simulation, ok = e.world_borrow_simulation(&world);
+	testing.expect_value(t, ok, e.Status.Ok);
+	low_hits: [2]p.Overlap_Query_Hit;
+	collector: p.Overlap_Query_Collector = {hits={memory=&low_hits[0], length=2, id=-1}};
+	resolver_context: p.Query_Buffer_Target_Context;
+	resolver: p.Query_Target_Resolver = {user_context=&resolver_context, resolve=p.query_buffer_target_resolve};
+	invalid_batcher: p.Query_Overlap_Batcher;
+	state.calls = {};
+	state.failure = .Invalid_Description;
+	state.bounds_failure_call = 1;
+	status = p.query_overlap_resolved(query_shape, e.pose(), &simulation.broad_phase.active_tree,
+		resolver, registry, &simulation.collision_tasks, &collector, simulation.pool, &invalid_batcher);
+	testing.expect_value(t, status, e.Status.Invalid_Description);
+	testing.expect_value(t, collector.count, 0);
+	testing.expect_value(t, state.calls[0], i32(1));
+	state.calls = {};
+	state.failure = .Ok;
+	status = p.query_overlap_resolved(query_shape, e.pose(), &simulation.broad_phase.active_tree,
+		resolver, registry, &simulation.collision_tasks, &collector, simulation.pool, &invalid_batcher);
+	testing.expect_value(t, status, e.Status.Invalid_Argument);
+	testing.expect_value(t, state.calls[0], i32(1));
+	state.calls = {};
+	state.failure = .Invalid_Description;
+	status = p.query_overlap_resolved(handle, e.pose(), &simulation.broad_phase.active_tree,
+		resolver, registry, &simulation.collision_tasks, &collector, simulation.pool, &invalid_batcher);
+	testing.expect_value(t, status, e.Status.Not_Found);
+	testing.expect_value(t, state.calls[0], i32(0));
+	state.failure = .Ok;
+	state.bounds_failure_call = 0;
+
+	_, status = e.collision_task_register(&world, e.collision_task_convex(
+		query_type, e.SHAPE_TYPE_SPHERE, 16, .Sphere, custom_sphere_builtin_pair, custom_sphere_pair_wide,
+	));
+	testing.expect_value(t, status, e.Status.Ok);
+	target_shape: e.Shape_Handle;
+	target_shape, status = e.shape_add(&world, e.sphere(1));
+	testing.expect_value(t, status, e.Status.Ok);
+	active_body: e.Body_Handle;
+	active_body, status = e.body_add(&world, e.body_kinematic(target_shape, e.pose({0.5, 0, 0}), {}, e.body_activity(-1, 255)));
+	testing.expect_value(t, status, e.Status.Ok);
+	static_body: e.Static_Handle;
+	static_body, status = e.static_add(&world, e.static_body(target_shape, e.pose({-0.5, 0, 0})), .None);
+	testing.expect_value(t, status, e.Status.Ok);
+	active_reference, static_reference: e.Collidable_Reference;
+	active_reference, status = e.body_collidable_reference(&world, active_body);
+	testing.expect_value(t, status, e.Status.Ok);
+	static_reference, status = e.static_collidable_reference(&world, static_body);
+	testing.expect_value(t, status, e.Status.Ok);
+	previous_pool: ^u.Buffer_Pool = simulation.query_overlap_batcher.collision.traversal_pool;
+	for route in 0..<2
+	{
+		for failure_call in ([3]i32{0, 1, 2})
+		{
+			state.calls = {};
+			state.failure = .Ok if failure_call == 0 else .Invalid_Description;
+			state.bounds_failure_call = failure_call;
+			if route == 0
+			{
+				count, status = e.overlap_all(&world, query_shape, e.pose(), hits[:]);
+			}
+			else
+			{
+				count, status = e.overlap_all_with_context(&query_context, query_shape, e.pose(), hits[:]);
+			}
+			expected_count: int = 2 if failure_call == 0 else int(failure_call - 1);
+			testing.expect_value(t, count, expected_count);
+			testing.expect_value(t, status, state.failure);
+			testing.expect_value(t, state.calls[0], i32(1) if failure_call == 1 else i32(2));
+			if count > 0
+			{
+				testing.expect_value(t, hits[0].collidable, active_reference);
+			}
+			if count == 2
+			{
+				testing.expect_value(t, hits[1].collidable, static_reference);
+			}
+			testing.expect_value(t, simulation.query_overlap_batcher.collision.traversal_pool, previous_pool);
+		}
+		state.calls = {};
+		state.failure = .Invalid_Description;
+		state.bounds_failure_call = 2;
+		if route == 0
+		{
+			count, status = e.overlap_all(&world, query_shape, e.pose(), hits[:0]);
+		}
+		else
+		{
+			count, status = e.overlap_all_with_context(&query_context, query_shape, e.pose(), hits[:0]);
+		}
+		testing.expect_value(t, count, 0);
+		testing.expect_value(t, status, e.Status.Capacity_Missing);
+		testing.expect_value(t, state.calls[0], i32(2));
+	}
+	state.calls = {};
+	collector.count = 0;
+	status = p.simulation_overlap_query(simulation, query_shape, e.pose(), &collector, simulation.pool);
+	testing.expect_value(t, status, e.Status.Invalid_Description);
+	testing.expect_value(t, collector.count, 1);
+	testing.expect_value(t, low_hits[0].target_id, i32(active_reference.packed));
+	testing.expect_value(t, state.calls[0], i32(2));
+	testing.expect_value(t, simulation.query_overlap_batcher.collision.traversal_pool, previous_pool);
+	state.failure = .Ok;
+	state.bounds_failure_call = 0;
 }
 
 @(test)

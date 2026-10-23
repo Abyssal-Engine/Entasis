@@ -8,7 +8,7 @@ import util "entasis:entasis_utilities"
 // independent recursive scalar traversal. it preserves A-first order and the
 // exact six inclusion comparisons, including inclusive contact and unordered axes
 r18_volume_reference :: proc "contextless" (
-	tree: ^physics.Tree, index: i32, query: util.Bounding_Box,
+	tree: ^physics.Tree, index: i32, query: physics.Tree_Bounds,
 ) -> int
 {
 	if index < 0
@@ -44,7 +44,7 @@ any_volume_packed_bounds_preserve_scalar_first_leaf_and_edges :: proc(t: ^testin
 	{
 		tree: physics.Tree;
 		testing.expect_value(t, physics.tree_initialize(&tree, 512, &pool), physics.Physics_Status.Ok);
-		bounds: [257]util.Bounding_Box;
+		bounds: [257]physics.Tree_Bounds;
 		for i in 0 ..< count
 		{
 			bounds[i] = random_bounds(&seed, i);
@@ -86,8 +86,8 @@ any_volume_packed_bounds_preserve_scalar_first_leaf_and_edges :: proc(t: ^testin
 					// preserve the existing difference between the one-leaf helper
 					// and multi-leaf loop for unordered axes. these tests verify behavior,
 					// not support for nonfinite production physics scenes
-					inf := transmute(f32)u32(0x7f800000);
-					nan := transmute(f32)u32(0x7fc01234);
+					inf: physics.Tree_Scalar = physics.Tree_Scalar(transmute(f32)u32(0x7f800000));
+					nan: physics.Tree_Scalar = physics.Tree_Scalar(transmute(f32)u32(0x7fc01234));
 					query = {min={-inf, -inf, -inf}, max={inf, inf, inf}};
 					if sample % 2 == 0
 					{

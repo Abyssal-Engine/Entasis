@@ -1,4 +1,5 @@
 package entasis
+import "base:intrinsics"
 import "core:math"
 import physics "entasis:entasis_physics"
 Trigger_Configuration :: physics.Trigger_Configuration;
@@ -97,11 +98,6 @@ trigger_set :: proc(world:^World, reference:Collidable_Reference, settings:Trigg
 	if s.mixed != nil && physics.mixed_colliders_membership(s.mixed, reference) == .Present
 	{
 		return .Invalid_Argument;
-	}
-	status=physics.trigger_system_reserve(s, s.configuration);
-	if status!=.Ok
-	{
-		return status;
 	}
 	slot: ^physics.Trigger_Slot = physics.trigger_slot(s, reference);
 	status=physics.trigger_token(s, slot);
@@ -227,6 +223,7 @@ trigger_reset_history :: proc "contextless" (world:^World) -> Status
 	return .Ok;
 }
 
+// caller-owned output is disjoint from engine storage
 // all-or-nothing drain: insufficient storage does not acknowledge the batch
 trigger_events_drain :: proc "contextless" (world:^World, output:[]Trigger_Event) -> (written, required:int, status:Status)
 {
@@ -246,7 +243,10 @@ trigger_events_drain :: proc "contextless" (world:^World, output:[]Trigger_Event
 	{
 		return 0, required, .Capacity_Missing;
 	}
-	copy(output, s.events[:required]);
+	if required > 0
+	{
+		intrinsics.mem_copy_non_overlapping(raw_data(output), raw_data(s.events), required*size_of(Trigger_Event));
+	}
 	s.event_count=0;
 	return required, required, .Ok;
 }
@@ -268,6 +268,7 @@ trigger_events_discard :: proc "contextless" (world:^World) -> Status
 	return .Ok;
 }
 
+// caller-owned output is disjoint from the retained pair storage
 trigger_overlaps :: proc "contextless" (world:^World, output:[]Trigger_Pair) -> (written, required:int, status:Status)
 {
 	s: ^physics.Trigger_System;
@@ -282,7 +283,10 @@ trigger_overlaps :: proc "contextless" (world:^World, output:[]Trigger_Pair) -> 
 	{
 		return 0, required, .Capacity_Missing;
 	}
-	copy(output, s.previous[:required]);
+	if required > 0
+	{
+		intrinsics.mem_copy_non_overlapping(raw_data(output), raw_data(s.previous), required*size_of(Trigger_Pair));
+	}
 	return required, required, .Ok;
 }
 
@@ -373,11 +377,6 @@ trigger_set_user_id :: proc(world:^World, reference:Collidable_Reference, user_i
 	if resolve!=.Ok
 	{
 		return resolve;
-	}
-	status=physics.trigger_system_reserve(s, s.configuration);
-	if status!=.Ok
-	{
-		return status;
 	}
 	slot: ^physics.Trigger_Slot = physics.trigger_slot(s, reference);
 	status=physics.trigger_token(s, slot);

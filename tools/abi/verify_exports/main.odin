@@ -28,6 +28,7 @@ Argument_State :: struct
 	library:       Library,
 	library_name:  string,
 	shared_object: string,
+	precision: string,
 }
 
 Library_Spec :: struct
@@ -45,6 +46,7 @@ Function :: struct
 {
 	library: string,
 	name:    string,
+	availability: string,
 }
 
 Abi_Manifest :: struct
@@ -61,14 +63,15 @@ Parse_Status :: enum
 
 usage :: proc()
 {
-	fmt.eprintln("usage: verify_exports [--format elf|coff] [--tool PATH] runtime|cooking SHARED_OBJECT")
+	fmt.eprintln("usage: verify_exports [--format elf|coff] [--tool PATH] [--precision float32|mixed64] runtime|cooking SHARED_OBJECT")
 }
 
 parse_arguments :: proc(args: []string) -> (Argument_State, Parse_Status)
 {
-	state := Argument_State{format = .Elf}
+	state: Argument_State = {format=.Elf, precision="float32"}
 	format_count := 0
 	tool_count := 0
+	precision_count: int
 	positionals: [dynamic]string
 	index := 1
 	for index < len(args)
@@ -88,6 +91,18 @@ parse_arguments :: proc(args: []string) -> (Argument_State, Parse_Status)
 			case: return {}, .Invalid
 			}
 			index += 2
+		case "--precision":
+			precision_count += 1;
+			if precision_count > 1 || index + 1 >= len(args)
+			{
+				return {}, .Invalid;
+			}
+			state.precision = args[index + 1];
+			if state.precision != "float32" && state.precision != "mixed64"
+			{
+				return {}, .Invalid;
+			}
+			index += 2;
 		case "--tool":
 			tool_count += 1
 			if tool_count > 1 || index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "--")
@@ -196,12 +211,12 @@ read_manifest :: proc(root: string) -> (Abi_Manifest, Parse_Status)
 	return manifest, .Valid
 }
 
-expected_symbols :: proc(manifest: ^Abi_Manifest, library: string) -> [dynamic]string
+expected_symbols :: proc(manifest: ^Abi_Manifest, library, precision: string) -> [dynamic]string
 {
 	result: [dynamic]string
 	for function in manifest.functions
 	{
-		if function.library == library && contains_string(result[:], function.name) == .Invalid
+		if function.library == library && (function.availability != "mixed64" || precision == "mixed64") && contains_string(result[:], function.name) == .Invalid
 		{
 			append(&result, function.name)
 		}
@@ -297,7 +312,7 @@ run :: proc() -> int
 	{
 		return 1
 	}
-	expected := expected_symbols(&manifest, arguments.library_name)
+	expected := expected_symbols(&manifest, arguments.library_name, arguments.precision)
 	actual, actual_status := actual_symbols(&arguments, &manifest)
 	if actual_status == .Invalid
 	{

@@ -12,8 +12,24 @@ tests=""
 tests_count=0
 threads=""
 threads_count=0
+precision="float32"
+math_checks="off"
+precision_candidate=""
+declare -A precision_seen=()
 while (($# > 0)); do
   case "$1" in
+    --precision|--math-checks|--precision-candidate)
+      [[ -z "${precision_seen[$1]:-}" ]] || fail_usage "$1 may be supplied only once"
+      precision_seen[$1]=1
+      (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "$1 requires a value"
+      case "$1" in
+        --precision) precision="$2" ;;
+        --math-checks) math_checks="$2" ;;
+        --precision-candidate) precision_candidate="$2" ;;
+      esac
+      shift 2
+      ;;
+
     --odin)
       ((odin_count += 1))
       ((odin_count <= 1)) || fail_usage "--odin may be supplied only once"
@@ -69,8 +85,22 @@ if ((threads_count == 0)); then
 else
   validate_test_thread_count "$threads" || fail_usage "invalid test thread count: $threads"
 fi
+case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
+case "$math_checks" in off|on) ;; *) fail_usage "--math-checks must be off or on" ;; esac
+if [[ "$scope" == benchmark-precision ]]; then
+  case "$precision_candidate" in
+    baseline|origin) candidate_precision="float32" ;;
+    mixed64) candidate_precision="mixed64" ;;
+    *) fail_usage "benchmark-precision requires --precision-candidate baseline|origin|mixed64" ;;
+  esac
+  [[ -z "${precision_seen[--precision]:-}" || "$precision" == "$candidate_precision" ]] || fail_usage "conflicting precision and candidate"
+  precision="$candidate_precision"
+elif [[ -n "${precision_seen[--precision-candidate]:-}" ]]; then
+  fail_usage "--precision-candidate is only valid for benchmark-precision"
+fi
+if [[ "$scope" == precision-* && "$precision" != mixed64 ]]; then fail_usage "precision scopes require mixed64"; fi
 require_odin "$odin"
 test_display="${tests:-all}"
 printf 'TEST_CONFIG scope=%s tests=%s threads=%s\n' "$scope" "$test_display" "$threads"
-run_test_package "$package" "$configuration" "$tests" "$threads"
+run_test_package "$package" "$configuration" "$tests" "$threads" "$precision" "$math_checks" "$precision_candidate"
 printf 'TEST_OK scope=%s\n' "$scope"

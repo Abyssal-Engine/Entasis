@@ -214,10 +214,10 @@ body_axis_lock_register :: proc "contextless" (registry: ^Constraint_Type_Regist
 	}
 	return constraint_type_registry_register(registry, {
 			type_id=BODY_AXIS_LOCK_TYPE_ID, body_count=1,
-			description_size=size_of(Body_Axis_Lock_Description), prestep_bundle_size=size_of(Body_Axis_Lock_Prestep),
+			description_size=size_of(Body_Axis_Lock_Description), prestep_bundle_size=i32(body_axis_lock_prestep_size()),
 			impulse_bundle_size=size_of(Body_Axis_Lock_Impulses),
 			initial_access={BODY_ACCESS_ALL, {}, {}, {}}, solve_access={BODY_ACCESS_ALL, {}, {}, {}},
-			apply_description=constraint_description_transfer, build_description=constraint_description_build,
+			apply_description=body_axis_lock_apply_description, build_description=body_axis_lock_build_description,
 			validate_description=body_axis_lock_validate_raw, prestep_warmstart_solve=body_axis_lock_kernel,
 			incrementally_update=body_axis_lock_kernel, move_record=constraint_storage_move_lane,
 			remove_record=constraint_storage_remove_lane,
@@ -426,3 +426,25 @@ body_axis_lock_remove_all :: proc (simulation: ^Simulation) -> Physics_Status
 }
 #assert(size_of(Body_Axis_Lock_Prestep) == size_of(Body_Axis_Lock_Description) * 8);
 #assert(size_of(Body_Axis_Lock_Description) <= CONSTRAINT_DESCRIPTION_STORAGE_BYTES);
+
+body_axis_lock_prestep_size :: proc "contextless" () -> int
+{
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		return size_of(Body_Axis_Lock_Prestep) + size_of(Constraint_Global_Target_Wide);
+	}
+	else
+	{
+		return size_of(Body_Axis_Lock_Prestep);
+	}
+}
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	body_axis_lock_apply_description :: constraint_global_target_apply_description;
+	body_axis_lock_build_description :: constraint_global_target_build_description;
+}
+else
+{
+	body_axis_lock_apply_description :: constraint_description_transfer;
+	body_axis_lock_build_description :: constraint_description_build;
+}

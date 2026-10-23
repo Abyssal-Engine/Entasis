@@ -11,32 +11,76 @@ Body_Set_Storage :: enum u8
 	Shared_Arena,
 }
 
-Body_Set :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	dynamics_state:  util.Buffer(Body_Dynamics),
-	index_to_handle: util.Buffer(Body_Handle),
-	collidables:     util.Buffer(Collidable),
-	activity:        util.Buffer(Body_Activity),
-	constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
-	count:           int,
-	arena_start:     i32,
-	storage:         Body_Set_Storage,
-	state:           Body_Set_State,
+	Body_Set :: struct
+	{
+		dynamics_state:  util.Buffer(Body_Dynamics),
+		global_positions: util.Buffer(Global_Position),
+		index_to_handle: util.Buffer(Body_Handle),
+		collidables:     util.Buffer(Collidable),
+		activity:        util.Buffer(Body_Activity),
+		constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
+		count:           int,
+		arena_start:     i32,
+		storage:         Body_Set_Storage,
+		state:           Body_Set_State,
+	}
+}
+else
+{
+	Body_Set :: struct
+	{
+		dynamics_state:  util.Buffer(Body_Dynamics),
+		index_to_handle: util.Buffer(Body_Handle),
+		collidables:     util.Buffer(Collidable),
+		activity:        util.Buffer(Body_Activity),
+		constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
+		count:           int,
+		arena_start:     i32,
+		storage:         Body_Set_Storage,
+		state:           Body_Set_State,
+	}
 }
 
-Body_Set_Arena :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	dynamics_state:  util.Buffer(Body_Dynamics),
-	index_to_handle: util.Buffer(Body_Handle),
-	collidables:     util.Buffer(Collidable),
-	activity:        util.Buffer(Body_Activity),
-	constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
-	capacity:        int,
-	state:           Body_Set_State,
+	Body_Set_Arena :: struct
+	{
+		dynamics_state:  util.Buffer(Body_Dynamics),
+		global_positions: util.Buffer(Global_Position),
+		index_to_handle: util.Buffer(Body_Handle),
+		collidables:     util.Buffer(Collidable),
+		activity:        util.Buffer(Body_Activity),
+		constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
+		capacity:        int,
+		state:           Body_Set_State,
+	}
+}
+else
+{
+	Body_Set_Arena :: struct
+	{
+		dynamics_state:  util.Buffer(Body_Dynamics),
+		index_to_handle: util.Buffer(Body_Handle),
+		collidables:     util.Buffer(Collidable),
+		activity:        util.Buffer(Body_Activity),
+		constraints:     util.Buffer(util.Quick_List(Body_Constraint_Reference)),
+		capacity:        int,
+		state:           Body_Set_State,
+	}
 }
 
-#assert(size_of(Body_Set) == 96);
-#assert(size_of(Body_Set_Arena) == 96);
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	#assert(size_of(Body_Set) == 112);
+	#assert(size_of(Body_Set_Arena) == 112);
+}
+else
+{
+	#assert(size_of(Body_Set) == 96);
+	#assert(size_of(Body_Set_Arena) == 96);
+}
 
 body_set_capacity :: proc "contextless" (set: ^Body_Set) -> int
 {
@@ -44,7 +88,7 @@ body_set_capacity :: proc "contextless" (set: ^Body_Set) -> int
 	{
 		return 0;
 	}
-	return min(
+	capacity: int = min(
 		int(set.dynamics_state.length),
 		min(
 		int(set.index_to_handle.length),
@@ -54,6 +98,11 @@ body_set_capacity :: proc "contextless" (set: ^Body_Set) -> int
 	),
 	),
 	);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		capacity = min(capacity, int(set.global_positions.length));
+	}
+	return capacity;
 }
 
 physics_memory_status :: proc "contextless" (status: util.Memory_Status) -> Physics_Status
@@ -227,6 +276,10 @@ body_set_arena_dispose :: proc (arena: ^Body_Set_Arena, pool: ^util.Buffer_Pool)
 	physics_return_buffer(pool, &arena.activity);
 	physics_return_buffer(pool, &arena.collidables);
 	physics_return_buffer(pool, &arena.index_to_handle);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		physics_return_buffer(pool, &arena.global_positions);
+	}
 	physics_return_buffer(pool, &arena.dynamics_state);
 	arena^ = {};
 	return .Ok;
@@ -245,12 +298,27 @@ body_set_arena_initialize :: proc (
 	{
 		return physics_memory_status(dynamics_status);
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		global_positions: util.Buffer(Global_Position);
+		positions_status: util.Memory_Status;
+		global_positions, positions_status = util.buffer_pool_take_at_least(pool, Global_Position, int(dynamics_state.length));
+		if positions_status != .Ok
+		{
+			physics_return_buffer(pool, &dynamics_state);
+			return physics_memory_status(positions_status);
+		}
+	}
 	storage_capacity := int(dynamics_state.length);
 	index_to_handle, handles_status := util.buffer_pool_take_at_least(
 		pool, Body_Handle, storage_capacity,
 	);
 	if handles_status != .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(handles_status);
 	}
@@ -260,6 +328,10 @@ body_set_arena_initialize :: proc (
 	if collidable_status != .Ok
 	{
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(collidable_status);
 	}
@@ -270,6 +342,10 @@ body_set_arena_initialize :: proc (
 	{
 		physics_return_buffer(pool, &collidables);
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(activity_status);
 	}
@@ -281,6 +357,10 @@ body_set_arena_initialize :: proc (
 		physics_return_buffer(pool, &activity);
 		physics_return_buffer(pool, &collidables);
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(constraints_status);
 	}
@@ -302,6 +382,10 @@ body_set_arena_initialize :: proc (
 		),
 		state=.Allocated,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		arena.global_positions = global_positions;
+	}
 	return .Ok;
 }
 
@@ -313,6 +397,12 @@ body_set_bind_arena_range :: proc "contextless" (
 		start < 0 || capacity < 0 || start > arena.capacity - capacity || set.count > capacity
 	{
 		return .Invalid_Argument;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		set.global_positions = {
+			memory=&arena.global_positions.memory[start], length=i32(capacity), id=-1,
+		};
 	}
 	set.dynamics_state = {
 		memory=&arena.dynamics_state.memory[start], length=i32(capacity), id=-1,
@@ -351,6 +441,10 @@ body_set_arena_move_left :: proc "contextless" (
 		target_index := target_start + index;
 		source_index := source_start + index;
 		arena.dynamics_state.memory[target_index] = arena.dynamics_state.memory[source_index];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			arena.global_positions.memory[target_index] = arena.global_positions.memory[source_index];
+		}
 		arena.index_to_handle.memory[target_index] = arena.index_to_handle.memory[source_index];
 		arena.collidables.memory[target_index] = arena.collidables.memory[source_index];
 		arena.activity.memory[target_index] = arena.activity.memory[source_index];
@@ -374,10 +468,25 @@ body_set_initialize :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buffer_P
 	{
 		return physics_memory_status(dynamics_status);
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		global_positions: util.Buffer(Global_Position);
+		positions_status: util.Memory_Status;
+		global_positions, positions_status = util.buffer_pool_take_at_least(pool, Global_Position, int(dynamics_state.length));
+		if positions_status != .Ok
+		{
+			physics_return_buffer(pool, &dynamics_state);
+			return physics_memory_status(positions_status);
+		}
+	}
 	storage_capacity := int(dynamics_state.length);
 	index_to_handle, handles_status := util.buffer_pool_take_at_least(pool, Body_Handle, storage_capacity);
 	if handles_status != .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(handles_status);
 	}
@@ -385,6 +494,10 @@ body_set_initialize :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buffer_P
 	if collidable_status != .Ok
 	{
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(collidable_status);
 	}
@@ -393,6 +506,10 @@ body_set_initialize :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buffer_P
 	{
 		physics_return_buffer(pool, &collidables);
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(activity_status);
 	}
@@ -404,10 +521,18 @@ body_set_initialize :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buffer_P
 		physics_return_buffer(pool, &activity);
 		physics_return_buffer(pool, &collidables);
 		physics_return_buffer(pool, &index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &dynamics_state);
 		return physics_memory_status(constraints_status);
 	}
 	_ = util.buffer_clear(dynamics_state, 0, int(dynamics_state.length));
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		_ = util.buffer_clear(global_positions, 0, int(global_positions.length));
+	}
 	_ = util.buffer_clear(index_to_handle, 0, int(index_to_handle.length));
 	_ = util.buffer_clear(collidables, 0, int(collidables.length));
 	_ = util.buffer_clear(activity, 0, int(activity.length));
@@ -422,6 +547,10 @@ body_set_initialize :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buffer_P
 		storage=.Owned,
 		state=.Allocated,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		set.global_positions = global_positions;
+	}
 	return .Ok;
 }
 
@@ -453,12 +582,27 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 	{
 		return physics_memory_status(dynamics_status);
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		new_positions: util.Buffer(Global_Position);
+		positions_status: util.Memory_Status;
+		new_positions, positions_status = util.buffer_pool_take_at_least(pool, Global_Position, int(new_dynamics.length));
+		if positions_status != .Ok
+		{
+			physics_return_buffer(pool, &new_dynamics);
+			return physics_memory_status(positions_status);
+		}
+	}
 	storage_capacity := int(new_dynamics.length);
 	new_handles, handles_status := util.buffer_pool_take_at_least(
 		pool, Body_Handle, storage_capacity,
 	);
 	if handles_status != .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &new_positions);
+		}
 		physics_return_buffer(pool, &new_dynamics);
 		return physics_memory_status(handles_status);
 	}
@@ -468,6 +612,10 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 	if collidables_status != .Ok
 	{
 		physics_return_buffer(pool, &new_handles);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &new_positions);
+		}
 		physics_return_buffer(pool, &new_dynamics);
 		return physics_memory_status(collidables_status);
 	}
@@ -478,6 +626,10 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 	{
 		physics_return_buffer(pool, &new_collidables);
 		physics_return_buffer(pool, &new_handles);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &new_positions);
+		}
 		physics_return_buffer(pool, &new_dynamics);
 		return physics_memory_status(activity_status);
 	}
@@ -489,10 +641,18 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 		physics_return_buffer(pool, &new_activity);
 		physics_return_buffer(pool, &new_collidables);
 		physics_return_buffer(pool, &new_handles);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &new_positions);
+		}
 		physics_return_buffer(pool, &new_dynamics);
 		return physics_memory_status(constraints_status);
 	}
 	_ = util.buffer_clear(new_dynamics, 0, int(new_dynamics.length));
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		_ = util.buffer_clear(new_positions, 0, int(new_positions.length));
+	}
 	_ = util.buffer_clear(new_handles, 0, int(new_handles.length));
 	_ = util.buffer_clear(new_collidables, 0, int(new_collidables.length));
 	_ = util.buffer_clear(new_activity, 0, int(new_activity.length));
@@ -504,6 +664,16 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 		0,
 		copy_count
 	);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if copy_status == .Ok
+		{
+			copy_status = util.buffer_copy(
+				util.buffer_view(set.global_positions), 0,
+				util.buffer_view(new_positions), 0, copy_count,
+			);
+		}
+	}
 	if copy_status == .Ok
 	{
 		copy_status = util.buffer_copy(
@@ -550,6 +720,10 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 		physics_return_buffer(pool, &new_activity);
 		physics_return_buffer(pool, &new_collidables);
 		physics_return_buffer(pool, &new_handles);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &new_positions);
+		}
 		physics_return_buffer(pool, &new_dynamics);
 		return physics_memory_status(copy_status);
 	}
@@ -557,8 +731,16 @@ body_set_ensure_capacity :: proc (set: ^Body_Set, capacity: int, pool: ^util.Buf
 	physics_return_buffer(pool, &set.activity);
 	physics_return_buffer(pool, &set.collidables);
 	physics_return_buffer(pool, &set.index_to_handle);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		physics_return_buffer(pool, &set.global_positions);
+	}
 	physics_return_buffer(pool, &set.dynamics_state);
 	set.dynamics_state = new_dynamics;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		set.global_positions = new_positions;
+	}
 	set.index_to_handle = new_handles;
 	set.collidables = new_collidables;
 	set.activity = new_activity;
@@ -606,6 +788,16 @@ body_set_resize_capacity :: proc (
 	{
 		return status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		status = physics_resize_buffer_capacity(
+			pool, &set.global_positions, target, set.count,
+		);
+		if status != .Ok
+		{
+			return status;
+		}
+	}
 	status = physics_resize_buffer_capacity(
 		pool, &set.collidables, target, set.count,
 	);
@@ -652,7 +844,8 @@ body_set_resize_capacity :: proc (
 body_set_apply_description :: proc "contextless" (
 	set: ^Body_Set,
 	index: int,
-	description: ^Body_Description
+	description: ^Body_Description,
+	global_position: ^Global_Position = nil,
 ) -> Physics_Status
 {
 	if set == nil || description == nil || index < 0 || index >= set.count
@@ -664,8 +857,28 @@ body_set_apply_description :: proc "contextless" (
 	{
 		return validation;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position: Global_Position = world_precision_position_from_float(description.pose.position);
+		if global_position != nil
+		{
+			position = global_position^;
+			if world_precision_position_validate(position) != .Ok
+			{
+				return .Invalid_Argument;
+			}
+		}
+	}
 	state := &set.dynamics_state.memory[index];
 	state.motion.pose = description.pose;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		state.motion.pose.position = world_precision_position_cache(position);
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		set.global_positions.memory[index] = position;
+	}
 	state.motion.velocity = description.velocity;
 	state.inertia.local = description.local_inertia;
 	state.inertia.world = {};
@@ -771,6 +984,10 @@ body_set_remove_at :: proc "contextless" (
 	{
 		last := set.count;
 		set.dynamics_state.memory[index] = set.dynamics_state.memory[last];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			set.global_positions.memory[index] = set.global_positions.memory[last];
+		}
 		set.index_to_handle.memory[index] = set.index_to_handle.memory[last];
 		set.collidables.memory[index] = set.collidables.memory[last];
 		set.activity.memory[index] = set.activity.memory[last];
@@ -780,6 +997,10 @@ body_set_remove_at :: proc "contextless" (
 	}
 	last := set.count;
 	set.dynamics_state.memory[last] = {};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		set.global_positions.memory[last] = {};
+	}
 	set.index_to_handle.memory[last] = {};
 	set.collidables.memory[last] = {};
 	set.activity.memory[last] = {};
@@ -806,6 +1027,10 @@ body_set_dispose :: proc (set: ^Body_Set, pool: ^util.Buffer_Pool) -> Physics_St
 		physics_return_buffer(pool, &set.activity);
 		physics_return_buffer(pool, &set.collidables);
 		physics_return_buffer(pool, &set.index_to_handle);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &set.global_positions);
+		}
 		physics_return_buffer(pool, &set.dynamics_state);
 	}
 	set^ = {};

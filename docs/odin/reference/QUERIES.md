@@ -171,7 +171,7 @@ Every operation has a `_with_context` counterpart taking the context instead of 
 
 For [nested compound hierarchies](SHAPES.md#compound-hierarchies), result child indices identify the top-level child containing the selected leaf. Queries include both solid and sensor parts as geometry and do not alter part or trigger event history
 
-`distance_query_settings_default()` sets finite positive absolute/relative tolerances and a bounded iteration limit. Geometry is tolerance-bounded f32. Large world coordinates still impose f32 rounding on returned witnesses. The iteration budget bounds each numerical leaf solve and, for depenetration, the number of correction passes. Traversing many leaves is not globally limited to that number of instructions or support calls. A separated result is `Ok`, not `Not_Found`
+`distance_query_settings_default()` sets finite positive absolute/relative tolerances and a bounded iteration limit. Geometry is tolerance-bounded f32. These f32 entry points round absolute witness positions at large coordinates. Use the [global variants](#high-query-coordinates) when those positions need f64 resolution. The iteration budget bounds each numerical leaf solve and, for depenetration, the number of correction passes. Traversing many leaves is not globally limited to that number of instructions or support calls. A separated result is `Ok`, not `Not_Found`
 
 | Result status      | Handling                                                                                             |
 | ------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -220,3 +220,32 @@ The world variant uses the established world query scratch. Context variants use
 ### Numerical budgets for custom shapes
 
 Deep penetration involving smooth custom convex support may require more than the default 128 numerical iterations. Supply a larger explicit budget and matching scratch, for example `{512,1024,1536}` capacity and 512 iterations. The query never silently retries or relaxes tolerance. Bounded exhaustion remains `No_Convergence`, not a partial successful translation
+
+## High query coordinates
+
+The following APIs require mixed64 and an initialized, caller-exclusive `Query_Context`. Positions use the current simulation frame, without an application origin added. The world, shapes and callback registrations must remain immutable for the complete call. Independent callers need separate contexts, pools, traversal stacks and output spans
+
+| Family and entry points | Input and result coordinates |
+| --- | --- |
+| `ray_cast_global_any_with_context`, `ray_cast_global_closest_with_context`, `ray_cast_global_all_with_context` | `World_Precision_Segment.start/end` are f64 endpoints of a closed segment. `Global_Ray_Hit.t` is a fraction in [0,1], and `location` is f64. Normals and child identities retain the shape-query contract |
+| `sweep_global_any_with_context`, `sweep_global_closest_with_context`, `sweep_global_all_with_context` | `Global_Pose.position` is f64. Velocity, maximum time, orientation and local shape math remain f32. `Global_Sweep_Hit.sweep.location` is f64. Targets remain stationary, and all-hit returns the first impact per accepted collidable |
+| `overlap_global_any_with_context`, `overlap_global_all_with_context` | The query pose has an f64 position. Manifold offsets remain local f32 values relative to that pose. Any-hit requires a nonnegative-depth contact, while all-hit can include speculative contacts |
+| `volume_global_all_with_context` | `Global_Bounds` has f64 endpoints and a closed boundary. Results identify conservative broad-phase candidates, including motion/speculative expansion, without exact shape intersection |
+| `shape_closest_point_global_with_context`, `shape_distance_global_with_context`, `shape_penetration_global_with_context`, `shape_depenetrate_global_with_context` | Points and pose positions are f64. Both witnesses in `Global_Shape_Distance_Result` are f64. Distance, depth, normal and the correction translation remain local f32 values |
+| `collidable_shape_global_pose_with_context` | Resolve one body/static to its shape and authoritative `Global_Pose`, including sleeping objects, without awakening or borrowing a pose pointer |
+
+Global geometry queries subtract positions in f64 before invoking the local-float shape kernels. Ray callbacks receive a target-centered frame, while sweep/overlap callbacks receive a query-centered frame. Distance callbacks receive the first pose or point at the local origin. Child identities and filtering retain their existing meanings. The returned f64 location does not increase the precision of the shape geometry, motion kernel or solver. Apply a depenetration translation to the authoritative position in f64
+
+Before recurring scene queries, allocate an `[]i32` stack using `global_ray_stack_requirement` for rays or `global_bounds_stack_requirement` for sweeps, overlaps and volumes. The two helpers currently report the same requirement, zero for an empty world. Structural growth can increase it. A short stack is rejected before callbacks or output. Queries do not resize caller storage. Reserve context traversal/child storage separately where needed, and use `distance_query_reserve_with_context` before penetration or depenetration. Point and distance queries need no EPA reservation
+
+Closest ray/sweep misses return `Not_Found`. Any-hit ray/sweep misses return `.Miss, Ok`, and any-overlap misses return `.Separated, Ok`. Any/closest failures publish no partial hit. All-hit operations return the valid written prefix on traversal, callback or capacity failure and leave entries beyond that prefix untouched. Empty output is valid for a miss and returns `Capacity_Missing` when a hit needs storage. Distance separation is a successful `Ok` result. `No_Convergence`, unsupported routes and callback failures remain errors, with no partial witness or correction published
+
+### Global batches
+
+`query_batch_global_with_context` accepts `Global_Query` values tagged by `Global_Query_Kind` and writes one `Global_Query_Result` per input. Only the selected payload is read. `Global_Query_Scratch` supplies disjoint ray/sweep/overlap/volume output spans and one reused traversal stack. All-hit payloads select subranges with `Query_Output`. Keep those ranges disjoint when their results must coexist
+
+`distance_query_batch_global_with_context` uses separate `Global_Distance_Query` and `Global_Distance_Query_Result` spans. Initialize each input's settings explicitly. `Closest_Point` uses `point`, `shape_b` and `pose_b`, while other kinds use both shapes/poses. Distance reservation remains explicit and is never performed by a batch
+
+Both batch operations reject insufficient result capacity with `Invalid_Argument` and write nothing on capacity/context admission failure. Once admitted, they attempt every input in order and return the first non-`Ok` status, including a closest miss. Each result preserves its operation's status and valid-prefix rules. Invalid kinds or output ranges fail only that item. Entries beyond the input count remain untouched, and all input, result, output and scratch spans must be disjoint
+
+Query results are caller-owned values in the frame used for the call. Translate absolute endpoints, poses and witnesses consistently, or discard them, before reusing them after an [origin shift](WORLD.md#precision-profiles-and-origin-frames). Relative normals, manifold offsets and correction vectors do not acquire the frame origin

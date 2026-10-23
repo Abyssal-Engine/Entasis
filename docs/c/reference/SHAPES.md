@@ -621,7 +621,7 @@ Size `44`, alignment `4`
 
 copied scalar and wide convex collision route
 
-register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
 
 Size `48`, alignment `8`
 
@@ -641,7 +641,7 @@ Size `48`, alignment `8`
 
 copied top-level and child sweep route
 
-register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
 
 Size `40`, alignment `8`
 
@@ -675,6 +675,8 @@ Size `28`, alignment `4`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_big_compound_build_dynamic`
 
 computes weighted mass properties and registers a tree-accelerated big compound
@@ -692,8 +694,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_big_compound_build_dynamic(ent
 | `recenter`   | `entasis_bool_t`                    | whether geometry is shifted around the computed center of mass               |
 | `out_result` | `entasis_compound_build_result_t *` | receives the compound build result                                           |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_box`
 
@@ -810,8 +810,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_compound_build_dynamic(entasis
 | `out_result` | `entasis_compound_build_result_t *` | receives the compound build result                                           |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_compound_builder`
 
 binds caller-owned child and mass arrays without allocation
@@ -841,8 +839,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_compound_center_of_mass(entasi
 | `builder`          | `entasis_compound_builder_t` | compound builder input               |
 | `out_center`       | `entasis_vector3_t *`        | receives the computed center of mass |
 | `out_inverse_mass` | `float *`                    | receives the inverse total mass      |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_compound_child`
 
@@ -878,8 +874,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_compound_inertia_weighted(enta
 | `out_inertia` | `entasis_body_inertia_t *`   | receives the body inertia                                                    |
 | `diagnostic`  | `entasis_diagnostic_t *`     | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_compound_inertia_weighted_recenter`
 
 computes mass properties about the center of mass and subtracts that center from every caller-owned child position
@@ -895,8 +889,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_compound_inertia_weighted_rece
 | `out_inertia` | `entasis_body_inertia_t *`   | receives the body inertia                                                    |
 | `out_center`  | `entasis_vector3_t *`        | receives the computed center of mass                                         |
 | `diagnostic`  | `entasis_diagnostic_t *`     | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_cylinder`
 
@@ -944,8 +936,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_mesh_closed_center_of_mass(ent
 | `out_center` | `entasis_vector3_t *`    | receives the computed center of mass                                         |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_mesh_closed_inertia`
 
 computes closed-solid inertia for a registered mesh
@@ -962,8 +952,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_mesh_closed_inertia(entasis_wo
 | `out_inertia` | `entasis_body_inertia_t *` | receives the body inertia                                                    |
 | `diagnostic`  | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_mesh_open_center_of_mass`
 
 returns the area-weighted center of an open triangle soup
@@ -978,8 +966,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_mesh_open_center_of_mass(entas
 | `handle`     | `entasis_shape_handle_t` | target shape handle                                                          |
 | `out_center` | `entasis_vector3_t *`    | receives the computed center of mass                                         |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_mesh_open_inertia`
 
@@ -996,8 +982,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_mesh_open_inertia(entasis_worl
 | `mass`        | `float`                    | positive mass used to compute inertia or mass properties                     |
 | `out_inertia` | `entasis_body_inertia_t *` | receives the body inertia                                                    |
 | `diagnostic`  | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_add`
 
@@ -1016,8 +1000,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_add(entasis_world_t * wo
 | `shape_value` | `const void *`             | shape value matching type_id                                                 |
 | `out_handle`  | `entasis_shape_handle_t *` | receives the created shape handle                                            |
 | `diagnostic`  | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_add_batch`
 
@@ -1039,8 +1021,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_add_batch(entasis_world_
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_shape_bounds`
 
 computes local bounds for a registered shape at an orientation
@@ -1057,8 +1037,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_bounds(entasis_world_t *
 | `out_bounds`  | `entasis_shape_bounds_t *` | receives the shape bounds                                                    |
 | `diagnostic`  | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_shape_import_big_compound`
 
 copies caller-owned child descriptors, builds the internal child tree in the world's pool, and registers one big compound
@@ -1074,8 +1052,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_import_big_compound(enta
 | `count`      | `uint64_t`                         | number of entries in the input arrays                                        |
 | `out_handle` | `entasis_shape_handle_t *`         | receives the created shape handle                                            |
 | `diagnostic` | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_import_compound`
 
@@ -1095,8 +1071,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_import_compound(entasis_
 | `out_handle` | `entasis_shape_handle_t *`         | receives the created shape handle                                            |
 | `diagnostic` | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_shape_inertia`
 
 computes inertia directly from a built-in primitive value
@@ -1113,8 +1087,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_inertia(entasis_shape_ty
 | `shape_value` | `const void *`             | shape value matching type_id                             |
 | `mass`        | `float`                    | positive mass used to compute inertia or mass properties |
 | `out_inertia` | `entasis_body_inertia_t *` | receives the body inertia                                |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_inspect`
 
@@ -1133,8 +1105,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_inspect(entasis_world_t 
 | `out_info`   | `entasis_shape_info_t *` | receives the shape info                                                      |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_shape_ray`
 
 tests one registered shape directly at the supplied pose, without creating a body or static or traversing the broad phase
@@ -1152,8 +1122,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_ray(entasis_world_t * wo
 | `out_hit`    | `entasis_shape_ray_hit_t *` | receives the shape ray hit                                                   |
 | `diagnostic` | `entasis_diagnostic_t *`    | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_shape_remove`
 
 removes an unreferenced shape
@@ -1169,8 +1137,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_remove(entasis_world_t *
 | `world`      | `entasis_world_t *`      | target world                                                                 |
 | `handle`     | `entasis_shape_handle_t` | target shape handle                                                          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_remove_batch`
 
@@ -1189,8 +1155,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_remove_batch(entasis_wor
 | `count`         | `uint64_t`                       | number of entries in the input arrays                                        |
 | `out_completed` | `uint64_t *`                     | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_remove_recursive`
 
@@ -1211,8 +1175,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_remove_recursive(entasis
 | `out_removed`   | `uint64_t *`               | receives the number of shapes removed                                        |
 | `out_required`  | `uint64_t *`               | receives the total required output capacity                                  |
 | `diagnostic`    | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_shape_type_id`
 
@@ -1244,8 +1206,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_shape_validate(entasis_shape_t
 | ------------- | ------------------------- | ---------------------------- |
 | `type_id`     | `entasis_shape_type_id_t` | registered shape type ID     |
 | `shape_value` | `const void *`            | shape value matching type_id |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_sphere`
 
@@ -1488,7 +1448,7 @@ returns the initialized descriptor
 
 registers one contextual collision pair route
 
-register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
 
 ```c
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_task_register(entasis_world_t * world, const entasis_collision_task_registration_t * registration, int32_t * out_task_id, entasis_diagnostic_t * diagnostic);
@@ -1517,7 +1477,7 @@ returns the initialized descriptor
 
 registers one contextual sweep pair route
 
-register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
 
 ```c
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_sweep_task_register(entasis_world_t * world, const entasis_sweep_task_registration_t * registration, int32_t * out_task_id, entasis_diagnostic_t * diagnostic);

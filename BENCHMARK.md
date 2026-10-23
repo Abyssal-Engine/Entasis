@@ -16,11 +16,11 @@ The notation is **velocity iterations per substep x substeps per simulation step
 
 | Profile | Velocity iterations per substep | Substeps per 60 Hz step | Run options                            |
 | ------- | ------------------------------: | ----------------------: | -------------------------------------- |
-| 4x1     |                               4 |                       1 | `--velocity-iterations 4 --substeps 1` |
-| 2x2     |                               2 |                       2 | `--velocity-iterations 2 --substeps 2` |
-| 1x4     |                               1 |                       4 | `--velocity-iterations 1 --substeps 4` |
+| 4x1     |                               4 |                       1 | `-VelocityIterations 4 -Substeps 1` |
+| 2x2     |                               2 |                       2 | `-VelocityIterations 2 -Substeps 2` |
+| 1x4     |                               1 |                       4 | `-VelocityIterations 1 -Substeps 4` |
 
-All profiles perform four velocity iterations across the full step, but their substep work and resulting trajectories differ. Equal iteration totals do not establish equal performance or accuracy. The existing default remains 4x1, and the other profiles are explicit alternatives
+All profiles perform four velocity iterations across the full step, but their substep work and resulting trajectories differ. Equal iteration totals do not establish equal performance or accuracy. Current large-world production qualification uses 1x4. The dated tables below preserve their original three-profile measurements
 
 ![Simulation step time by worker count for the 4x1, 2x2 and 1x4 solver profiles](results/simulation-baselines.svg)
 
@@ -144,11 +144,13 @@ The simulation fixtures use 60 Hz, gravity `(0, -10, 0)` and zero damping. The S
 
 Simulation timing excludes setup, warmup, validation and teardown. The retained Box Container baseline times the whole step loop. Current Verify On and recording On sum native step intervals, with assessment and capture after each interval. Verify Off with recording Off retains whole-loop timing. Contact Islands, Ragdolls and Pyramid sum per-step times, including Pyramid's launch work. Divide each process total by its measured step count before taking the median
 
+Both query packages accept `-RayPattern axial|oblique` on Windows, default axial. Axial preserves the published inputs. Oblique rays use one unit dominant component and two components of magnitude 1/64, projecting hit origins toward target centers and directing misses outward. Sphere casts and overlaps stay unchanged. CSVs record `ray_pattern`, and reports reject mixed patterns. Oblique results use a separate `oblique` directory below the package, before the optional precision directory
+
 Query timing includes submission, output writes, hit counting and dispatch. Setup, allocation, warmup and result validation are outside timing. The ray report records elapsed milliseconds for all measured frames. Throughput is `ray_query_count * measured_batches / (ray_elapsed_ms * 1000)` in millions of rays per second. Mixed-query CSVs record throughput in `queries_per_second`
 
 ## Physical qualification
 
-Current Container, Contact Islands and Pyramid runs default to verification On. `--verify off` (`-Verify Off` on Windows) skips assessment and records Unassessed with reason `verification_off`. Container qualification requires equal box dimensions; unequal boxes remain accepted benchmark inputs with Unassessed outcomes. Other valid custom geometry or insufficient assessment windows also remain accepted inputs with Unassessed outcomes. Existing saved results without the new evidence are Unassessed
+Current Container, Contact Islands and Pyramid runs default to verification On. `-Verify Off` on Windows or `--verify off` on Linux skips assessment and records Unassessed with reason `verification_off`. Container qualification requires equal box dimensions. Unequal boxes remain accepted benchmark inputs with Unassessed outcomes. Other valid custom geometry or insufficient assessment windows also remain accepted inputs with Unassessed outcomes. Existing saved results without the new evidence are Unassessed
 
 Assessment reads construction and every completed warmup/measured state outside native timers. Container recreates its measured world after warmup, retains applicable warmup safety failures and checks finite state plus upward escape after full-box entry below the rim. Contact Islands checks shape over exactly the final `Hz+1` measured states (`N-Hz..N`, requiring `N>Hz`), with finite-state and assigned support-plane safety throughout. Pyramid checks its unforced trajectory and excludes the ending state of the first possible projectile-impact interval, even before scheduled launch. A Pyramid Pass requires at least one assessed completed step; impact during construction or step 1 leaves an intact fixture Unassessed. Earlier breaches remain Fail. Wall checks its complete unforced trajectory
 
@@ -234,11 +236,13 @@ Promotion copies `README.md`, `workers-*.csv` and their declared finalized recor
 
 Compare builds on the same machine with the same compiler, flags, affinity, workload, warmup and timed region
 
+Windows Run accepts `-ProcessorAffinity MASK`. MASK is a positive decimal UInt64 bitmask of logical processors, such as 4 for logical CPU 2. Supply `-TimeoutSeconds` with this option. The mask must be within the command process's current eligible processors, with at least one selected processor per requested worker. Systems above 64 logical processors are unsupported for this selector and reject before result creation. The producer inherits the selected mask at process creation; the command immediately restores its own mask and checks the child's effective mask. Requested/effective masks appear in normal process and invocation logs, and the report's reproduction command preserves the option. Reporters retain the command's original affinity. Omission preserves existing inheritance. This controls eligible logical CPUs without reserving them or changing power, priority or frequency policy
+
 ## Configurable workloads
 
-`container`, `contact_islands`, and `pyramid` require `--shape box|sphere|capsule|cylinder|hull` and `--variant`. Static floors and walls use `--static-shape box|hull`, defaulting to box. Hulls are cooked eight-corner cuboids. Pyramid projectiles remain spheres
+On Windows, `container`, `contact_islands` and `pyramid` require `-Shape box|sphere|capsule|cylinder|hull` and `-Variant`. Static floors and walls use `-StaticShape box|hull`, defaulting to box. Hulls are cooked eight-corner cuboids. Pyramid projectiles remain spheres
 
-Common options are `--shape-size X,Y,Z` (full dimensions), `--density`, `--layout-scale`, `--steps`, `--timestep-hz`, `--warmup-steps`, `--velocity-iterations`, `--substeps` and `--sleep enabled|disabled`
+Common options are `-ShapeSize 'X,Y,Z'` (full dimensions), `-Density`, `-LayoutScale`, `-Steps`, `-TimestepHz`, `-WarmupSteps`, `-VelocityIterations`, `-Substeps` and `-Sleep enabled|disabled`
 
 Shape dimensions must satisfy these rules:
 
@@ -248,12 +252,12 @@ Shape dimensions must satisfy these rules:
 
 Default sizes match each fixture's cube. Capsules use half its X/Z size. Layout scale multiplies default lengths and positions. Explicit dimensions and positions are absolute overrides. Shapes do not auto-pack or resize floors
 
-Container and islands accept `--grid X,Y,Z`, `--spacing X,Y,Z` and `--spawn-height Y`
+Container and islands accept `-Grid 'X,Y,Z'`, `-Spacing 'X,Y,Z'` and `-SpawnHeight Y`
 
-- Container also accepts `--container-size X,Y,Z`: floor width, wall height and floor depth, defaulting to 29,24.5,29
-- Islands also accepts `--island-grid X,Z`, `--island-spacing X,Z` and `--floor-size X,Y,Z`. Initially overlapping island floors are rejected
+- Container also accepts `-ContainerSize 'X,Y,Z'`: floor width, wall height and floor depth, defaulting to 29,24.5,29
+- Islands also accepts `-IslandGrid 'X,Z'`, `-IslandSpacing 'X,Z'` and `-FloorSize 'X,Y,Z'`. Initially overlapping island floors are rejected
 
-Pyramid accepts `--floor-size`, `--rows`, `--projectile-count`, `--launch-step`, `--projectile-radius`, `--projectile-density`, `--projectile-center X,Y,Z`, `--projectile-spacing X,Y,Z` and `--projectile-velocity X,Y,Z`
+Pyramid accepts `-FloorSize`, `-Rows`, `-ProjectileCount`, `-LaunchStep`, `-ProjectileRadius`, `-ProjectileDensity`, `-ProjectileCenter 'X,Y,Z'`, `-ProjectileSpacing 'X,Y,Z'` and `-ProjectileVelocity 'X,Y,Z'`
 
 Zero projectiles disables launch. Otherwise the zero-based launch index must precede the measured step count. Pyramid warmup must be zero. A small Sphere Pyramid configuration previously exhausted the parallel broad-phase job buffer at two workers and remains unsupported by the recorded checks
 
@@ -266,22 +270,77 @@ Input limits:
 
 Invalid, duplicate, unknown and inapplicable options are rejected before physics allocation
 
-Container uses a disposable warmup world and measures a fresh world in the same pool, timing the whole loop. Contact islands warms and measures the same world with per-step timing. Pyramid includes its scheduled launch in per-step timing. Reports record effective settings in `benchmark_parameters` and reject mismatched samples
+Reports record effective settings in `benchmark_parameters` and reject mismatched samples
 
 Variant names use `[A-Za-z0-9][A-Za-z0-9._-]*`. Each variant retains its own completed attempts. Promotion requires the variant for configurable workloads. Other packages omit it from the result path
 
 ## Extension workloads
 
-[Extension benchmark definitions](benchmarks/EXTENSIONS.md) cover custom callbacks, query contexts and distance/separation, allocation/lifecycle, and optional trigger/restitution/body-control costs. The Windows runner accepts `-Components Common` or `-Components All` for `custom_extensions`, `query_extensions` and `contact_islands`. Common workloads run on the original engine, while all adds separately reported feature groups. These are native Odin workloads. The dated published results above remain their original measurements
+[Extension benchmark definitions](benchmarks/EXTENSIONS.md) cover custom callbacks, query contexts and distance/separation, allocation/lifecycle, and optional trigger/restitution/body-control costs. The Windows runner accepts `-Components Common` or `-Components All` for `custom_extensions`, `query_extensions` and `contact_islands`. Common runs the base workloads, while All adds separately reported feature groups. These are native Odin workloads. The dated published results above remain their original measurements
+
+Selected `query_extensions` cells, supported operations and independent geometry checks are documented under [extension query workloads](benchmarks/EXTENSIONS.md#queries)
+
+### Selected Windows query measurements
+
+The Windows runner accepts the controls below. Build the selected package before Run
+
+| Run option | Package | Meaning and default |
+| --- | --- | --- |
+| `-QueryGroup ROUTE.OPERATION` | query_extensions | One case-sensitive group, omitted runs the complete workload |
+| `-QueryRepetitions N` | query_extensions with a group | Measured chunks of 8,192 API calls, default 1 |
+| `-QueryWarmupRepetitions W` | query_extensions with a group | Warmup chunks of 128 calls, default 1 |
+| `-QueryFamily all\|ray\|sphere-cast\|aabb-presence` | spatial_query_trace | Existing scalar execution families, default all |
+| `-WarmupBatches W` | Both spatial packages | Warmup batches, default 10 |
+| `-MeasuredBatches N` | Both spatial packages | Measured batches, default 100 |
+
+Counts are decimal integers in 1..1,000,000. Options may occur once. Repetition controls require an explicit group. Batch rejects an explicit family selector, including all. Oblique requires a ray-containing workload
+
+Extension routes are `convex`, `compound`, `mesh` and `native_custom`. Each supports the eight Common operations below. Components All adds `closest_point`, `shape_distance`, `depenetration` and `overlap_any`, for 48 groups in total
+
+| Domain | Existing operation or lane | Measured path |
+| --- | --- | --- |
+| Rays | ray_closest, ray_filtered, ray_all; trace ray; spatial_query_batch | Public shape queries, scalar traversal or public batch execution |
+| Shape casts and sweeps | sweep_closest, sweep_all; trace sphere-cast | Existing shape API or scalar sphere sweep including dispatcher costs |
+| Geometric overlap | geometric_overlap, overlap_any | Shape overlap, with overlap_any requiring All |
+| AABB presence | trace aabb-presence | Volume-any query against an empty active tree and populated static tree |
+| Shape collision | direct_collision, collision_batch | Direct query or two ordered pair tests per batch API call |
+| Closest point | closest_point | Existing All-only query |
+| Shape distance | shape_distance | Existing All-only query |
+| Depenetration | depenetration | Existing All-only bounded iterative query |
+
+The extension fixtures use a sphere, a compound with two spheres, a two-triangle mesh and a native custom sphere, with 17 repeated input positions. They cover API and dispatch paths, rather than arbitrary hulls, large meshes, changing worlds or large-world distributions
+
+Focused extensions allocate the original sample buffer, restart the original input sequence for each chunk and validate every chunk outside timing. Reported time sums measured chunks. Other group cells and complete Common/All totals are excluded. Mean ns/API call divides the accumulated time by 8,192*N. Collision batch reports API calls and pair tests separately. The loop is serial, so worker counts configure world resources and timing ratios do not establish parallel query scaling. Repetitions within one process are one observation, not independent samples
+
+Spatial reports normalize totals to milliseconds per measured batch. Trace executes 100,000 queries per batch for all, 50,000 for ray or 25,000 for either other family. Skipped counts, hits, checksums, durations and rates are excluded. Hits and checksums retain their per-batch meanings. Setup, validation and output remain outside timing. Neither spatial aggregates nor repeated extension chunks supply p95/p99 latency distributions
+
+Current CSVs include the compiled precision, and spatial CSVs also record `ray_pattern`. Focused extension rows add selection and repetition metadata, while single-family trace rows add `query_family`. Readers retain an unspecified profile for historical rows without precision, interpret a missing pattern as axial and treat absent selection metadata as the complete workload. Historical precision must be established from the retained source. Reports and saved datasets reject incompatible selections, counts, components, precision and patterns. The viewer keeps focused results readable but requires the report's CLI command to relaunch selected groups, single trace families or nondefault spatial counts
+
+```powershell
+.\scripts\windows\benchmarks\run_benchmark.ps1 -Package query_extensions -Components Common -Configuration Release -Precision Float32 -Workers 1 -Runs 1 -QueryGroup convex.direct_collision -QueryRepetitions 512 -QueryWarmupRepetitions 64 -TimeoutSeconds 60
+.\scripts\windows\benchmarks\run_benchmark.ps1 -Package spatial_query_trace -Configuration Release -Precision Float32 -Workers 1 -Runs 1 -QueryFamily aabb-presence -WarmupBatches 10 -MeasuredBatches 1000 -TimeoutSeconds 60
+```
+
+Run uses the prepared images and creates a unique attempt at the existing package/pattern/precision depth. Malformed admitted values and wrong package combinations fail with status 2 before producer launch or output creation. Native parameter-binding errors retain PowerShell's status. Failed pending CSVs and process logs survive, and publication requires matching emitted settings plus a successful report. Freeze work counts before comparing sources
 
 ## Optional playback recording
 
-`--record off|on` (PowerShell `-Record Off|On`) selects distinct producer artifacts. CLI and fresh/reset GUI launches default Off. Save replay exposes explicit Off/On segments for supported cases. Container, baseline contact islands, pyramid, ragdoll stair tumble, noncontact constraint mix and noncontact fallback smoke record the actual measured world. Other packages reject On
+On Windows, `-Record Off|On` selects distinct producer artifacts. CLI and fresh/reset GUI launches default Off. Save replay exposes explicit Off/On segments for supported cases. Container, baseline contact islands, pyramid, ragdoll stair tumble, noncontact constraint mix and noncontact fallback smoke record the actual measured world. Other packages reject On
 
-On accepts `--compression lz4|lz4hc` and `--memory-mib 64..16384`, defaulting to LZ4 and 512 MiB. Each worker/repeat owns a fresh finalized recording. The CSV's relative `recording_path` and `recording_component` associate it with the exact sample. Missing legacy fields mean unavailable playback
+On accepts `-Compression lz4|lz4hc` and `-MemoryMiB 64..16384`, defaulting to LZ4 and 512 MiB. Each worker/repeat owns a fresh finalized recording. The CSV's relative `recording_path` and `recording_component` associate it with the exact sample. Missing legacy fields mean unavailable playback
 
 `recording_mode` and `timing_method` keep capture conditions distinct. Off preserves existing timing. On captures outside complete native-step intervals. Container and the two noncontact producers switch from `whole_loop` to `native_step_sum`. Capture still affects cache, memory and total runtime. Reporter ingestion rejects incompatible conditions
 
 Contact-islands recordings cover baseline `physics_elapsed_ms`, not the extra component measurements. A median has no recording
 
 The [physics viewer](tools/physics_viewer/README.md#benchmark-launch-and-recordings) offers Build and benchmark to compile before running, or Benchmark to use prepared binaries directly. Both keep the same window open with progress, cancellation and diagnostic output, then open the completed result
+
+## Large-world precision qualification
+
+The explicit `large_world_precision` package supports only `baseline`, `origin` and `mixed64`. On Windows, select `-PrecisionCandidate` for both Build and Run, then choose `-PrecisionCase` and `-SamplingMode batch|instrumented|engine-only|memory` for Run. Run consumes prepared artifacts and preserves unique failed/partial attempts. Ordinary aggregate Build keeps its existing package list. Existing controls accept `-Precision Float32|Mixed64` and emit that compiled profile outside timing
+
+Simulation cases keep 60 Hz, one velocity iteration per substep and four substeps, disabled sleeping, 30 disposable warmups and 512 recreated measured frames. Precision queries use worker 1, 128 warmup probes per family and eight passes over fixed 1,024-probe inputs. Baseline compact 10 km is an unranked boundary observation. Baseline 1,000 km/1 Gm are expected accuracy failures. Origin does not support distributed or spanning cases
+
+Batch measures maintenance, real engine work and high application-position export in one interval. Instrumented mode also retains frame/pass and maintenance events. Engine-only times actual simulation steps separately. Memory runs track world/pool/worker allocations and application buffers in separate processes, require zero owned bytes after teardown, and produce no timing/scaling chart
+
+Fix the workload and comparison criteria before measurement. Viewer and recording coordinates remain float presentation data

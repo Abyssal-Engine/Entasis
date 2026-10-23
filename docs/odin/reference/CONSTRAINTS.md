@@ -223,3 +223,11 @@ With joint breaks enabled, a custom timestep returning `Ok` must advance the ste
 `Joint_Break_Update_Result` reports `completed_steps`, delivered counts for each stream, required capacities, `alpha` and a `pending` set containing `.Parent`, `.Part`, `.Contact` or `.Break`. Unselected streams require empty output. A supplied tracker must belong to the same world and cannot have skipped a completed step
 
 The operation finishes pending break publication and delivers selected notifications before another physics step. Consume returned prefixes once, grow the indicated output or contact-history storage, and retry with `elapsed=0`. Required counts describe retained batches in addition to any delivered prefix. A contact prefix can be delivered before another stream reports backpressure. Notification retry does not replay completed physics
+
+## Absolute targets and position space
+
+Mixed64 keeps one-body linear-servo targets and axis-lock reference positions in f64. `constraint_get_global_target_state` returns a `Global_Constraint_Target_State` with kind `.Linear_Servo` or `.Axis_Lock`. `constraint_apply_global_target_state` replaces that position and requires the kind to match the existing constraint. Other built-in types and custom descriptions return `Invalid_Argument`. These operations do not capture or replace the complete constraint description or accumulated impulses
+
+Built-in multi-body constraints subtract authoritative positions before local-float solving. In mixed64, `custom_constraint_registration` and `custom_constraint_registration_contextual` accept `Constraint_Position_Space.Body_A_Relative` to supply A at zero and other requested body positions relative to A. Their default `.Absolute_Float` supplies rounded absolute positions. A nonempty reaction provider installed through `constraint_set_reaction_provider` must match its registered type's position space. Clearing the provider retains the normal removal behavior
+
+Opaque custom descriptions and callback contexts remain caller-owned during shifts. Kinematic body targets use the [global body-control operations](BODIES-STATICS.md#high-positional-authoring). Their explicit present/absent state and ordered snapshot behavior are described under [global authoring snapshots](DATA-ACCESS.md#global-authoring-snapshots)

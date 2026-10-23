@@ -4,7 +4,7 @@ The prepared wall contains 180 rows and 16,290 unit cubes, with identity rotatio
 
 Build with `scripts/windows/benchmarks/build_benchmarks.ps1 -Configuration Release -Package pyramid_wall`. Select a common `HarnessRoot` to compile this fixture against another folder's own engine
 
-Run only after explicit workload approval with `scripts/windows/benchmarks/run_pyramid_wall.ps1`. Defaults are 18000 steps, 60 Hz, one velocity iteration, four substeps, sleeping disabled, friction 0.5, spring 30 Hz, damping ratio 1 and recovery velocity 2. Smaller walls are rejected
+Run with `scripts/windows/benchmarks/run_pyramid_wall.ps1`. Defaults are 18000 steps, 60 Hz, one velocity iteration, four substeps, sleeping disabled, friction 0.5, spring 30 Hz, damping ratio 1 and recovery velocity 2. Smaller walls are rejected
 
 The CSV records initial state, step 1, every sample interval and final state. It separates mean center height, maximum center height and apex, and includes lateral and out-of-plane drift, drop/displacement counts, rotated floor penetration, invalid states, escaped bodies and maximum speed. The final snapshot contains all body poses and velocities
 

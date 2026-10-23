@@ -84,6 +84,8 @@ Size `32`, alignment `8`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_body_property_init`
 
 initializes a dense type-erased body property table
@@ -103,8 +105,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_init(entasis_bod
 | `allocator`        | `const entasis_allocator_t *`     | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`       | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_ensure_capacity`
 
 grows body property storage
@@ -120,8 +120,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_ensure_capacity(
 | `table`      | `entasis_body_property_table_t *` | target body property table                                                        |
 | `capacity`   | `uint64_t`                        | requested minimum property storage capacity in entries, not an output-buffer size |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed      |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_body_property_capacity`
 
@@ -154,8 +152,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_set(entasis_body
 | `value`      | `const void *`                    | property bytes to copy                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_set_batch`
 
 sets body properties in input order after one reserve preflight
@@ -176,8 +172,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_set_batch(entasi
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_get`
 
 returns a borrowed pointer to one body property
@@ -195,8 +189,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_get(const entasi
 | `out_value`  | `const void **`                         | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_key`
 
 captures one generation-protected body property key
@@ -211,8 +203,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_key(const entasi
 | `handle`     | `entasis_body_handle_t`                 | target body handle                                                           |
 | `out_key`    | `entasis_body_property_key_t *`         | receives the body property key                                               |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_body_property_get_key`
 
@@ -231,8 +221,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_get_key(const en
 | `out_value`  | `const void **`                         | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_remove`
 
 removes one body property lifetime
@@ -248,8 +236,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_remove(entasis_b
 | `table`      | `entasis_body_property_table_t *` | target body property table                                                   |
 | `handle`     | `entasis_body_handle_t`           | target body handle                                                           |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_body_property_remove_batch`
 
@@ -267,8 +253,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_remove_batch(ent
 | `out_completed` | `uint64_t *`                      | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_body_property_clear`
 
 clears body properties while retaining capacity
@@ -281,8 +265,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_clear(entasis_bo
 | ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
 | `table`      | `entasis_body_property_table_t *` | target body property table                                                   |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_body_property_destroy`
 
@@ -298,8 +280,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_property_destroy(entasis_
 | ------------ | --------------------------------- | ---------------------------------------------------------------------------- |
 | `table`      | `entasis_body_property_table_t *` | target body property table                                                   |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_static_property_init`
 
@@ -318,8 +298,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_init(entasis_s
 | `allocator`        | `const entasis_allocator_t *`       | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`       | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_ensure_capacity`
 
 grows static property storage
@@ -333,8 +311,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_ensure_capacit
 | `table`      | `entasis_static_property_table_t *` | target static property table                                                      |
 | `capacity`   | `uint64_t`                          | requested minimum property storage capacity in entries, not an output-buffer size |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed      |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_static_property_capacity`
 
@@ -367,8 +343,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_set(entasis_st
 | `value`      | `const void *`                      | property bytes to copy                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_set_batch`
 
 sets static properties in input order after one reserve preflight
@@ -387,8 +361,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_set_batch(enta
 | `out_completed` | `uint64_t *`                        | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_get`
 
 returns a borrowed pointer to one static property
@@ -403,8 +375,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_get(const enta
 | `handle`     | `entasis_static_handle_t`                 | target static handle                                                         |
 | `out_value`  | `const void **`                           | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_static_property_key`
 
@@ -421,8 +391,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_key(const enta
 | `out_key`    | `entasis_static_property_key_t *`         | receives the static property key                                             |
 | `diagnostic` | `entasis_diagnostic_t *`                  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_get_key`
 
 resolves one generation-protected static property key
@@ -437,8 +405,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_get_key(const 
 | `key`        | `entasis_static_property_key_t`           | generation-protected static property key                                     |
 | `out_value`  | `const void **`                           | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_static_property_remove`
 
@@ -456,8 +422,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_remove(entasis
 | `handle`     | `entasis_static_handle_t`           | target static handle                                                         |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_remove_batch`
 
 removes static property lifetimes in input order
@@ -474,8 +438,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_remove_batch(e
 | `out_completed` | `uint64_t *`                        | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_clear`
 
 clears static properties while retaining capacity
@@ -489,8 +451,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_clear(entasis_
 | `table`      | `entasis_static_property_table_t *` | target static property table                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_static_property_destroy`
 
 destroys static property storage
@@ -503,8 +463,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_property_destroy(entasi
 | ------------ | ----------------------------------- | ---------------------------------------------------------------------------- |
 | `table`      | `entasis_static_property_table_t *` | target static property table                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collidable_property_init`
 
@@ -524,8 +482,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_init(entas
 | `allocator`       | `const entasis_allocator_t *`           | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`      | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_ensure_capacity`
 
 grows both collidable property namespaces
@@ -541,8 +497,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_ensure_cap
 | `static_capacity` | `uint64_t`                              | required static namespace capacity                                           |
 | `diagnostic`      | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_set`
 
 sets one collidable property value
@@ -557,8 +511,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_set(entasi
 | `collidable` | `entasis_collidable_reference_t`        | target collidable reference                                                  |
 | `value`      | `const void *`                          | property bytes to copy                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collidable_property_set_batch`
 
@@ -578,8 +530,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_set_batch(
 | `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_get`
 
 returns a borrowed pointer to one collidable property
@@ -594,8 +544,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_get(const 
 | `collidable` | `entasis_collidable_reference_t`              | target collidable reference                                                  |
 | `out_value`  | `const void **`                               | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collidable_property_key`
 
@@ -612,8 +560,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_key(const 
 | `out_key`    | `entasis_collidable_property_key_t *`         | receives the collidable property key                                         |
 | `diagnostic` | `entasis_diagnostic_t *`                      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_get_key`
 
 resolves one generation-protected collidable property key
@@ -629,8 +575,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_get_key(co
 | `out_value`  | `const void **`                               | receives the borrowed memory                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`                      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_remove`
 
 removes one collidable property lifetime
@@ -644,8 +588,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_remove(ent
 | `table`      | `entasis_collidable_property_table_t *` | target collidable property table                                             |
 | `collidable` | `entasis_collidable_reference_t`        | target collidable reference                                                  |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collidable_property_remove_batch`
 
@@ -663,8 +605,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_remove_bat
 | `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_clear`
 
 clears collidable properties while retaining capacity
@@ -678,8 +618,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_clear(enta
 | `table`      | `entasis_collidable_property_table_t *` | target collidable property table                                             |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collidable_property_destroy`
 
 destroys collidable property storage
@@ -692,5 +630,3 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collidable_property_destroy(en
 | ------------ | --------------------------------------- | ---------------------------------------------------------------------------- |
 | `table`      | `entasis_collidable_property_table_t *` | target collidable property table                                             |
 | `diagnostic` | `entasis_diagnostic_t *`                | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status

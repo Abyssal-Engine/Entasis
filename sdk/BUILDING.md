@@ -71,3 +71,9 @@ These settings select installed components. Missing workloads and SDKs must be i
 | Runnable consumers          | `examples/`                                   |
 | C ABI documentation         | `share/doc/Entasis/c/`                        |
 | Licenses                    | `share/licenses/Entasis/`                     |
+
+## Profile configuration
+
+The installed libraries determine the profile. Mixed64 package names include `-mixed64`. `Entasis_PRECISION` in the installed CMake configuration is `float32` or `mixed64`. CMake targets and Linux pkg-config flags propagate the corresponding `ENTASIS_PRECISION_MIXED64` value to consumers
+
+Manual mixed64 C/C++ compilation requires `-DENTASIS_PRECISION_MIXED64=1` or `/DENTASIS_PRECISION_MIXED64=1`. Use 0 for float32, which is also the header default. Only 0 and 1 are accepted. This macro selects declarations and layouts, not a different installed library. Runtime and cooking must come from the same profile. Mixed64-only calls have no float32 export

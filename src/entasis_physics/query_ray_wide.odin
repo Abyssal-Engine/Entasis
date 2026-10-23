@@ -59,7 +59,7 @@ wide_ray_box_axis :: proc "contextless" (
 	origin, direction: util.F32x8, extent: f32,
 ) -> (entry, exit: util.F32x8, entry_sign: util.F32x8, valid: util.I32x8)
 {
-	parallel := transmute(util.I32x8)simd.lanes_le(simd.abs(direction), util.F32x8(1e-15));
+	parallel := transmute(util.I32x8)simd.lanes_eq(direction, util.F32x8(0));
 	safe_direction := util.wide_select_f32(parallel, util.F32x8(1), direction);
 	t0 := simd.div(simd.sub(util.F32x8(-extent), origin), safe_direction);
 	t1 := simd.div(simd.sub(util.F32x8(extent), origin), safe_direction);

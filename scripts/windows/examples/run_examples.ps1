@@ -4,6 +4,8 @@ param(
     [string]$OdinExe,
     [ValidateSet("Development", "Release", "All")]
     [string]$Configuration = "Development",
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32",
     [ValidateNotNullOrEmpty()]
     [string]$Package,
     [switch]$SkipBuild
@@ -34,6 +36,7 @@ if (-not $SkipBuild)
     $buildArguments = @{
         OdinExe = $odin
         Configuration = $Configuration
+        Precision = $Precision
     }
     if ($PSBoundParameters.ContainsKey("Package"))
     {
@@ -50,7 +53,7 @@ foreach ($selectedConfiguration in $configurations)
 {
     foreach ($selectedPackage in $packages)
     {
-        $binary = Get-ExampleBinary $selectedPackage $selectedConfiguration
+        $binary = Get-ExampleBinary $selectedPackage $selectedConfiguration $Precision
         if (-not (Test-Path -LiteralPath $binary -PathType Leaf))
         {
             throw "Missing example binary: $binary"

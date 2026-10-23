@@ -9,9 +9,11 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Development", "Release")]
     [string]$Configuration,
+    [ValidateSet("Float32", "Mixed64")]
+    [string]$Precision = "Float32",
     [ValidateSet("Msvc", "ClangCl", "All")]
     [string]$Compiler = "Msvc",
-    [ValidateSet("All", "Queries", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions")]
+    [ValidateSet("All", "Queries", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions", "Large-Worlds")]
     [string]$Scope = "All"
 )
 . (Join-Path $PSScriptRoot "../lib/c_abi_windows_common.ps1")
@@ -22,7 +24,7 @@ if ($Compiler -in @("ClangCl", "All"))
 {
     $clangCl = Resolve-ToolchainExecutable "llvm" "bin/clang-cl.exe" $ClangClExe
 }
-$buildRoot = Get-CAbiBuildRoot $Configuration
+$buildRoot = Get-CAbiBuildRoot $Configuration $Precision
 Assert-CAbiBuildArtifacts $buildRoot $Configuration
 
 $msvc = (Get-Command "cl.exe" -CommandType Application -ErrorAction Stop).Source
@@ -46,6 +48,11 @@ $includeRoot = Join-Path $script:Root "include"
 $runtimeImport = Join-Path $buildRoot "entasis.lib"
 $runtimeStatic = Join-Path $buildRoot "entasis_static.lib"
 $families = @("semantic", "scene_semantic", "dynamics_semantic", "queries_semantic", "custom_shapes_semantic", "custom_tasks_semantic", "custom_constraints_semantic", "extensions_semantic")
+$families += "origin_precision"
+if ($Precision -eq "Mixed64")
+{
+    $families += "global_precision"
+}
 $consumerArguments = @()
 $parityRoot = Join-Path $buildRoot "semantic-parity"
 if ($Scope -eq "Queries")
@@ -74,6 +81,16 @@ if ($Scope -eq "Custom-Shapes")
 {
     $families = @("custom_shapes_semantic")
     $parityRoot = Join-Path $parityRoot "custom-shapes"
+}
+
+if ($Scope -eq "Large-Worlds")
+{
+    $families = @("origin_precision")
+    if ($Precision -eq "Mixed64")
+    {
+        $families += "global_precision"
+    }
+    $parityRoot = Join-Path $parityRoot "large-worlds"
 }
 
 function Assert-EqualFiles([string]$Expected, [string]$Actual, [string]$Owner)
@@ -117,6 +134,10 @@ foreach ($lane in $lanes)
     Remove-Item -LiteralPath $laneRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $laneRoot | Out-Null
     $commonCFlags = @("/nologo", "/std:c11", "/O2", "/W4", "/WX", "/I$includeRoot", "/I$testRoot")
+    if ($Precision -eq "Mixed64")
+    {
+        $commonCFlags += "/DENTASIS_PRECISION_MIXED64=1"
+    }
     if ($laneName -eq "msvc")
     {
         $commonCFlags += "/experimental:c11atomics"
@@ -147,6 +168,7 @@ foreach ($lane in $lanes)
         {
             $directArguments += @("-o:speed", "-no-bounds-check", "-disable-assert", "-source-code-locations:none")
         }
+        $directArguments += "-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())"
         Invoke-Checked $odin $directArguments
         Invoke-CapturedToFile $directBinary $consumerArguments $directOutput
 

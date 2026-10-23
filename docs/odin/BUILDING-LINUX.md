@@ -48,12 +48,6 @@ Build and run every example in both profiles:
 
 Use `--package` to select one example. Add `--skip-build` only when its executable already matches the current source and requested profile. Otherwise the command builds before running
 
-Run the whole-collider and mixed solid/sensor trigger example in both profiles:
-
-```bash
-./scripts/linux/examples/run_examples.sh --configuration all --package triggers
-```
-
 ## Run tests
 
 Tests require the [full repository checkout](https://github.com/Abyssal-Engine/Entasis). The extracted Odin package does not include tests or test scripts. Run the following commands from the full checkout root

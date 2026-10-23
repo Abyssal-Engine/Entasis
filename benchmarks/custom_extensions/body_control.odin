@@ -23,6 +23,43 @@ when support.BENCHMARK_COMPONENTS == "all"
 		Axis_Locks,
 	}
 	BODY_CONTROL_NAMES: [5]string = {"disabled", "enabled_empty", "force_damping", "kinematic_target", "axis_locks"};
+	// independent scalar evaluation retains the engine's binary32 rational
+	// approximations: near identity, one rounded w bit changes the lock response
+	body_control_oracle_angle :: proc "contextless" (qx, qw: f32) -> f32
+	{
+		x: f32 = min(f32(1), abs(qw));
+		numerator: f32 = f32(math.sqrt(f32(1)-x)) *
+			(f32(62.95741097600742)+x*(f32(69.6550664543659)+x*(f32(17.54512349463405)+x*f32(0.6022076120669532))));
+		denominator: f32 = f32(40.07993264439811)+x*(f32(49.81949855726789)+x*(f32(15.703851745284796)+x));
+		angle: f32 = 2*(numerator/denominator);
+		return -angle if qx*qw < 0 else angle;
+	}
+
+	body_control_oracle_orientation :: proc "contextless" (qx, qw, angular, h: f32) -> (f32, f32)
+	{
+		speed: f32 = f32(math.sqrt(angular*angular));
+		if speed <= 1e-15
+		{
+			return qx, qw;
+		}
+		// this isolated lock's half angles remain in the first approximation quadrant
+		y: f32 = speed*(h*f32(0.5));
+		sine_numerator: f32 = (((((f32(0.0040507708755727605)*y+f32(-0.006685815219853882))*y+
+			f32(-0.13993701695343166))*y+f32(0.06174562337697123))*y+f32(1.00000000151466040))*y);
+		sine_denominator: f32 = ((((f32(0.00009018370615921334)*y+f32(0.0001700784176413186))*y+
+			f32(0.003606014457152456))*y+f32(0.02672943625500751))*y+f32(0.061745651499203795))*y+1;
+		cosine_numerator: f32 = ((((f32(-0.003436308368583229)*y+f32(0.021317031205957775))*y+
+			f32(0.06955843390178032))*y-f32(0.4578088075324152))*y+f32(-0.15082367674208508))*y+1;
+		cosine_denominator: f32 = ((((f32(-0.00007650398834677185)*y+f32(0.0007451378206294365))*y+
+			f32(-0.00585321045829395))*y+f32(0.04219116713777847))*y+f32(-0.15082367538305258))*y+1;
+		dx: f32 = angular*((sine_numerator/sine_denominator)/speed);
+		dw: f32 = cosine_numerator/cosine_denominator;
+		next_x: f32 = qw*dx+qx*dw;
+		next_w: f32 = qw*dw-qx*dx;
+		inverse_length: f32 = 1/f32(math.sqrt(next_x*next_x+next_w*next_w));
+		return next_x*inverse_length, next_w*inverse_length;
+	}
+
 	Body_Control_Owner :: struct
 	{
 		world: e.World,
@@ -47,7 +84,7 @@ when support.BENCHMARK_COMPONENTS == "all"
 		description.capacity.bodies = BODY_COUNT;
 		description.capacity.constraints = BODY_COUNT;
 		description.capacity.initial_constraints_per_type_batch = BODY_COUNT;
-		description.solve = {velocity_iterations=4, substeps=1, fallback_batch_threshold=64};
+		description.solve = {velocity_iterations=1, substeps=4, fallback_batch_threshold=64};
 		owner.description = description;
 		if failure: e.Status = e.world_init(&owner.world, description); failure != .Ok
 		{
@@ -156,27 +193,26 @@ when support.BENCHMARK_COMPONENTS == "all"
 		if mode == .Axis_Locks
 		{
 			lock: e.Body_Axis_Lock = e.body_axis_lock_default(e.pose());
+			h: f64 = f64(DT/4);
 			omega: f64 = f64(lock.spring_settings.angular_frequency);
-			omega_dt: f64 = omega*f64(DT);
+			omega_dt: f64 = omega*h;
 			damping: f64 = f64(lock.spring_settings.twice_damping_ratio);
 			softness: f64 = 1/(1+omega_dt*(omega_dt+damping));
-			position_scale: f64 = min(omega/(omega_dt+damping), 1/f64(DT));
-			// isolated spring row: v' = s*(v+a*dt) - (1-s)*p*error.
-			// Warmstart cancels algebraically. the identical spheres have equal
-			// locked coordinates. use scalar math, not the engine's SIMD helpers.
-			// stored unit quaternions are rounded f32 values. clamp w for acos
-			// without renormalizing the orientation consumed by the solver
-			angle: f64 = 2*math.acos(min(f64(1), abs(f64(axis_before.pose.orientation.w))));
-			if axis_before.pose.orientation.x*axis_before.pose.orientation.w < 0
+			position_scale: f64 = min(omega/(omega_dt+damping), 1/h);
+			position_y: f64 = f64(axis_before.pose.position.y);
+			qx: f32 = axis_before.pose.orientation.x;
+			qw: f32 = axis_before.pose.orientation.w;
+			expected_axis_linear = f64(axis_before.velocity.linear.y);
+			expected_axis_angular = f64(axis_before.velocity.angular.x);
+			for _ in 0..<4
 			{
-				angle = -angle;
+				angle: f64 = f64(body_control_oracle_angle(qx, qw));
+				// isolated rows cancel warmstart algebraically before each substep solve
+				expected_axis_linear = f64(f32(softness*(expected_axis_linear+3*h) - (1-softness)*position_scale*position_y));
+				expected_axis_angular = f64(f32(softness*(expected_axis_angular+10*h) - (1-softness)*position_scale*angle));
+				position_y = f64(f32(position_y+f64(f32(f32(expected_axis_linear)*f32(h)))));
+				qx, qw = body_control_oracle_orientation(qx, qw, f32(expected_axis_angular), f32(h));
 			}
-			expected_axis_linear = softness*(f64(axis_before.velocity.linear.y)+3*f64(DT)) -
-				(1-softness)*position_scale*f64(axis_before.pose.position.y);
-			// a unit-mass sphere of radius 0.5 has inverse inertia 10
-			expected_axis_angular = softness*(f64(axis_before.velocity.angular.x)+10*f64(DT)) -
-				(1-softness)*position_scale*angle;
-			// allow f32 row/inertia arithmetic roundoff, scaled by the input
 			axis_response_tolerance = 64*math.F32_EPSILON*max(f64(1), abs(f64(axis_before.velocity.angular.x)+10*f64(DT)));
 		}
 		for body, index in owner.bodies

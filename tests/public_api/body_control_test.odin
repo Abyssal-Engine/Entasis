@@ -6,6 +6,7 @@ import "core:testing"
 import e "entasis:entasis"
 import p "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
+import support "../../benchmarks/benchmark_support"
 
 Body_Control_Target_Cancellation :: enum
 {
@@ -534,9 +535,9 @@ body_control_constrained_fallback_restitution_responsibilities :: proc (t: ^test
 				}
 				defer e.world_destroy(&world);
 				type_id: e.Constraint_Type_ID;
-				valid: bool;
-				type_id, valid = register_velocity_target_constraint(t, &world);
-				if !valid
+				registration_status: e.Status;
+				type_id, registration_status = register_velocity_target_constraint(t, &world);
+				if registration_status != .Ok
 				{
 					return;
 				}
@@ -667,14 +668,7 @@ body_control_test_prepare :: proc "contextless" (raw: rawptr, dt: f32) -> p.Phys
 	return .Ok if dt>0 else .Invalid_Argument;
 }
 
-body_control_test_velocity :: proc "contextless" (
-	raw: rawptr, indices: util.I32x8, position: util.Vector3_Wide, orientation: util.Quaternion_Wide,
-	inertia: p.Body_Inertia_Wide, mask: util.I32x8, worker: int, dt: util.F32x8, velocity: ^p.Body_Velocity_Wide,
-)
-{
-	_, _, _, _, _, _, _, _ = raw, indices, position, orientation, inertia, mask, worker, dt;
-	velocity.linear = util.vector3_wide_scale(velocity.linear, util.F32x8(0.5));
-}
+body_control_test_velocity :: support.linear_velocity_half;
 
 body_control_test_dispose :: proc "contextless" (raw: rawptr)
 {

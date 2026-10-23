@@ -167,6 +167,8 @@ Size `24`, alignment `8`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_active_body_view`
 
 acquires zero-copy active-body structure-of-arrays columns
@@ -182,8 +184,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_active_body_view(entasis_world
 | `world`      | `entasis_world_t *`            | target world                                                                 |
 | `out_view`   | `entasis_active_body_view_t *` | receives the borrowed active body view                                       |
 | `diagnostic` | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_body_view_valid`
 
@@ -235,8 +235,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_view(entasis_world_t * 
 | `world`      | `entasis_world_t *`       | target world                                                                 |
 | `out_view`   | `entasis_static_view_t *` | receives the borrowed static view                                            |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_static_view_valid`
 
@@ -299,8 +297,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_profile_enabled(entasis_
 | `out_enabled` | `entasis_bool_t *`       | receives ENTASIS_TRUE when profiling is enabled                              |
 | `diagnostic`  | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_world_profile_snapshot`
 
 copies the most recently completed profile snapshot
@@ -317,8 +313,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_profile_snapshot(entasis
 | `out_snapshot` | `entasis_profile_snapshot_t *` | receives the most recently completed profile snapshot                        |
 | `diagnostic`   | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_world_solver_stats`
 
 copies allocation-free active solver layout counts
@@ -334,5 +328,3 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_solver_stats(entasis_wor
 | `world`      | `entasis_world_t *`              | target world                                                                 |
 | `out_stats`  | `entasis_world_solver_stats_t *` | receives the world solver stats                                              |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status

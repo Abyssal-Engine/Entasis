@@ -916,8 +916,21 @@ collision_query_batch_with_context :: proc "contextless" (
 		return .Invalid_Argument;
 	}
 	overall: Status = Status.Ok;
-	for query, index in queries
+	index: int;
+	for index < len(queries)
 	{
+		consumed: int;
+		if physics.typed_index_type(queries[index].shape_a) == i32(SHAPE_TYPE_BOX) &&
+			physics.typed_index_type(queries[index].shape_b) == i32(SHAPE_TYPE_BOX)
+		{
+			consumed = collision_query_box_run(data.world, queries[index:], results[index:]);
+		}
+		if consumed > 0
+		{
+			index += consumed;
+			continue;
+		}
+		query: Collision_Query = queries[index];
 		manifold: Manifold_Result;
 		status: Status;
 		manifold, status = query_context_collision_execute(data, query.shape_a, query.pose_a, query.shape_b, query.pose_b, query.speculative_margin);
@@ -929,6 +942,7 @@ collision_query_batch_with_context :: proc "contextless" (
 		{
 			overall = status;
 		}
+		index += 1;
 	}
 	return overall;
 }

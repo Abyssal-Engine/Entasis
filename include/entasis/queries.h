@@ -162,6 +162,74 @@ struct entasis_distance_query_capacity_t {
     int32_t edges;
 };
 
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * tagged input record for an f64 spatial batch
+ *
+ * construct with the matching entasis_query_*_global_* helper. callback state referenced by its copied filter must remain valid through execution
+ */
+struct entasis_global_query_t {
+    /* construct with an entasis_query_*_global helper */
+    ENTASIS_ALIGNAS(8) entasis_global_query_kind_t kind;
+    /* reserved storage */
+    uint8_t _reserved0[7];
+    /* constructor-owned payload, do not interpret inactive data */
+    uint8_t payload[136];
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * per-item spatial query status, hit state and output prefix
+ *
+ * a failed closest item has no valid payload. all-hit prefixes may remain valid on failure. result indices match input indices
+ */
+struct entasis_global_query_result_t {
+    /* input operation tag */
+    ENTASIS_ALIGNAS(8) entasis_global_query_kind_t kind;
+    /* operation status */
+    entasis_status_t status;
+    /* whether the operation found a hit */
+    entasis_bool_t hit;
+    /* reserved storage */
+    uint8_t _reserved0;
+    /* hit count for any/closest, or the valid output prefix for all-hit queries, including partial prefixes on failure */
+    int32_t count;
+    /* successful closest ray or sweep payload only */
+    uint8_t payload[72];
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * caller-owned spatial-batch hit arrays and traversal stack
+ *
+ * all capacities count elements. nonzero capacities require non-NULL pointers. arrays must be disjoint from inputs, results and traversal storage. query output ranges index their matching hit arrays, which never grow during execution
+ */
+struct entasis_global_query_scratch_t {
+    /* caller-owned disjoint output span */
+    entasis_global_ray_hit_t * ray_hits;
+    /* output span capacity */
+    uint64_t ray_capacity;
+    /* caller-owned disjoint output span */
+    entasis_global_sweep_hit_t * sweep_hits;
+    /* output span capacity */
+    uint64_t sweep_capacity;
+    /* caller-owned disjoint output span */
+    entasis_overlap_hit_t * overlap_hits;
+    /* output span capacity */
+    uint64_t overlap_capacity;
+    /* caller-owned disjoint output span */
+    entasis_volume_hit_t * volume_hits;
+    /* output span capacity */
+    uint64_t volume_capacity;
+    /* caller-owned reusable traversal stack */
+    int32_t * traversal_stack;
+    /* traversal entry capacity */
+    uint64_t stack_capacity;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
 /**
  * one world-space ray hit
  */
@@ -242,6 +310,98 @@ struct entasis_shape_correction_result_t {
     int32_t iterations;
 };
 
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * closed query segment with f64 endpoints in the current simulation frame
+ */
+struct entasis_world_precision_segment_t {
+    /* closed segment start in the current frame */
+    entasis_global_position_t start;
+    /* closed segment end in the current frame */
+    entasis_global_position_t end;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * inclusive axis-aligned f64 bounds in the current simulation frame
+ *
+ * endpoints must be finite and min must not exceed max on any axis
+ */
+struct entasis_global_bounds_t {
+    /* inclusive minimum endpoint */
+    entasis_global_position_t min;
+    /* inclusive maximum endpoint */
+    entasis_global_position_t max;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * ray hit with a current-frame f64 position and f32 normal
+ */
+struct entasis_global_ray_hit_t {
+    /* fraction in [0, 1] along the original closed segment */
+    double t;
+    /* hit position in the current simulation frame */
+    entasis_global_position_t location;
+    /* world-oriented f32 surface normal */
+    entasis_vector3_t normal;
+    /* hit identity */
+    entasis_collidable_reference_t collidable;
+    /* stored child identity, or -1 */
+    int32_t child_index;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * sweep impact with a current-frame f64 position and f32 times and normal
+ */
+struct entasis_global_sweep_result_t {
+    /* current state */
+    entasis_sweep_hit_state_t state;
+    /* reserved for ABI compatibility */
+    uint8_t reserved[3];
+    /* lower impact-time bound in the original sweep time units */
+    float t0;
+    /* upper impact-time bound in the original sweep time units */
+    float t1;
+    /* impact position in the current simulation frame */
+    entasis_global_position_t location;
+    /* world-oriented f32 impact normal */
+    entasis_vector3_t normal;
+    /* selected child index on swept shape A */
+    int32_t child_a;
+    /* selected child index on target shape B */
+    int32_t child_b;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * current-frame f64 witnesses with local f32 distance, depth and normal
+ *
+ * distance and depth come from the local geometry solve. do not reconstruct them from rounded absolute witness coordinates
+ */
+struct entasis_global_distance_geometry_t {
+    /* only valid when the operation returns OK */
+    entasis_distance_query_state_t state;
+    /* witness on A in the current simulation frame */
+    entasis_global_position_t point_a;
+    /* witness on B in the current simulation frame */
+    entasis_global_position_t point_b;
+    /* B-to-A normal. zero when not uniquely determined */
+    entasis_vector3_t normal;
+    /* nonnegative unbiased witness distance */
+    float distance;
+    /* positive only for penetrating convex geometry. translate A by normal times depth */
+    float depth;
+    /* numerical iterations used by the selected leaf solve */
+    int32_t iterations;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
 /**
  * one sweep hit and its collidable identity
  */
@@ -300,6 +460,56 @@ struct entasis_distance_query_t {
     entasis_distance_query_settings_t settings;
 };
 
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * first sweep impact against one permitted collidable
+ */
+struct entasis_global_sweep_hit_t {
+    /* hit collidable identity */
+    entasis_collidable_reference_t collidable;
+    /* impact result */
+    entasis_global_sweep_result_t sweep;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * f64 distance witnesses and selected shape-child identities
+ */
+struct entasis_global_shape_distance_result_t {
+    /* selected geometric result */
+    entasis_global_distance_geometry_t geometry;
+    /* stored nearest leaf index, or -1 for a convex root */
+    int32_t child_a;
+    /* stored nearest leaf index, or -1 for a convex root */
+    int32_t child_b;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * one f64 closest-point, distance, penetration or depenetration input
+ *
+ * closest-point consumes point and shape_b/pose_b. other kinds consume both shapes and poses. shapes belong to the execution context's world
+ */
+struct entasis_global_distance_query_t {
+    /* selects the input fields consumed by this query */
+    entasis_distance_query_kind_t kind;
+    /* registered shape handle in the target world */
+    entasis_shape_handle_t shape_a;
+    /* registered shape handle in the target world */
+    entasis_shape_handle_t shape_b;
+    /* pose of A in the current simulation frame, ignored for closest-point */
+    entasis_global_pose_t pose_a;
+    /* pose of B in the current simulation frame */
+    entasis_global_pose_t pose_b;
+    /* closest-point input in the current simulation frame, ignored by other operations */
+    entasis_global_position_t point;
+    /* initialize explicitly with the settings default constructor */
+    entasis_distance_query_settings_t settings;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
 /**
  * per-item result. every admitted batch item is attempted, including after an error
  */
@@ -311,6 +521,22 @@ struct entasis_distance_query_result_t {
     /* depenetration result. other kinds leave this zero */
     entasis_shape_correction_result_t correction;
 };
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * per-item distance status, f64 witnesses or local correction
+ *
+ * shape is populated for successful closest-point, distance and penetration items. correction is populated only for successful depenetration. failed items leave both unresolved and zero
+ */
+struct entasis_global_distance_query_result_t {
+    /* per-item status. failed items have unresolved zero output */
+    entasis_status_t status;
+    /* closest, distance or penetration result */
+    entasis_global_shape_distance_result_t shape;
+    /* depenetration result. other kinds leave this zero */
+    entasis_shape_correction_result_t correction;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 /**
  * one overlap hit and generated contact manifold
@@ -429,7 +655,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_ray_cast_closest(entasis_world
 /**
  * writes ray hits in traversal order
  *
- * ENTASIS_STATUS_CAPACITY_MISSING reports overflow and out_written identifies the written prefix. results preserve low-level traversal order. this order is not canonical and may change with world topology or implementation details
+ * out_written identifies the written prefix. ENTASIS_STATUS_CAPACITY_MISSING can report hit-output exhaustion, traversal scratch exhaustion or a callback failure. out_required receives out_written + 1 on that status when below the native signed count limit, and out_written otherwise. only hit-output exhaustion proves another hit exists. results preserve low-level traversal order. this order is not canonical and may change with world topology or implementation details
  *
  * @param world target world
  * @param ray ray to execute
@@ -730,7 +956,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_destroy(entasis_
 /**
  * executes ray cast any with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param ray ray to execute
@@ -745,7 +971,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_any(ent
 /**
  * executes ray cast closest with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param ray ray to execute
@@ -760,7 +986,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_closest
 /**
  * executes ray cast all with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param ray ray to execute
@@ -778,7 +1004,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_all(ent
 /**
  * executes sweep any with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param shape registered shape handle
@@ -797,7 +1023,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_any(entasi
 /**
  * executes sweep closest with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param shape registered shape handle
@@ -816,7 +1042,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_closest(en
 /**
  * executes sweep all with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param shape registered shape handle
@@ -838,7 +1064,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_all(entasi
 /**
  * executes overlap all with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param shape registered shape handle
@@ -857,7 +1083,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_overlap_all(enta
 /**
  * executes volume all with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param bounds axis-aligned query bounds
@@ -875,7 +1101,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_volume_all(entas
 /**
  * executes collision query with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param shape_a registered shape handle for pair member A
@@ -893,7 +1119,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_collision_query(
 /**
  * executes collision query batch with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param queries input query array
@@ -909,7 +1135,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_collision_query_
 /**
  * executes query batch with caller-exclusive private query scratch
  *
- * uses independent collision/traversal scratch, preserving ordinary result and callback semantics. supported during a read phase with one context and independent outputs per caller, or against an idle world. rejects same-context callback reentry. no cross-call callback ordering is promised. the context and callback-local data must not outlive their owner. queries may grow only their private pool when reserved capacity is insufficient
+ * requires an idle world or read phase, one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected, and callback order across calls is unspecified. destroy the context before its world and do not retain callback-local data. insufficient reservation may grow only the context's private pool
  *
  * @param query_context caller-exclusive context handle
  * @param queries input query array
@@ -1222,6 +1448,480 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_distance_query_b
  * @return returns OK or the explicit validation, capacity, route or convergence status
  */
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_overlap_any(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_rigid_pose_t pose, const entasis_query_filter_t * filter, entasis_overlap_state_t * out_state, entasis_diagnostic_t * diagnostic);
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * tests whether a closed f64 segment hits a permitted collidable
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. segment endpoints and hit positions use the current simulation frame. hit t is a fraction of the closed segment. custom ray callbacks receive a target-centered f32 frame. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param ray closed segment with finite f64 endpoints in the current simulation frame
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param out_hit required boolean output, initialized to false and published only on success
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK with a hit or miss, or the validation, capacity, route or numerical failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_global_any(entasis_query_context_t * query_context, entasis_world_precision_segment_t ray, const entasis_query_filter_t * filter, entasis_bool_t * out_hit, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * finds the nearest permitted hit along a closed f64 segment
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. segment endpoints and hit positions use the current simulation frame. hit t is a fraction of the closed segment. custom ray callbacks receive a target-centered f32 frame. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param ray closed segment with finite f64 endpoints in the current simulation frame
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param out_hit required closest-hit output, initialized to zero with child_index -1 and published only on success
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a hit, ENTASIS_STATUS_NOT_FOUND for a miss, or the validation, capacity, route or numerical failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_global_closest(entasis_query_context_t * query_context, entasis_world_precision_segment_t ray, const entasis_query_filter_t * filter, entasis_global_ray_hit_t * out_hit, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * collects permitted hits along a closed f64 segment
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. segment endpoints and hit positions use the current simulation frame. hit t is a fraction of the closed segment. custom ray callbacks receive a target-centered f32 frame. output order is unspecified. failures may leave a valid written prefix, with the remaining output unchanged. out_required is a capacity hint: it receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise. hit-buffer exhaustion proves another hit exists, but traversal or context scratch failure can occur before any hit is found. on capacity failure, the hint alone identifies neither the exhausted storage nor the total hit count. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param ray closed segment with finite f64 endpoints in the current simulation frame
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param hits caller-owned space for capacity hits, NULL only when capacity is zero
+ * @param capacity number of hit records available
+ * @param out_written required valid-prefix count, initialized to zero before validation
+ * @param out_required required capacity-hint output, initialized to zero before validation. receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a completed traversal, including no hits, or the validation, capacity, route or numerical failure. ENTASIS_STATUS_CAPACITY_MISSING can indicate hit-output, traversal or context scratch storage, so out_required alone does not identify the exhausted storage
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_ray_cast_global_all(entasis_query_context_t * query_context, entasis_world_precision_segment_t ray, const entasis_query_filter_t * filter, entasis_global_ray_hit_t * hits, uint64_t capacity, uint64_t * out_written, uint64_t * out_required, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * tests whether a moving shape hits a permitted stationary target
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. pose and hit positions use the current simulation frame. velocities, normals and impact times retain the f32 sweep contract. long rotating sweeps remain subject to the local-float numerical limits. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape registered query shape handle in the context world
+ * @param pose current-frame f64 position and valid orientation
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param settings optional convergence settings, NULL or zero fields select the ordinary sweep defaults
+ * @param out_hit required boolean output, initialized to false and published only on success
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK with a hit or miss, or the validation, capacity, route or numerical failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_global_any(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings, entasis_bool_t * out_hit, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * finds the earliest permitted sweep impact from an f64 starting pose
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. pose and hit positions use the current simulation frame. velocities, normals and impact times retain the f32 sweep contract. long rotating sweeps remain subject to the local-float numerical limits. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape registered query shape handle in the context world
+ * @param pose current-frame f64 position and valid orientation
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param settings optional convergence settings, NULL or zero fields select the ordinary sweep defaults
+ * @param out_hit required closest-hit output, initialized to zero and published only on success
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a hit, ENTASIS_STATUS_NOT_FOUND for a miss, or the validation, capacity, route or numerical failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_global_closest(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings, entasis_global_sweep_hit_t * out_hit, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * collects the first sweep impact against each permitted collidable
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. pose and hit positions use the current simulation frame. velocities, normals and impact times retain the f32 sweep contract. long rotating sweeps remain subject to the local-float numerical limits. output order is unspecified. failures may leave a valid written prefix, with the remaining output unchanged. out_required is a capacity hint: it receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise. hit-buffer exhaustion proves another hit exists, but traversal or context scratch failure can occur before any hit is found. on capacity failure, the hint alone identifies neither the exhausted storage nor the total hit count. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape registered query shape handle in the context world
+ * @param pose current-frame f64 position and valid orientation
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param settings optional convergence settings, NULL or zero fields select the ordinary sweep defaults
+ * @param hits caller-owned space for capacity hits, NULL only when capacity is zero
+ * @param capacity number of hit records available
+ * @param out_written required valid-prefix count, initialized to zero before validation
+ * @param out_required required capacity-hint output, initialized to zero before validation. receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a completed traversal, including no hits, or the validation, capacity, route or numerical failure. ENTASIS_STATUS_CAPACITY_MISSING can indicate hit-output, traversal or context scratch storage, so out_required alone does not identify the exhausted storage
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_sweep_global_all(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings, entasis_global_sweep_hit_t * hits, uint64_t capacity, uint64_t * out_written, uint64_t * out_required, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * tests a shape at an f64 pose for touching or penetration
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. pose uses the current simulation frame. manifold offsets and collision callbacks use a query-centered f32 frame. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape registered query shape handle in the context world
+ * @param pose current-frame f64 position and valid orientation
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param out_state required overlap-state output, initialized to separated. meaningful only on ENTASIS_STATUS_OK
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK for touching, penetrating or separated output, or the validation, capacity, route or numerical failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_overlap_global_any(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_global_pose_t pose, const entasis_query_filter_t * filter, entasis_overlap_state_t * out_state, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * collects overlap manifolds for a shape at an f64 pose
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. pose uses the current simulation frame. manifold offsets and collision callbacks use a query-centered f32 frame. output order is unspecified. failures may leave a valid written prefix, with the remaining output unchanged. out_required is a capacity hint: it receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise. hit-buffer exhaustion proves another hit exists, but traversal or context scratch failure can occur before any hit is found. on capacity failure, the hint alone identifies neither the exhausted storage nor the total hit count. numerical or unsupported-route failures are distinct from a miss
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape registered query shape handle in the context world
+ * @param pose current-frame f64 position and valid orientation
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param hits caller-owned space for capacity hits, NULL only when capacity is zero
+ * @param capacity number of hit records available
+ * @param out_written required valid-prefix count, initialized to zero before validation
+ * @param out_required required capacity-hint output, initialized to zero before validation. receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a completed traversal, including no hits, or the validation, capacity, route or numerical failure. ENTASIS_STATUS_CAPACITY_MISSING can indicate hit-output, traversal or context scratch storage, so out_required alone does not identify the exhausted storage
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_overlap_global_all(entasis_query_context_t * query_context, entasis_shape_handle_t shape, entasis_global_pose_t pose, const entasis_query_filter_t * filter, entasis_overlap_hit_t * hits, uint64_t capacity, uint64_t * out_written, uint64_t * out_required, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * collects broad-phase candidates intersecting f64 axis-aligned bounds
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. the caller-owned i32 traversal stack never grows during queries. structural mutations may increase its required capacity. bounds use the current simulation frame. candidates include motion/speculative broad-phase expansion and do not prove exact shape intersection. output order is unspecified. failures may leave a valid written prefix, with the remaining output unchanged. out_required is a capacity hint: it receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise. hit-buffer exhaustion proves another hit exists, but insufficient traversal storage fails before any hit is found. on capacity failure, the hint alone identifies neither the exhausted storage nor the total hit count
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param bounds finite ordered f64 bounds in the current simulation frame
+ * @param filter optional candidate filter, NULL selects the default filter. callback state is borrowed until return
+ * @param hits caller-owned space for capacity hits, NULL only when capacity is zero
+ * @param capacity number of hit records available
+ * @param out_written required valid-prefix count, initialized to zero before validation
+ * @param out_required required capacity-hint output, initialized to zero before validation. receives out_written + 1 for ENTASIS_STATUS_CAPACITY_MISSING when out_written is below the native signed count limit, and out_written otherwise
+ * @param traversal_stack caller-owned disjoint i32 traversal storage, required for nonzero stack_capacity
+ * @param stack_capacity number of i32 entries available for current tree traversal
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK for a completed traversal, including no hits, or the validation, capacity, route or numerical failure. ENTASIS_STATUS_CAPACITY_MISSING can indicate hit-output or traversal storage, so out_required alone does not identify the exhausted storage
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_volume_global_all(entasis_query_context_t * query_context, entasis_global_bounds_t bounds, const entasis_query_filter_t * filter, entasis_volume_hit_t * hits, uint64_t capacity, uint64_t * out_written, uint64_t * out_required, int32_t * traversal_stack, uint64_t stack_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * finds the nearest point on a shape from an f64 query point
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. subtracts positions in f64 before local f32 geometry and reconstructs successful witnesses in the current simulation frame. output is cleared before context admission and published only on success. uses no EPA scratch or per-query allocation. meshes are surfaces and compounds are unions
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param point finite query point in the current simulation frame
+ * @param shape registered target shape in the context world
+ * @param pose target pose in the current simulation frame
+ * @param settings optional distance-query settings, NULL selects the default settings
+ * @param out_result required caller-owned result, cleared before context admission and published only on success
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK for a resolved result or the validation, capacity, route or convergence failure, never a miss for numerical exhaustion
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_shape_closest_point_global(entasis_query_context_t * query_context, entasis_global_position_t point, entasis_shape_handle_t shape, entasis_global_pose_t pose, const entasis_distance_query_settings_t * settings, entasis_global_shape_distance_result_t * out_result, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * finds the nearest pair of witnesses for two shapes at f64 poses
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. subtracts positions in f64 before local f32 geometry and reconstructs successful witnesses in the current simulation frame. output is cleared before context admission and published only on success. uses no EPA scratch or per-query allocation. meshes are surfaces and compounds are unions
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape_a registered shape A in the context world
+ * @param pose_a pose of A in the current simulation frame
+ * @param shape_b registered shape B in the context world
+ * @param pose_b pose of B in the current simulation frame
+ * @param settings optional distance-query settings, NULL selects the default settings
+ * @param out_result required caller-owned result, cleared before context admission and published only on success
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK for a resolved result or the validation, capacity, route or convergence failure, never a miss for numerical exhaustion
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_shape_distance_global(entasis_query_context_t * query_context, entasis_shape_handle_t shape_a, entasis_global_pose_t pose_a, entasis_shape_handle_t shape_b, entasis_global_pose_t pose_b, const entasis_distance_query_settings_t * settings, entasis_global_shape_distance_result_t * out_result, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * computes convex penetration witnesses and depth at f64 poses
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. subtracts positions in f64 before local f32 geometry and reconstructs successful witnesses in the current simulation frame. output is cleared before context admission and published only on success. reserve EPA storage with entasis_query_context_distance_query_reserve before recurring work. no implicit reserve or per-query allocation occurs. accepts supported convex routes, with explicit unsupported-route and convergence failures
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape_a registered shape A in the context world
+ * @param pose_a pose of A in the current simulation frame
+ * @param shape_b registered shape B in the context world
+ * @param pose_b pose of B in the current simulation frame
+ * @param settings optional distance-query settings, NULL selects the default settings
+ * @param out_result required caller-owned result, cleared before context admission and published only on success
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK for a resolved result or the validation, capacity, route or convergence failure, never a miss for numerical exhaustion
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_shape_penetration_global(entasis_query_context_t * query_context, entasis_shape_handle_t shape_a, entasis_global_pose_t pose_a, entasis_shape_handle_t shape_b, entasis_global_pose_t pose_b, const entasis_distance_query_settings_t * settings, entasis_global_shape_distance_result_t * out_result, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * computes a local translation that separates shape A from shape B
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. subtracts positions in f64 before local f32 geometry. output is cleared before context admission and published only on success. reserve EPA storage with entasis_query_context_distance_query_reserve before recurring work. no implicit reserve or per-query allocation occurs. apply the world-oriented f32 correction to A's authoritative f64 position. compound and mesh routes requery after each correction and do not guarantee a globally minimal translation
+ *
+ * @param query_context caller-exclusive initialized query context
+ * @param shape_a registered shape A in the context world
+ * @param pose_a pose of A in the current simulation frame
+ * @param shape_b registered shape B in the context world
+ * @param pose_b pose of B in the current simulation frame
+ * @param settings optional distance-query settings, NULL selects the default settings
+ * @param out_result required caller-owned result, cleared before context admission and published only on success
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK for a resolved result or the validation, capacity, route or convergence failure, never a miss for numerical exhaustion
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_shape_depenetrate_global(entasis_query_context_t * query_context, entasis_shape_handle_t shape_a, entasis_global_pose_t pose_a, entasis_shape_handle_t shape_b, entasis_global_pose_t pose_b, const entasis_distance_query_settings_t * settings, entasis_shape_correction_result_t * out_result, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies a collidable's registered shape handle and current f64 pose
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. reads sleeping bodies without waking them and does not allocate. both outputs are cleared after their pointers are validated. the returned shape handle is borrowed from the world and remains subject to its removal lifetime. a shapeless body can return an absent shape
+ *
+ * @param query_context caller-exclusive private context
+ * @param collidable live body or static reference in the context world
+ * @param out_shape required borrowed shape-handle output, cleared before context admission
+ * @param out_pose required current-frame pose output, cleared before context admission
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_collidable_shape_global_pose(entasis_query_context_t * query_context, entasis_collidable_reference_t collidable, entasis_shape_handle_t * out_shape, entasis_global_pose_t * out_pose, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an any-hit ray query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param segment closed segment with f64 endpoints in the current simulation frame
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_ray_global_any(entasis_world_precision_segment_t segment, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs a closest-hit ray query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param segment closed segment with f64 endpoints in the current simulation frame
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_ray_global_closest(entasis_world_precision_segment_t segment, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an all-hit ray query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param segment closed segment with f64 endpoints in the current simulation frame
+ * @param output subrange in the matching caller-owned scratch hit array. keep ranges disjoint when results must coexist
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_ray_global_all(entasis_world_precision_segment_t segment, entasis_query_output_t output, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an any-hit sweep query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies filter/settings values, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param shape query shape registered in the execution context's world
+ * @param pose query pose in the current simulation frame
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ * @param settings optional settings copied into the record, NULL or zero fields select ordinary sweep defaults
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_sweep_global_any(entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs a closest-hit sweep query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies filter/settings values, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param shape query shape registered in the execution context's world
+ * @param pose query pose in the current simulation frame
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ * @param settings optional settings copied into the record, NULL or zero fields select ordinary sweep defaults
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_sweep_global_closest(entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an all-hit sweep query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies filter/settings values, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param shape query shape registered in the execution context's world
+ * @param pose query pose in the current simulation frame
+ * @param velocity world-oriented linear and angular velocity
+ * @param maximum_t nonnegative finite sweep duration in the velocity time units
+ * @param output subrange in the matching caller-owned scratch hit array. keep ranges disjoint when results must coexist
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ * @param settings optional settings copied into the record, NULL or zero fields select ordinary sweep defaults
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_sweep_global_all(entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_body_velocity_t velocity, float maximum_t, entasis_query_output_t output, const entasis_query_filter_t * filter, const entasis_sweep_settings_t * settings);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an any-hit overlap query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param shape query shape registered in the execution context's world
+ * @param pose query pose in the current simulation frame
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_overlap_global_any(entasis_shape_handle_t shape, entasis_global_pose_t pose, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an all-hit overlap query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param shape query shape registered in the execution context's world
+ * @param pose query pose in the current simulation frame
+ * @param output subrange in the matching caller-owned scratch hit array. keep ranges disjoint when results must coexist
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_overlap_global_all(entasis_shape_handle_t shape, entasis_global_pose_t pose, entasis_query_output_t output, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * constructs an all-hit volume query for entasis_query_context_query_batch_global
+ *
+ * does not validate inputs, execute a query or allocate. copies the filter value, while callback user state remains borrowed until execution completes. all positions use the current simulation frame
+ *
+ * @param bounds finite ordered f64 bounds in the current simulation frame
+ * @param output subrange in the matching caller-owned scratch hit array. keep ranges disjoint when results must coexist
+ * @param filter optional filter copied into the record, NULL selects the default filter
+ *
+ * @return returns the tagged input record
+ */
+ENTASIS_API entasis_global_query_t ENTASIS_CALL entasis_query_volume_global_all(entasis_global_bounds_t bounds, entasis_query_output_t output, const entasis_query_filter_t * filter);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * executes spatial queries in input order and records one status per item
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. counts, result capacity and scratch pointers are checked before output writes. caller-owned input, result, hit and traversal spans must be disjoint. every admitted item is attempted and the return value is the first failure, including a closest-query miss. per-item all-hit counts retain valid prefixes on failure, and closest payloads are valid only on success. caller storage never grows, though private context storage may grow when insufficiently reserved
+ *
+ * @param query_context caller-exclusive context handle
+ * @param queries query_count input records, required when query_count is nonzero
+ * @param query_count number of input queries
+ * @param results caller-owned space for result_capacity records, required when query_count is nonzero
+ * @param result_capacity must cover query_count results
+ * @param scratch required caller-owned hit arrays and reusable traversal storage
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all items succeed or the first non-OK item status, after attempting every admitted item
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_query_batch_global(entasis_query_context_t * query_context, const entasis_global_query_t * queries, uint64_t query_count, entasis_global_query_result_t * results, uint64_t result_capacity, entasis_global_query_scratch_t * scratch, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * executes closest-point, distance, penetration or depenetration items in input order
+ *
+ * requires an idle world or read phase with one exclusive context and disjoint outputs per caller. keep the world, shapes and registrations immutable. same-context callback reentry is rejected. count, alignment, range and nonaliasing are checked before any output writes. every admitted item is attempted. failed items publish their status with unresolved zero geometry and correction. reserve EPA storage with entasis_query_context_distance_query_reserve before penetration or depenetration work. no implicit reserve, per-query allocation or temporary result array occurs
+ *
+ * @param query_context caller-exclusive private context
+ * @param queries count independent input records with explicit settings, NULL only for zero count
+ * @param count input item count
+ * @param results disjoint caller-owned result span, NULL only for zero count
+ * @param result_capacity must cover count results. extra entries are unchanged
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK when all items succeed or the first failing item status, after attempting every admitted item
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_query_context_distance_query_batch_global(entasis_query_context_t * query_context, const entasis_global_distance_query_t * queries, uint64_t count, entasis_global_distance_query_result_t * results, uint64_t result_capacity, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 #ifdef __cplusplus
 } /* extern "C" */

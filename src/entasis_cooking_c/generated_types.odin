@@ -54,6 +54,10 @@ Entasis_Collider_Part_Pending :: u8;
 Entasis_Joint_Break_Metrics :: u32;
 Entasis_Joint_Reaction_State :: u32;
 Entasis_Joint_Break_Pending :: u8;
+Entasis_Global_Constraint_Target_Kind :: u8;
+Entasis_Global_Target_Presence :: u8;
+Entasis_Global_Query_Kind :: u8;
+Entasis_Constraint_Position_Space :: u8;
 
 ENTASIS_MAX_COLLISION_LAYER_COUNT :: u32(64);
 ENTASIS_LAYER_MASK_NONE :: Entasis_Layer_Mask(0);
@@ -260,6 +264,13 @@ Entasis_Joint_Reaction_Provider_Proc :: #type proc "c" (
 	input: ^Entasis_Joint_Reaction_Provider_Input,
 	output: [^]Entasis_Joint_Impulse_Wrench,
 ) -> Entasis_Status;
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Velocity_Integrate_Proc :: #type proc "c" (
+	user_context: rawptr,
+	view: ^Entasis_Global_Pose_Integration_View,
+);
+}
 
 Entasis_String_View :: struct
 {
@@ -2052,6 +2063,284 @@ Entasis_Joint_Break_Update_Result :: struct
 	reserved: [3]u8,
 }
 
+Entasis_Global_Position :: struct
+{
+	x: f64,
+	y: f64,
+	z: f64,
+}
+
+Entasis_Origin_Frame :: struct
+{
+	origin: Entasis_Global_Position,
+}
+
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Pose :: struct
+{
+	position: Entasis_Global_Position,
+	orientation: Entasis_Quaternion,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Pose_Integration_View :: struct
+{
+	body_handles: [^]Entasis_Body_Handle,
+	active_mask: ^Entasis_I32x8,
+	position: [^]Entasis_Global_Position,
+	orientation: ^Entasis_Quaternion_Wide,
+	inertia: ^Entasis_Body_Inertia_Wide,
+	dt: ^Entasis_F32x8,
+	velocity: ^Entasis_Body_Velocity_Wide,
+	worker_index: i32,
+	_reserved0: u32,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Velocity_Callbacks :: struct
+{
+	struct_size: u32,
+	struct_version: u32,
+	angular_mode: Entasis_Angular_Integration_Mode,
+	allow_substeps_for_unconstrained: Entasis_Bool,
+	integrate_kinematic_velocity: Entasis_Bool,
+	_reserved0: u8,
+	user_context: rawptr,
+	initialize: Entasis_Velocity_Initialize_Proc,
+	prepare: Entasis_Velocity_Prepare_Proc,
+	integrate: Entasis_Global_Velocity_Integrate_Proc,
+	dispose: Entasis_Velocity_Dispose_Proc,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Body_State :: struct
+{
+	pose: Entasis_Global_Pose,
+	velocity: Entasis_Body_Velocity,
+	local_inertia: Entasis_Body_Inertia,
+	collidable: Entasis_Collidable_Description,
+	activity: Entasis_Activity_Description,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Static_State :: struct
+{
+	pose: Entasis_Global_Pose,
+	shape: Entasis_Shape_Handle,
+	continuity: Entasis_Continuous_Detection,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Constraint_Target_State :: struct
+{
+	position: Entasis_Global_Position,
+	kind: Entasis_Global_Constraint_Target_Kind,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Kinematic_Target_State :: struct
+{
+	pose: Entasis_Global_Pose,
+	presence: Entasis_Global_Target_Presence,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_State_Selection :: struct
+{
+	bodies: [^]Entasis_Body_Handle,
+	bodies_count: u64,
+	statics: [^]Entasis_Static_Handle,
+	statics_count: u64,
+	constraint_targets: [^]Entasis_Constraint_Handle,
+	constraint_targets_count: u64,
+	kinematic_targets: [^]Entasis_Body_Handle,
+	kinematic_targets_count: u64,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_State_Snapshot :: struct
+{
+	bodies: [^]Entasis_Global_Body_State,
+	bodies_capacity: u64,
+	statics: [^]Entasis_Global_Static_State,
+	statics_capacity: u64,
+	constraint_targets: [^]Entasis_Global_Constraint_Target_State,
+	constraint_targets_capacity: u64,
+	kinematic_targets: [^]Entasis_Global_Kinematic_Target_State,
+	kinematic_targets_capacity: u64,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_State_Counts :: struct
+{
+	bodies: u64,
+	statics: u64,
+	constraint_targets: u64,
+	kinematic_targets: u64,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_World_Precision_Segment :: struct
+{
+	start: Entasis_Global_Position,
+	end: Entasis_Global_Position,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Bounds :: struct
+{
+	min: Entasis_Global_Position,
+	max: Entasis_Global_Position,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Ray_Hit :: struct
+{
+	t: f64,
+	location: Entasis_Global_Position,
+	normal: Entasis_Vector3,
+	collidable: Entasis_Collidable_Reference,
+	child_index: i32,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Sweep_Result :: struct
+{
+	state: Entasis_Sweep_Hit_State,
+	reserved: [3]u8,
+	t0: f32,
+	t1: f32,
+	location: Entasis_Global_Position,
+	normal: Entasis_Vector3,
+	child_a: i32,
+	child_b: i32,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Sweep_Hit :: struct
+{
+	collidable: Entasis_Collidable_Reference,
+	sweep: Entasis_Global_Sweep_Result,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Distance_Geometry :: struct
+{
+	state: Entasis_Distance_Query_State,
+	point_a: Entasis_Global_Position,
+	point_b: Entasis_Global_Position,
+	normal: Entasis_Vector3,
+	distance: f32,
+	depth: f32,
+	iterations: i32,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Shape_Distance_Result :: struct
+{
+	geometry: Entasis_Global_Distance_Geometry,
+	child_a: i32,
+	child_b: i32,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Query :: struct #align(8)
+{
+	kind: Entasis_Global_Query_Kind,
+	_reserved0: [7]u8,
+	payload: [136]u8,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Query_Result :: struct #align(8)
+{
+	kind: Entasis_Global_Query_Kind,
+	status: Entasis_Status,
+	hit: Entasis_Bool,
+	_reserved0: u8,
+	count: i32,
+	payload: [72]u8,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Query_Scratch :: struct
+{
+	ray_hits: [^]Entasis_Global_Ray_Hit,
+	ray_capacity: u64,
+	sweep_hits: [^]Entasis_Global_Sweep_Hit,
+	sweep_capacity: u64,
+	overlap_hits: [^]Entasis_Overlap_Hit,
+	overlap_capacity: u64,
+	volume_hits: [^]Entasis_Volume_Hit,
+	volume_capacity: u64,
+	traversal_stack: [^]i32,
+	stack_capacity: u64,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Distance_Query :: struct
+{
+	kind: Entasis_Distance_Query_Kind,
+	shape_a: Entasis_Shape_Handle,
+	shape_b: Entasis_Shape_Handle,
+	pose_a: Entasis_Global_Pose,
+	pose_b: Entasis_Global_Pose,
+	point: Entasis_Global_Position,
+	settings: Entasis_Distance_Query_Settings,
+}
+
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+Entasis_Global_Distance_Query_Result :: struct
+{
+	status: Entasis_Status,
+	shape: Entasis_Global_Shape_Distance_Result,
+	correction: Entasis_Shape_Correction_Result,
+}
+
+}
 Entasis_Body_State :: Entasis_Body_Description;
 Entasis_Static_State :: Entasis_Static_Description;
 
@@ -3418,3 +3707,233 @@ Entasis_Static_State :: Entasis_Static_Description;
 #assert(offset_of(Entasis_Joint_Break_Update_Result, alpha) == 36);
 #assert(offset_of(Entasis_Joint_Break_Update_Result, pending) == 40);
 #assert(offset_of(Entasis_Joint_Break_Update_Result, reserved) == 41);
+#assert(size_of(Entasis_Global_Position) == 24);
+#assert(align_of(Entasis_Global_Position) == 8);
+#assert(offset_of(Entasis_Global_Position, x) == 0);
+#assert(offset_of(Entasis_Global_Position, y) == 8);
+#assert(offset_of(Entasis_Global_Position, z) == 16);
+#assert(size_of(Entasis_Origin_Frame) == 24);
+#assert(align_of(Entasis_Origin_Frame) == 8);
+#assert(offset_of(Entasis_Origin_Frame, origin) == 0);
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Pose) == 40);
+#assert(align_of(Entasis_Global_Pose) == 8);
+#assert(offset_of(Entasis_Global_Pose, position) == 0);
+#assert(offset_of(Entasis_Global_Pose, orientation) == 24);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Pose_Integration_View) == 64);
+#assert(align_of(Entasis_Global_Pose_Integration_View) == 8);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, body_handles) == 0);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, active_mask) == 8);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, position) == 16);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, orientation) == 24);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, inertia) == 32);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, dt) == 40);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, velocity) == 48);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, worker_index) == 56);
+#assert(offset_of(Entasis_Global_Pose_Integration_View, _reserved0) == 60);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Velocity_Callbacks) == 56);
+#assert(align_of(Entasis_Global_Velocity_Callbacks) == 8);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, struct_size) == 0);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, struct_version) == 4);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, angular_mode) == 8);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, allow_substeps_for_unconstrained) == 9);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, integrate_kinematic_velocity) == 10);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, _reserved0) == 11);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, user_context) == 16);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, initialize) == 24);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, prepare) == 32);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, integrate) == 40);
+#assert(offset_of(Entasis_Global_Velocity_Callbacks, dispose) == 48);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Body_State) == 136);
+#assert(align_of(Entasis_Global_Body_State) == 8);
+#assert(offset_of(Entasis_Global_Body_State, pose) == 0);
+#assert(offset_of(Entasis_Global_Body_State, velocity) == 40);
+#assert(offset_of(Entasis_Global_Body_State, local_inertia) == 72);
+#assert(offset_of(Entasis_Global_Body_State, collidable) == 104);
+#assert(offset_of(Entasis_Global_Body_State, activity) == 128);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Static_State) == 56);
+#assert(align_of(Entasis_Global_Static_State) == 8);
+#assert(offset_of(Entasis_Global_Static_State, pose) == 0);
+#assert(offset_of(Entasis_Global_Static_State, shape) == 40);
+#assert(offset_of(Entasis_Global_Static_State, continuity) == 44);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Constraint_Target_State) == 32);
+#assert(align_of(Entasis_Global_Constraint_Target_State) == 8);
+#assert(offset_of(Entasis_Global_Constraint_Target_State, position) == 0);
+#assert(offset_of(Entasis_Global_Constraint_Target_State, kind) == 24);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Kinematic_Target_State) == 48);
+#assert(align_of(Entasis_Global_Kinematic_Target_State) == 8);
+#assert(offset_of(Entasis_Global_Kinematic_Target_State, pose) == 0);
+#assert(offset_of(Entasis_Global_Kinematic_Target_State, presence) == 40);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_State_Selection) == 64);
+#assert(align_of(Entasis_Global_State_Selection) == 8);
+#assert(offset_of(Entasis_Global_State_Selection, bodies) == 0);
+#assert(offset_of(Entasis_Global_State_Selection, bodies_count) == 8);
+#assert(offset_of(Entasis_Global_State_Selection, statics) == 16);
+#assert(offset_of(Entasis_Global_State_Selection, statics_count) == 24);
+#assert(offset_of(Entasis_Global_State_Selection, constraint_targets) == 32);
+#assert(offset_of(Entasis_Global_State_Selection, constraint_targets_count) == 40);
+#assert(offset_of(Entasis_Global_State_Selection, kinematic_targets) == 48);
+#assert(offset_of(Entasis_Global_State_Selection, kinematic_targets_count) == 56);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_State_Snapshot) == 64);
+#assert(align_of(Entasis_Global_State_Snapshot) == 8);
+#assert(offset_of(Entasis_Global_State_Snapshot, bodies) == 0);
+#assert(offset_of(Entasis_Global_State_Snapshot, bodies_capacity) == 8);
+#assert(offset_of(Entasis_Global_State_Snapshot, statics) == 16);
+#assert(offset_of(Entasis_Global_State_Snapshot, statics_capacity) == 24);
+#assert(offset_of(Entasis_Global_State_Snapshot, constraint_targets) == 32);
+#assert(offset_of(Entasis_Global_State_Snapshot, constraint_targets_capacity) == 40);
+#assert(offset_of(Entasis_Global_State_Snapshot, kinematic_targets) == 48);
+#assert(offset_of(Entasis_Global_State_Snapshot, kinematic_targets_capacity) == 56);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_State_Counts) == 32);
+#assert(align_of(Entasis_Global_State_Counts) == 8);
+#assert(offset_of(Entasis_Global_State_Counts, bodies) == 0);
+#assert(offset_of(Entasis_Global_State_Counts, statics) == 8);
+#assert(offset_of(Entasis_Global_State_Counts, constraint_targets) == 16);
+#assert(offset_of(Entasis_Global_State_Counts, kinematic_targets) == 24);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_World_Precision_Segment) == 48);
+#assert(align_of(Entasis_World_Precision_Segment) == 8);
+#assert(offset_of(Entasis_World_Precision_Segment, start) == 0);
+#assert(offset_of(Entasis_World_Precision_Segment, end) == 24);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Bounds) == 48);
+#assert(align_of(Entasis_Global_Bounds) == 8);
+#assert(offset_of(Entasis_Global_Bounds, min) == 0);
+#assert(offset_of(Entasis_Global_Bounds, max) == 24);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Ray_Hit) == 56);
+#assert(align_of(Entasis_Global_Ray_Hit) == 8);
+#assert(offset_of(Entasis_Global_Ray_Hit, t) == 0);
+#assert(offset_of(Entasis_Global_Ray_Hit, location) == 8);
+#assert(offset_of(Entasis_Global_Ray_Hit, normal) == 32);
+#assert(offset_of(Entasis_Global_Ray_Hit, collidable) == 44);
+#assert(offset_of(Entasis_Global_Ray_Hit, child_index) == 48);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Sweep_Result) == 64);
+#assert(align_of(Entasis_Global_Sweep_Result) == 8);
+#assert(offset_of(Entasis_Global_Sweep_Result, state) == 0);
+#assert(offset_of(Entasis_Global_Sweep_Result, reserved) == 1);
+#assert(offset_of(Entasis_Global_Sweep_Result, t0) == 4);
+#assert(offset_of(Entasis_Global_Sweep_Result, t1) == 8);
+#assert(offset_of(Entasis_Global_Sweep_Result, location) == 16);
+#assert(offset_of(Entasis_Global_Sweep_Result, normal) == 40);
+#assert(offset_of(Entasis_Global_Sweep_Result, child_a) == 52);
+#assert(offset_of(Entasis_Global_Sweep_Result, child_b) == 56);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Sweep_Hit) == 72);
+#assert(align_of(Entasis_Global_Sweep_Hit) == 8);
+#assert(offset_of(Entasis_Global_Sweep_Hit, collidable) == 0);
+#assert(offset_of(Entasis_Global_Sweep_Hit, sweep) == 8);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Distance_Geometry) == 80);
+#assert(align_of(Entasis_Global_Distance_Geometry) == 8);
+#assert(offset_of(Entasis_Global_Distance_Geometry, state) == 0);
+#assert(offset_of(Entasis_Global_Distance_Geometry, point_a) == 8);
+#assert(offset_of(Entasis_Global_Distance_Geometry, point_b) == 32);
+#assert(offset_of(Entasis_Global_Distance_Geometry, normal) == 56);
+#assert(offset_of(Entasis_Global_Distance_Geometry, distance) == 68);
+#assert(offset_of(Entasis_Global_Distance_Geometry, depth) == 72);
+#assert(offset_of(Entasis_Global_Distance_Geometry, iterations) == 76);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Shape_Distance_Result) == 88);
+#assert(align_of(Entasis_Global_Shape_Distance_Result) == 8);
+#assert(offset_of(Entasis_Global_Shape_Distance_Result, geometry) == 0);
+#assert(offset_of(Entasis_Global_Shape_Distance_Result, child_a) == 80);
+#assert(offset_of(Entasis_Global_Shape_Distance_Result, child_b) == 84);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Query) == 144);
+#assert(align_of(Entasis_Global_Query) == 8);
+#assert(offset_of(Entasis_Global_Query, kind) == 0);
+#assert(offset_of(Entasis_Global_Query, _reserved0) == 1);
+#assert(offset_of(Entasis_Global_Query, payload) == 8);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Query_Result) == 80);
+#assert(align_of(Entasis_Global_Query_Result) == 8);
+#assert(offset_of(Entasis_Global_Query_Result, kind) == 0);
+#assert(offset_of(Entasis_Global_Query_Result, status) == 1);
+#assert(offset_of(Entasis_Global_Query_Result, hit) == 2);
+#assert(offset_of(Entasis_Global_Query_Result, _reserved0) == 3);
+#assert(offset_of(Entasis_Global_Query_Result, count) == 4);
+#assert(offset_of(Entasis_Global_Query_Result, payload) == 8);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Query_Scratch) == 80);
+#assert(align_of(Entasis_Global_Query_Scratch) == 8);
+#assert(offset_of(Entasis_Global_Query_Scratch, ray_hits) == 0);
+#assert(offset_of(Entasis_Global_Query_Scratch, ray_capacity) == 8);
+#assert(offset_of(Entasis_Global_Query_Scratch, sweep_hits) == 16);
+#assert(offset_of(Entasis_Global_Query_Scratch, sweep_capacity) == 24);
+#assert(offset_of(Entasis_Global_Query_Scratch, overlap_hits) == 32);
+#assert(offset_of(Entasis_Global_Query_Scratch, overlap_capacity) == 40);
+#assert(offset_of(Entasis_Global_Query_Scratch, volume_hits) == 48);
+#assert(offset_of(Entasis_Global_Query_Scratch, volume_capacity) == 56);
+#assert(offset_of(Entasis_Global_Query_Scratch, traversal_stack) == 64);
+#assert(offset_of(Entasis_Global_Query_Scratch, stack_capacity) == 72);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Distance_Query) == 136);
+#assert(align_of(Entasis_Global_Distance_Query) == 8);
+#assert(offset_of(Entasis_Global_Distance_Query, kind) == 0);
+#assert(offset_of(Entasis_Global_Distance_Query, shape_a) == 4);
+#assert(offset_of(Entasis_Global_Distance_Query, shape_b) == 8);
+#assert(offset_of(Entasis_Global_Distance_Query, pose_a) == 16);
+#assert(offset_of(Entasis_Global_Distance_Query, pose_b) == 56);
+#assert(offset_of(Entasis_Global_Distance_Query, point) == 96);
+#assert(offset_of(Entasis_Global_Distance_Query, settings) == 120);
+}
+when #config(ENTASIS_PRECISION, "float32") == "mixed64"
+{
+#assert(size_of(Entasis_Global_Distance_Query_Result) == 120);
+#assert(align_of(Entasis_Global_Distance_Query_Result) == 8);
+#assert(offset_of(Entasis_Global_Distance_Query_Result, status) == 0);
+#assert(offset_of(Entasis_Global_Distance_Query_Result, shape) == 8);
+#assert(offset_of(Entasis_Global_Distance_Query_Result, correction) == 96);
+}

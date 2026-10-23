@@ -111,3 +111,13 @@ Record intent into caller-owned worker-safe storage, then apply it after the act
 ## Body-control composition
 
 Body controls preserve the installed velocity callback's preparation/disposal lifetime, active masks and body identities. They call it for ordinary lanes before applying queued inputs and damping. Target-driven kinematic lanes use derived velocities. See [damping composition](BODIES-STATICS.md#per-body-damping), [input/target lifetime](BODIES-STATICS.md#step-and-target-lifetime) and [axis locks](BODIES-STATICS.md#physical-axis-locks) for their behavior under default, manual and custom steps
+
+## Position-aware callbacks
+
+In mixed64, `Pose_Callbacks.integrate_velocity_global` accepts a `Global_Pose_Velocity_Proc`. Configure exactly one of `integrate_velocity_global` and `integrate_velocity`, along with the required initialize, prepare and dispose callbacks. The legacy callback receives rounded absolute f32 positions
+
+`Global_Position_Bundle` contains eight authoritative f64 positions in the current simulation frame. Only active-mask lanes are meaningful, and supplied body indices are active dense indices, not handles. The position pointer is read-only and valid only for the invocation. Orientation, inertia, dt, masks and velocities retain their local-float layout. Write only the permitted velocity lanes and disjoint caller-owned worker state
+
+`planetary_gravity_policy_global` constructs a caller-owned `Global_Planetary_Gravity_Policy`, and `pose_policy_planetary_global` builds its callback table. Keep the policy at a stable address, with its center and rate fields unchanged while stepping. The center uses the simulation frame and must be translated by the caller after a successful [origin shift](WORLD.md#precision-profiles-and-origin-frames)
+
+The ordinary [callback ownership](#callback-ownership) rules apply. Active float-cache edits publish once at admitted idle stage or timestep entry, as described under [borrowed position views](DATA-ACCESS.md#precision-and-borrowed-position-views). Nested stages within a step reuse that publication

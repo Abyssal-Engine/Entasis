@@ -308,6 +308,26 @@ visual_query_validation_observations :: proc(t: ^testing.T)
 	testing.expect_value(t, timed.hit_count, u64(0));
 	testing.expect_value(t, owner.observations.rays[0], retained);
 	owner.ray_inputs[0].ray.origin.x = 0;
+	for selected in trace.Query_Family
+	{
+		owner.ray_inputs[0].ray.origin.x = 10;
+		owner.sphere_cast_inputs[0].pose.position.x = 10;
+		owner.overlap_inputs[0].bounds = {min={9, -1, -1}, max={11, 1, 1}};
+		result: trace.Batch_Result = trace.batch_execute(&owner, .Validate, {selected});
+		testing.expect_value(t, result.status, trace.Case_Status.Ok);
+		testing.expect_value(t, owner.observations.rays[0].state, trace.Observation_State.Miss if selected == .Ray else trace.Observation_State.Hit);
+		testing.expect_value(t, owner.observations.sweeps[0].state, trace.Observation_State.Miss if selected == .Sphere_Cast else trace.Observation_State.Hit);
+		testing.expect_value(t, owner.observations.overlaps[0].state, trace.Observation_State.Miss if selected == .Overlap else trace.Observation_State.Hit);
+		owner.ray_inputs[0].ray.origin.x = 0;
+		owner.sphere_cast_inputs[0].pose.position.x = 0;
+		owner.overlap_inputs[0].bounds = {min={-0.25, -0.25, -0.25}, max={0.25, 0.25, 0.25}};
+		_ = trace.batch_execute(&owner, .Timed, {selected});
+		testing.expect_value(t, owner.observations.rays[0].state, trace.Observation_State.Miss if selected == .Ray else trace.Observation_State.Hit);
+		_ = trace.batch_execute(&owner, .Validate);
+		testing.expect_value(t, owner.observations.rays[0].state, trace.Observation_State.Hit);
+		testing.expect_value(t, owner.observations.sweeps[0].state, trace.Observation_State.Hit);
+		testing.expect_value(t, owner.observations.overlaps[0].state, trace.Observation_State.Hit);
+	}
 
 }
 

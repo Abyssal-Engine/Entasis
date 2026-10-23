@@ -8,4 +8,4 @@ Description: Entasis runtime C ABI
 Version: @ENTASIS_VERSION@
 Libs: -L${libdir} -lentasis
 Libs.private: -ldl -lpthread -lm
-Cflags: -I${includedir}
+Cflags: -I${includedir} -DENTASIS_PRECISION_MIXED64=@ENTASIS_PRECISION_MIXED64@

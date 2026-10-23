@@ -48,7 +48,7 @@ broad_phase_set_owner_index :: proc "contextless" (
 }
 broad_phase_add_leaf :: proc (
 	broad_phase: ^Broad_Phase, tree_kind: Broad_Phase_Tree,
-	reference: Collidable_Reference, bounds: util.Bounding_Box,
+	reference: Collidable_Reference, bounds: Tree_Bounds,
 ) -> (int, Physics_Status)
 {
 	if broad_phase == nil || broad_phase.state != .Ready
@@ -127,8 +127,9 @@ broad_phase_add_body :: proc (broad_phase: ^Broad_Phase, handle: Body_Handle) ->
 	{
 		return .Invalid_Argument;
 	}
-	bounds, bounds_status := shape_registry_compute_world_bounds(
-		broad_phase.shapes, collidable.shape, set.dynamics_state.memory[location.index].motion.pose,
+	bounds, bounds_status := broad_phase_shape_bounds(
+		broad_phase.shapes, collidable.shape, broad_phase_body_position(set, int(location.index)),
+		set.dynamics_state.memory[location.index].motion.pose.orientation,
 	);
 	if bounds_status != .Ok
 	{
@@ -164,7 +165,14 @@ broad_phase_add_static :: proc (broad_phase: ^Broad_Phase, handle: Static_Handle
 	{
 		return .Invalid_Argument;
 	}
-	bounds, bounds_status := shape_registry_compute_world_bounds(broad_phase.shapes, static.shape, static.pose);
+	local_bounds: Shape_Bounds;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		broad_phase.statics.local_bounds.memory[index] = {};
+	}
+	bounds, bounds_status := broad_phase_shape_bounds(
+			broad_phase.shapes, static.shape, broad_phase_static_position(broad_phase.statics, index), static.pose.orientation, &local_bounds,
+		);
 	if bounds_status != .Ok
 	{
 		return bounds_status;
@@ -175,6 +183,13 @@ broad_phase_add_static :: proc (broad_phase: ^Broad_Phase, handle: Static_Handle
 		return reference_status;
 	}
 	_, add_status := broad_phase_add_leaf(broad_phase, .Static, reference, bounds);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if add_status == .Ok
+		{
+			statics_publish_local_bounds(broad_phase.statics, index, local_bounds);
+		}
+	}
 	return add_status;
 }
 broad_phase_remove_leaf :: proc "contextless" (
@@ -328,6 +343,7 @@ broad_phase_refresh_body_membership :: proc (
 }
 broad_phase_prepare_body_description_change :: proc (
 	broad_phase: ^Broad_Phase, handle: Body_Handle, description: ^Body_Description,
+	global_position: ^Global_Position = nil,
 ) -> (Broad_Phase_Body_Description_Change, Physics_Status)
 {
 	if broad_phase == nil || broad_phase.state != .Ready ||
@@ -383,8 +399,16 @@ broad_phase_prepare_body_description_change :: proc (
 	};
 	if new_shape_state == .Present
 	{
-		change.bounds, status = shape_registry_compute_world_bounds(
-			broad_phase.shapes, description.collidable.shape, description.pose,
+		position: Tree_Position = tree_position_from_local(description.pose.position);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if global_position != nil
+			{
+				position = global_position^;
+			}
+		}
+		change.bounds, status = broad_phase_shape_bounds(
+			broad_phase.shapes, description.collidable.shape, position, description.pose.orientation,
 		);
 		if status != .Ok
 		{
@@ -612,7 +636,8 @@ broad_phase_commit_body_migration :: proc "contextless" (
 }
 broad_phase_reference_bounds :: proc "contextless" (
 	broad_phase: ^Broad_Phase, reference: Collidable_Reference,
-) -> (util.Bounding_Box, Physics_Status)
+	local_bounds: ^Shape_Bounds = nil,
+) -> (Tree_Bounds, Physics_Status)
 {
 	if collidable_reference_mobility(reference) == .Static
 	{
@@ -621,8 +646,14 @@ broad_phase_reference_bounds :: proc "contextless" (
 		{
 			return {}, status;
 		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			broad_phase.statics.local_bounds.memory[index] = {};
+		}
 		static := &broad_phase.statics.statics.memory[index];
-		return shape_registry_compute_world_bounds(broad_phase.shapes, static.shape, static.pose);
+		return broad_phase_shape_bounds(
+			broad_phase.shapes, static.shape, broad_phase_static_position(broad_phase.statics, index), static.pose.orientation, local_bounds,
+		);
 	}
 	location, status := bodies_resolve(broad_phase.bodies, {collidable_reference_raw_handle(reference)});
 	if status != .Ok
@@ -630,9 +661,10 @@ broad_phase_reference_bounds :: proc "contextless" (
 		return {}, status;
 	}
 	set := &broad_phase.bodies.sets.memory[location.set_index];
-	return shape_registry_compute_world_bounds(
+	return broad_phase_shape_bounds(
 		broad_phase.shapes, set.collidables.memory[location.index].shape,
-		set.dynamics_state.memory[location.index].motion.pose,
+		broad_phase_body_position(set, int(location.index)),
+		set.dynamics_state.memory[location.index].motion.pose.orientation,
 	);
 }
 broad_phase_update_bounds :: proc "contextless" (broad_phase: ^Broad_Phase) -> Physics_Status
@@ -643,28 +675,50 @@ broad_phase_update_bounds :: proc "contextless" (broad_phase: ^Broad_Phase) -> P
 	}
 	for leaf_index in 0 ..< broad_phase.active_tree.leaf_count
 	{
-		bounds, status := broad_phase_reference_bounds(broad_phase, broad_phase.active_leaves.memory[leaf_index]);
+		reference: Collidable_Reference = broad_phase.active_leaves.memory[leaf_index];
+		local_bounds: Shape_Bounds;
+		bounds, status := broad_phase_reference_bounds(broad_phase, reference, &local_bounds);
 		if status != .Ok
 		{
 			return status;
 		}
-		status = tree_update_bounds(&broad_phase.active_tree, leaf_index, bounds);
+		status = broad_phase_update_leaf_bounds(broad_phase, .Active, leaf_index, bounds);
 		if status != .Ok
 		{
 			return status;
+		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if collidable_reference_mobility(reference) == .Static
+			{
+				index: int;
+				index, _ = statics_resolve(broad_phase.statics, {collidable_reference_raw_handle(reference)});
+				statics_publish_local_bounds(broad_phase.statics, index, local_bounds);
+			}
 		}
 	}
 	for leaf_index in 0 ..< broad_phase.static_tree.leaf_count
 	{
-		bounds, status := broad_phase_reference_bounds(broad_phase, broad_phase.static_leaves.memory[leaf_index]);
+		reference: Collidable_Reference = broad_phase.static_leaves.memory[leaf_index];
+		local_bounds: Shape_Bounds;
+		bounds, status := broad_phase_reference_bounds(broad_phase, reference, &local_bounds);
 		if status != .Ok
 		{
 			return status;
 		}
-		status = tree_update_bounds(&broad_phase.static_tree, leaf_index, bounds);
+		status = broad_phase_update_leaf_bounds(broad_phase, .Static, leaf_index, bounds);
 		if status != .Ok
 		{
 			return status;
+		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if collidable_reference_mobility(reference) == .Static
+			{
+				index: int;
+				index, _ = statics_resolve(broad_phase.statics, {collidable_reference_raw_handle(reference)});
+				statics_publish_local_bounds(broad_phase.statics, index, local_bounds);
+			}
 		}
 	}
 	return .Ok;
@@ -770,7 +824,6 @@ broad_phase_predict_bounds_body_state :: #force_inline proc "contextless" (
 		linear_speed * dt + angular_expansion,
 		collidable.minimum_speculative_margin, collidable.maximum_speculative_margin,
 	);
-	collidable.speculative_margin = margin;
 	maximum_allowed_expansion := margin;
 	if collidable.continuity.mode != .Discrete
 	{
@@ -780,8 +833,18 @@ broad_phase_predict_bounds_body_state :: #force_inline proc "contextless" (
 		predicted_velocity.linear, predicted_velocity.angular, dt,
 		bounds.maximum_radius, bounds.maximum_angular_expansion, maximum_allowed_expansion,
 	);
-	bounds.min = util.vector3_add(position, util.vector3_add(bounds.min, min_expansion));
-	bounds.max = util.vector3_add(position, util.vector3_add(bounds.max, max_expansion));
+	world_bounds: Tree_Bounds;
+	world_bounds, bounds_status = broad_phase_bounds_from_local(
+		broad_phase_body_position(active, body_index),
+		{
+			min=util.vector3_add(bounds.min, min_expansion),
+			max=util.vector3_add(bounds.max, max_expansion),
+		},
+	);
+	if bounds_status != .Ok
+	{
+		return bounds_status;
+	}
 	leaf_index := int(collidable.broad_phase_index);
 	if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
 	{
@@ -791,39 +854,86 @@ broad_phase_predict_bounds_body_state :: #force_inline proc "contextless" (
 	child := tree_child(
 		&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)], tree_leaf_child_index(leaf),
 	);
-	child.min = bounds.min;
-	child.max = bounds.max;
+	collidable.speculative_margin = margin;
+	child.min = world_bounds.min;
+	child.max = world_bounds.max;
 	return .Ok;
 }
+// inputs are body-local envelopes, including speculative motion. the existing
+// worker owns each live body/leaf once, only the final scatter reads its f64
+// position. masked/tail slots never read the authoritative position column
 broad_phase_scatter_bounds_contiguous_wide :: #force_inline proc "contextless" (
 	broad_phase: ^Broad_Phase, first_body_index, body_count: int,
 	minimum, maximum: util.Vector3_Wide, speculative_margin: util.F32x8,
 ) -> Physics_Status
 {
-	active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
-	for lane in 0 ..< body_count
+	when util.PRECISION_MODE == .Double_Coordinates
 	{
-		body_index := first_body_index + lane;
-		collidable := &active.collidables.memory[body_index];
-		if typed_index_state(collidable.shape) != .Present
+		active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		for lane in 0 ..< body_count
 		{
-			continue;
+			body_index := first_body_index + lane;
+			collidable := &active.collidables.memory[body_index];
+			if typed_index_state(collidable.shape) != .Present
+			{
+				continue;
+			}
+			bounds: Tree_Bounds;
+			status: Physics_Status;
+			bounds, status = broad_phase_bounds_from_local(
+				broad_phase_body_position(active, body_index),
+				{
+					min=util.vector3_wide_read_slot(minimum, lane),
+					max=util.vector3_wide_read_slot(maximum, lane),
+				},
+			);
+			if status != .Ok
+			{
+				return status;
+			}
+			leaf_index := int(collidable.broad_phase_index);
+			if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
+			{
+				return .Invalid_Argument;
+			}
+			leaf := broad_phase.active_tree.leaves.memory[leaf_index];
+			child := tree_child(
+				&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
+				tree_leaf_child_index(leaf),
+			);
+			collidable.speculative_margin = simd.extract(speculative_margin, lane);
+			child.min = bounds.min;
+			child.max = bounds.max;
 		}
-		collidable.speculative_margin = simd.extract(speculative_margin, lane);
-		leaf_index := int(collidable.broad_phase_index);
-		if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
-		{
-			return .Invalid_Argument;
-		}
-		leaf := broad_phase.active_tree.leaves.memory[leaf_index];
-		child := tree_child(
-			&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
-			tree_leaf_child_index(leaf),
-		);
-		child.min = util.vector3_wide_read_slot(minimum, lane);
-		child.max = util.vector3_wide_read_slot(maximum, lane);
+		return .Ok;
 	}
-	return .Ok;
+	else
+	{
+		active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		for lane in 0 ..< body_count
+		{
+			body_index := first_body_index + lane;
+			collidable := &active.collidables.memory[body_index];
+			if typed_index_state(collidable.shape) != .Present
+			{
+				continue;
+			}
+			collidable.speculative_margin = simd.extract(speculative_margin, lane);
+			leaf_index := int(collidable.broad_phase_index);
+			if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
+			{
+				return .Invalid_Argument;
+			}
+			leaf := broad_phase.active_tree.leaves.memory[leaf_index];
+			child := tree_child(
+				&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
+				tree_leaf_child_index(leaf),
+			);
+			child.min = util.vector3_wide_read_slot(minimum, lane);
+			child.max = util.vector3_wide_read_slot(maximum, lane);
+		}
+		return .Ok;
+	}
 }
 broad_phase_compute_contiguous_primitive_bounds_wide :: #force_inline proc "contextless" (
 	broad_phase: ^Broad_Phase, first_body_index, body_count, type_id: int,
@@ -964,12 +1074,13 @@ broad_phase_predict_contiguous_primitive_bundle :: #force_no_inline proc "contex
 	min_expansion, max_expansion := broad_phase_motion_bounds_expansion_wide(
 		velocity.linear, dt, angular_expansion, maximum_allowed_expansion,
 	);
-	minimum := util.vector3_wide_add(
-		position, util.vector3_wide_add(local_minimum, min_expansion),
-	);
-	maximum := util.vector3_wide_add(
-		position, util.vector3_wide_add(local_maximum, max_expansion),
-	);
+	minimum := util.vector3_wide_add(local_minimum, min_expansion);
+	maximum := util.vector3_wide_add(local_maximum, max_expansion);
+	when util.PRECISION_MODE == .Float_Coordinates
+	{
+		minimum = util.vector3_wide_add(position, minimum);
+		maximum = util.vector3_wide_add(position, maximum);
+	}
 	return broad_phase_scatter_bounds_contiguous_wide(
 		broad_phase, first_body_index, body_count, minimum, maximum, margin,
 	);
@@ -979,34 +1090,81 @@ broad_phase_scatter_bounds_indices_wide :: #force_inline proc "contextless" (
 	minimum, maximum: util.Vector3_Wide, speculative_margin: util.F32x8,
 ) -> Physics_Status
 {
-	active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
-	for lane in 0 ..< body_count
+	when util.PRECISION_MODE == .Double_Coordinates
 	{
-		body_index := int(body_indices[lane]);
-		if body_index < 0 || body_index >= active.count
+		active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		for lane in 0 ..< body_count
 		{
-			return .Invalid_Argument;
+			body_index := int(body_indices[lane]);
+			if body_index < 0 || body_index >= active.count
+			{
+				return .Invalid_Argument;
+			}
+			collidable := &active.collidables.memory[body_index];
+			if typed_index_state(collidable.shape) != .Present
+			{
+				continue;
+			}
+			bounds: Tree_Bounds;
+			status: Physics_Status;
+			bounds, status = broad_phase_bounds_from_local(
+				broad_phase_body_position(active, body_index),
+				{
+					min=util.vector3_wide_read_slot(minimum, lane),
+					max=util.vector3_wide_read_slot(maximum, lane),
+				},
+			);
+			if status != .Ok
+			{
+				return status;
+			}
+			leaf_index := int(collidable.broad_phase_index);
+			if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
+			{
+				return .Invalid_Argument;
+			}
+			leaf := broad_phase.active_tree.leaves.memory[leaf_index];
+			child := tree_child(
+				&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
+				tree_leaf_child_index(leaf),
+			);
+			collidable.speculative_margin = simd.extract(speculative_margin, lane);
+			child.min = bounds.min;
+			child.max = bounds.max;
 		}
-		collidable := &active.collidables.memory[body_index];
-		if typed_index_state(collidable.shape) != .Present
-		{
-			continue;
-		}
-		collidable.speculative_margin = simd.extract(speculative_margin, lane);
-		leaf_index := int(collidable.broad_phase_index);
-		if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
-		{
-			return .Invalid_Argument;
-		}
-		leaf := broad_phase.active_tree.leaves.memory[leaf_index];
-		child := tree_child(
-			&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
-			tree_leaf_child_index(leaf),
-		);
-		child.min = util.vector3_wide_read_slot(minimum, lane);
-		child.max = util.vector3_wide_read_slot(maximum, lane);
+		return .Ok;
 	}
-	return .Ok;
+	else
+	{
+		active := &broad_phase.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		for lane in 0 ..< body_count
+		{
+			body_index := int(body_indices[lane]);
+			if body_index < 0 || body_index >= active.count
+			{
+				return .Invalid_Argument;
+			}
+			collidable := &active.collidables.memory[body_index];
+			if typed_index_state(collidable.shape) != .Present
+			{
+				continue;
+			}
+			collidable.speculative_margin = simd.extract(speculative_margin, lane);
+			leaf_index := int(collidable.broad_phase_index);
+			if leaf_index < 0 || leaf_index >= broad_phase.active_tree.leaf_count
+			{
+				return .Invalid_Argument;
+			}
+			leaf := broad_phase.active_tree.leaves.memory[leaf_index];
+			child := tree_child(
+				&broad_phase.active_tree.nodes.memory[tree_leaf_node_index(leaf)],
+				tree_leaf_child_index(leaf),
+			);
+			child.min = util.vector3_wide_read_slot(minimum, lane);
+			child.max = util.vector3_wide_read_slot(maximum, lane);
+		}
+		return .Ok;
+	}
 }
 broad_phase_compute_type_bounds_wide :: #force_inline proc "contextless" (
 	broad_phase: ^Broad_Phase, body_indices: ^[util.PRODUCTION_LANE_COUNT]i32,
@@ -1226,12 +1384,13 @@ broad_phase_predict_bounds_motion_batch :: #force_inline proc "contextless" (
 	min_expansion, max_expansion := broad_phase_motion_bounds_expansion_wide(
 		velocity.linear, dt, angular_expansion, maximum_allowed_expansion,
 	);
-	minimum := util.vector3_wide_add(
-		position, util.vector3_wide_add(local_minimum, min_expansion),
-	);
-	maximum := util.vector3_wide_add(
-		position, util.vector3_wide_add(local_maximum, max_expansion),
-	);
+	minimum := util.vector3_wide_add(local_minimum, min_expansion);
+	maximum := util.vector3_wide_add(local_maximum, max_expansion);
+	when util.PRECISION_MODE == .Float_Coordinates
+	{
+		minimum = util.vector3_wide_add(position, minimum);
+		maximum = util.vector3_wide_add(position, maximum);
+	}
 	return broad_phase_scatter_bounds_indices_wide(
 		broad_phase, body_indices, body_count, minimum, maximum, margin,
 	);
@@ -1351,8 +1510,8 @@ broad_phase_predict_bounds_bundle_grouped :: proc "contextless" (
 			);
 		}
 		integration_mask := transmute(util.I32x8)mask_values;
-		integrator.callbacks.integrate_velocity(
-			integrator.callbacks.user_context,
+		pose_integrator_invoke_velocity(
+			integrator,
 			transmute(util.I32x8)callback_index_values,
 			position, orientation, inertia, integration_mask,
 			worker_index, util.F32x8(dt), &velocity,

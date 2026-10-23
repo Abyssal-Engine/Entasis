@@ -46,7 +46,7 @@ Destroy every world attached to a caller-owned pool before `buffer_pool_clear` o
 
 ## Threading selection
 
-Entasis coordinates its physics workers internally. `world_step` waits for their work to finish before returning. An application that calls `world_step` and then runs queries on the same thread needs no additional synchronization, even when physics uses multiple workers
+Entasis coordinates its physics workers internally. `world_step` waits for their work to finish before returning. An application that calls `world_step` and then runs queries on the same thread needs no additional synchronization, even when physics uses multiple workers. See [simulation repeatability limits](../../LIMITS.md#accuracy-and-sampling)
 
 If the application launches its own query jobs on separate threads, it must wait for those jobs to finish before stepping or modifying the same world. Entasis does not automatically coordinate those application-owned jobs. See [query concurrency](QUERIES.md#batch-concurrency) for supported operations and query-context ownership
 
@@ -162,3 +162,17 @@ In full mode, pool growth reserves the metadata needed to return its blocks, so 
 A pool's backing-block byte count is not total world memory. Separate scratch, pool metadata, allocator overhead and thread resources must be accounted for separately
 
 Destroy attached query contexts before the world and destroy borrowed resources only after all users have stopped
+
+## Precision profiles and origin frames
+
+`Precision_Mode`, `PRECISION_MODE` and `PRECISION_NAME` expose the compile-time profile. `float32` selects `Precision_Mode.Float_Coordinates`, with f32 positions and explicit origin shifting. `mixed64` selects `Precision_Mode.Double_Coordinates`, with authoritative f64 body/static positions, built-in absolute targets and tree bounds. Shape geometry, orientations, velocities, contacts and the eight solver lanes remain f32. See [precision selection](../../BUILDING.md#precision-selection) for build arguments
+
+`Global_Position` and `Origin_Frame` are available in both profiles. `global_position` constructs an f64 vector, and `origin_frame_at` validates an initial frame origin. `Origin_Frame.origin` is caller-owned application state. `origin_frame_to_local` subtracts that origin before narrowing to f32, while `origin_frame_to_global` widens a local position before adding the origin. `global_position_delta` subtracts two f64 positions before narrowing their displacement. These conversions reject nonfinite or unrepresentable results
+
+`origin_frame_translate` changes only the supplied frame. Use `world_shift_origin` to subtract the same finite f32 delta from engine coordinates and add it to the frame after a successful engine commit. In mixed64, global API positions use the current simulation frame. [Ordered pose export](DATA-ACCESS.md#global-authoring-snapshots) can add an application frame in f64
+
+Call `world_shift_origin` exclusively between completed operations. Prepare updates to external command buffers, callback contexts, captured states and query results first. Perform the engine shift, apply those external updates only on success, then resume stepping. The engine translates positions, built-in absolute targets and motion-expanded bounds. It preserves handles, velocities, relative contacts, impulses, sleeping membership and topology. Opaque caller state is not rewritten
+
+A rejected shift leaves published world state, frame and borrowed views unchanged. Zero shift is a no-op with no custom bounds callbacks. Nonzero success invalidates borrowed views once. Custom bounds callbacks run during preflight only and must obey existing callback admission. Their own side effects remain caller-owned. Prepared maintenance uses reserved engine scratch and allocates no engine storage
+
+Enabled triggers have separate [reservation and failure-recovery requirements](COLLISION.md#reserve-capacity-and-recover-from-failure) after body/static handle-table or worker-span growth

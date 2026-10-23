@@ -3,9 +3,8 @@
 // see LICENSE and NOTICE
 package entasis_physics
 
-import util "entasis:entasis_utilities"
 
-tree_add_without_refinement_trusted :: proc "contextless" (tree: ^Tree, bounds: util.Bounding_Box) -> int
+tree_add_without_refinement_trusted :: proc "contextless" (tree: ^Tree, bounds: Tree_Bounds) -> int
 {
 	leaf_index := tree.leaf_count;
 	if tree.leaf_count < 2
@@ -26,10 +25,10 @@ tree_add_without_refinement_trusted :: proc "contextless" (tree: ^Tree, bounds: 
 		node := &tree.nodes.memory[node_index];
 		merged_a := tree_bounds_merge(bounds, tree_child_bounds(node.a));
 		merged_b := tree_bounds_merge(bounds, tree_child_bounds(node.b));
-		cost_a := tree_bounds_metric(merged_a) * f32(node.a.leaf_count + 1) -
-		tree_bounds_metric(tree_child_bounds(node.a)) * f32(node.a.leaf_count);
-		cost_b := tree_bounds_metric(merged_b) * f32(node.b.leaf_count + 1) -
-		tree_bounds_metric(tree_child_bounds(node.b)) * f32(node.b.leaf_count);
+		cost_a := tree_bounds_metric(merged_a) * Tree_Scalar(node.a.leaf_count + 1) -
+		tree_bounds_metric(tree_child_bounds(node.a)) * Tree_Scalar(node.a.leaf_count);
+		cost_b := tree_bounds_metric(merged_b) * Tree_Scalar(node.b.leaf_count + 1) -
+		tree_bounds_metric(tree_child_bounds(node.b)) * Tree_Scalar(node.b.leaf_count);
 		chosen_index := 0;
 		if cost_b < cost_a || cost_b == cost_a && node.b.leaf_count < node.a.leaf_count
 		{
@@ -63,7 +62,7 @@ tree_add_without_refinement_trusted :: proc "contextless" (tree: ^Tree, bounds: 
 	return leaf_index;
 }
 
-tree_add_without_refinement :: proc (tree: ^Tree, bounds: util.Bounding_Box) -> (int, Physics_Status)
+tree_add_without_refinement :: proc (tree: ^Tree, bounds: Tree_Bounds) -> (int, Physics_Status)
 {
 	if tree == nil || tree.state != .Ready ||
 	bounds.min.x > bounds.max.x || bounds.min.y > bounds.max.y || bounds.min.z > bounds.max.z
@@ -103,22 +102,22 @@ tree_set_child_location :: proc "contextless" (tree: ^Tree, child: Tree_Node_Chi
 tree_try_rotate_node :: proc "contextless" (tree: ^Tree, rotation_root_index: int)
 {
 	root := &tree.nodes.memory[rotation_root_index];
-	cost_a := tree_bounds_metric(tree_child_bounds(root.a)) * f32(root.a.leaf_count);
-	cost_b := tree_bounds_metric(tree_child_bounds(root.b)) * f32(root.b.leaf_count);
+	cost_a := tree_bounds_metric(tree_child_bounds(root.a)) * Tree_Scalar(root.a.leaf_count);
+	cost_b := tree_bounds_metric(tree_child_bounds(root.b)) * Tree_Scalar(root.b.leaf_count);
 	original_cost := cost_a + cost_b;
-	left_rotation_cost_change: f32;
+	left_rotation_cost_change: Tree_Scalar;
 	left_uses_a := Reference_State.Missing;
-	right_rotation_cost_change: f32;
+	right_rotation_cost_change: Tree_Scalar;
 	right_uses_a := Reference_State.Missing;
 	if root.a.index >= 0
 	{
 		a := &tree.nodes.memory[root.a.index];
 		aa_b := tree_bounds_merge(tree_child_bounds(a.a), tree_child_bounds(root.b));
 		ab_b := tree_bounds_merge(tree_child_bounds(a.b), tree_child_bounds(root.b));
-		cost_aa := tree_bounds_metric(tree_child_bounds(a.a)) * f32(a.a.leaf_count);
-		cost_ab := tree_bounds_metric(tree_child_bounds(a.b)) * f32(a.b.leaf_count);
-		cost_aab := tree_bounds_metric(aa_b) * f32(a.a.leaf_count + root.b.leaf_count) + cost_ab;
-		cost_abb := tree_bounds_metric(ab_b) * f32(a.b.leaf_count + root.b.leaf_count) + cost_aa;
+		cost_aa := tree_bounds_metric(tree_child_bounds(a.a)) * Tree_Scalar(a.a.leaf_count);
+		cost_ab := tree_bounds_metric(tree_child_bounds(a.b)) * Tree_Scalar(a.b.leaf_count);
+		cost_aab := tree_bounds_metric(aa_b) * Tree_Scalar(a.a.leaf_count + root.b.leaf_count) + cost_ab;
+		cost_abb := tree_bounds_metric(ab_b) * Tree_Scalar(a.b.leaf_count + root.b.leaf_count) + cost_aa;
 		if cost_aab < cost_abb
 		{
 			right_uses_a = .Present;
@@ -130,10 +129,10 @@ tree_try_rotate_node :: proc "contextless" (tree: ^Tree, rotation_root_index: in
 		b := &tree.nodes.memory[root.b.index];
 		ba_a := tree_bounds_merge(tree_child_bounds(b.a), tree_child_bounds(root.a));
 		bb_a := tree_bounds_merge(tree_child_bounds(b.b), tree_child_bounds(root.a));
-		cost_ba := tree_bounds_metric(tree_child_bounds(b.a)) * f32(b.a.leaf_count);
-		cost_bb := tree_bounds_metric(tree_child_bounds(b.b)) * f32(b.b.leaf_count);
-		cost_baa := tree_bounds_metric(ba_a) * f32(b.a.leaf_count + root.a.leaf_count) + cost_bb;
-		cost_bba := tree_bounds_metric(bb_a) * f32(b.b.leaf_count + root.a.leaf_count) + cost_ba;
+		cost_ba := tree_bounds_metric(tree_child_bounds(b.a)) * Tree_Scalar(b.a.leaf_count);
+		cost_bb := tree_bounds_metric(tree_child_bounds(b.b)) * Tree_Scalar(b.b.leaf_count);
+		cost_baa := tree_bounds_metric(ba_a) * Tree_Scalar(b.a.leaf_count + root.a.leaf_count) + cost_bb;
+		cost_bba := tree_bounds_metric(bb_a) * Tree_Scalar(b.b.leaf_count + root.a.leaf_count) + cost_ba;
 		if cost_baa < cost_bba
 		{
 			left_uses_a = .Present;
@@ -192,7 +191,7 @@ tree_try_rotate_node :: proc "contextless" (tree: ^Tree, rotation_root_index: in
 	}
 }
 
-tree_add_trusted :: proc "contextless" (tree: ^Tree, bounds: util.Bounding_Box) -> int
+tree_add_trusted :: proc "contextless" (tree: ^Tree, bounds: Tree_Bounds) -> int
 {
 	leaf_index := tree_add_without_refinement_trusted(tree, bounds);
 	parent_index := tree_leaf_node_index(tree.leaves.memory[leaf_index]);
@@ -204,7 +203,7 @@ tree_add_trusted :: proc "contextless" (tree: ^Tree, bounds: util.Bounding_Box) 
 	return leaf_index;
 }
 
-tree_add :: proc (tree: ^Tree, bounds: util.Bounding_Box) -> (int, Physics_Status)
+tree_add :: proc (tree: ^Tree, bounds: Tree_Bounds) -> (int, Physics_Status)
 {
 	leaf_index, status := tree_add_without_refinement(tree, bounds);
 	if status != .Ok
@@ -237,7 +236,7 @@ tree_refit_for_node_bounds_change :: proc "contextless" (tree: ^Tree, node_index
 	}
 }
 
-tree_update_bounds :: proc "contextless" (tree: ^Tree, leaf_index: int, bounds: util.Bounding_Box) -> Physics_Status
+tree_update_bounds :: proc "contextless" (tree: ^Tree, leaf_index: int, bounds: Tree_Bounds) -> Physics_Status
 {
 	if tree == nil || tree.state != .Ready || leaf_index < 0 || leaf_index >= tree.leaf_count ||
 	bounds.min.x > bounds.max.x || bounds.min.y > bounds.max.y || bounds.min.z > bounds.max.z
@@ -255,7 +254,7 @@ tree_update_bounds :: proc "contextless" (tree: ^Tree, leaf_index: int, bounds: 
 
 tree_refit_subtree :: proc "contextless" (
 	tree: ^Tree, node_index: int,
-) -> (util.Bounding_Box, i32)
+) -> (Tree_Bounds, i32)
 {
 	node := &tree.nodes.memory[node_index];
 	for child_index in 0 ..< 2

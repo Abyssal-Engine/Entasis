@@ -4,6 +4,7 @@ import "core:testing"
 import "core:thread"
 import "base:runtime"
 import e "entasis:entasis"
+import p "entasis:entasis_physics"
 import cooking "entasis:entasis_cooking"
 import util "entasis:entasis_utilities"
 
@@ -299,9 +300,9 @@ query_context_concurrent_convex_compound_mesh_and_native_custom_routes :: proc(t
 			testing.expect_value(t, cooking.cooking_context_destroy(&cook), e.Status.Ok);
 			case 3:
 			type_id: e.Shape_Type_ID;
-			ok: bool;
-			type_id, ok = register_custom_sphere(t, &world);
-			if !ok
+			registration_status: e.Status;
+			type_id, registration_status = register_custom_sphere(t, &world);
+			if registration_status != .Ok
 			{
 				_ = e.world_destroy(&world);
 				return;
@@ -428,4 +429,252 @@ query_context_reuses_rounded_capacity_without_allocation :: proc(t: ^testing.T)
 	testing.expect_value(t, e.buffer_pool_destroy(&pool), e.Status.Ok);
 	testing.expect_value(t, state.requests, requests);
 	allocation_test_empty(t, &state);
+}
+
+Collision_Batch_Trace :: struct
+{
+	results, expected: []e.Collision_Query_Result,
+	calls, prefix: int,
+	validation: e.Status,
+}
+
+collision_batch_barrier :: proc "contextless" (
+	user_context: rawptr, a, b: rawptr, pose_a, pose_b: p.Rigid_Pose,
+	margin: f32, registry: ^p.Shape_Registry,
+) -> (p.Convex_Contact_Manifold, e.Status)
+{
+	trace: ^Collision_Batch_Trace = (^Collision_Batch_Trace)(user_context);
+	trace.calls += 1;
+	if len(trace.results) > 0
+	{
+		for index in 0..<trace.prefix
+		{
+			if trace.results[index] != trace.expected[index]
+			{
+				trace.validation = .Invalid_Description;
+			}
+		}
+	}
+	trace.prefix = 17 if trace.calls == 1 else 28;
+	if pose_a.position.y == 11
+	{
+		return {}, .Invalid_Description;
+	}
+	return p.sphere_box_test(a, b, pose_a, pose_b, margin, registry);
+}
+
+collision_batch_override_box :: proc "contextless" (
+	a, b: rawptr, pose_a, pose_b: p.Rigid_Pose, margin: f32, registry: ^p.Shape_Registry,
+) -> (p.Convex_Contact_Manifold, e.Status)
+{
+	manifold: p.Convex_Contact_Manifold;
+	status: e.Status;
+	manifold, status = p.box_pair_test(a, b, pose_a, pose_b, margin, registry);
+	for index in 0..<int(manifold.count)
+	{
+		manifold.contacts[index].feature_id = 7654;
+	}
+	return manifold, status;
+}
+
+collision_batch_contextual_box :: proc "contextless" (
+	user_context: rawptr, a, b: rawptr, pose_a, pose_b: p.Rigid_Pose,
+	margin: f32, registry: ^p.Shape_Registry,
+) -> (p.Convex_Contact_Manifold, e.Status)
+{
+	trace: ^Collision_Batch_Trace = (^Collision_Batch_Trace)(user_context);
+	trace.calls += 1;
+	return collision_batch_override_box(a, b, pose_a, pose_b, margin, registry);
+}
+
+@(test)
+collision_batch_native_runs_preserve_barriers_errors_and_tails :: proc(t: ^testing.T)
+{
+	world: e.World;
+	testing.expect_value(t, e.world_init(&world, small_world_description()), e.Status.Ok);
+	defer e.world_destroy(&world);
+	box_a, box_b, sphere: e.Shape_Handle;
+	status: e.Status;
+	box_a, status = e.shape_add(&world, e.box(2, 3, 4));
+	testing.expect_value(t, status, e.Status.Ok);
+	box_b, status = e.shape_add(&world, e.box(1, 2, 3));
+	testing.expect_value(t, status, e.Status.Ok);
+	sphere, status = e.shape_add(&world, e.sphere(1));
+	testing.expect_value(t, status, e.Status.Ok);
+	query_context: e.Query_Context;
+	testing.expect_value(t, e.query_context_init(&query_context, &world), e.Status.Ok);
+	defer e.query_context_destroy(&query_context);
+	queries: [41]e.Collision_Query;
+	expected, actual: [41]e.Collision_Query_Result;
+	for &query, index in queries
+	{
+		query = {shape_a=box_a, shape_b=box_b, pose_a=e.pose(), pose_b=e.pose()};
+		switch index%8
+		{
+		case 0:
+			query.pose_b.position.x = 0.5;
+		case 1:
+			query.pose_b.position.x = 3;
+		case 2:
+			query.pose_b.position.x = 1.5;
+		case 3:
+			query.pose_b.position.x = 1.75;
+			query.speculative_margin = 0.25;
+		case 4:
+			query.pose_a = e.pose({1048576, -1048576, 1048576});
+			query.pose_b = e.pose({1048577, -1048576, 1048576});
+		case 5:
+			query.pose_b.orientation = {0, 0.38268343, 0, 0.9238795};
+		case 6:
+			query.pose_b.position = {1.2, 1.7, 2.5};
+		case 7:
+			query.pose_b.position = {0, 0, 0};
+		}
+		if index%2 == 1
+		{
+			query.shape_a, query.shape_b = query.shape_b, query.shape_a;
+			query.pose_a, query.pose_b = query.pose_b, query.pose_a;
+		}
+	}
+	for count in ([13]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 31, 32, 33})
+	{
+		for index in 0..<count
+		{
+			expected[index].manifold, expected[index].status = e.collision_query(&world,
+				queries[index].shape_a, queries[index].pose_a, queries[index].shape_b,
+				queries[index].pose_b, queries[index].speculative_margin);
+			expected[index].hit = expected[index].status == .Ok;
+		}
+		for route in 0..<2
+		{
+			actual = {};
+			status = e.collision_query_batch(&world, queries[:count], actual[:count]) if route == 0 else
+				e.collision_query_batch_with_context(&query_context, queries[:count], actual[:count]);
+			testing.expect_value(t, status, e.Status.Ok);
+			for index in 0..<count
+			{
+				testing.expect_value(t, actual[index], expected[index]);
+			}
+		}
+	}
+	// the contextual sphere-box item observes every preceding published result
+	simulation: ^e.Simulation;
+	simulation, status = e.world_borrow_simulation(&world);
+	testing.expect_value(t, status, e.Status.Ok);
+	registry: ^p.Shape_Registry = p.simulation_shape_registry(simulation);
+	task: ^p.Collision_Task;
+	task, _, status = p.collision_task_registry_lookup(&simulation.collision_tasks, int(e.SHAPE_TYPE_SPHERE), int(e.SHAPE_TYPE_BOX));
+	testing.expect_value(t, status, e.Status.Ok);
+	saved_task: p.Collision_Task = task^;
+	trace: Collision_Batch_Trace = {prefix=7};
+	binding: p.Contextual_Collision_Task_Binding = {user_context=&trace, test=collision_batch_barrier};
+	task.dispatch = .Contextual;
+	task.contextual = &binding;
+	defer task^ = saved_task;
+	queries[7] = {shape_a=sphere, shape_b=box_a, pose_a=e.pose(), pose_b=e.pose({0.5, 0, 0})};
+	queries[17] = queries[7];
+	queries[17].pose_a.position.y = 11;
+	queries[25].speculative_margin = -1;
+	queries[26].shape_a = {};
+	queries[27].shape_b = {};
+	queries[28] = queries[7];
+	for index in 0..<len(queries)
+	{
+		expected[index].manifold, expected[index].status = e.collision_query(&world,
+			queries[index].shape_a, queries[index].pose_a, queries[index].shape_b,
+			queries[index].pose_b, queries[index].speculative_margin);
+		expected[index].hit = expected[index].status == .Ok;
+	}
+	for route in 0..<2
+	{
+		for &result in actual
+		{
+			result = {status=.Disposed};
+		}
+		trace.calls, trace.validation, trace.prefix = 0, .Ok, 7;
+		trace.results, trace.expected = actual[:], expected[:];
+		status = e.collision_query_batch(&world, queries[:], actual[:]) if route == 0 else
+			e.collision_query_batch_with_context(&query_context, queries[:], actual[:]);
+		testing.expect_value(t, status, e.Status.Invalid_Description);
+		testing.expect_value(t, trace.calls, 3);
+		testing.expect_value(t, trace.validation, e.Status.Ok);
+		for index in 0..<len(queries)
+		{
+			testing.expect_value(t, actual[index], expected[index]);
+		}
+	}
+	trace.results = nil;
+	// advanced registered overrides and flipped routes retain their scalar owner
+	box_task: ^p.Collision_Task;
+	reference: p.Collision_Task_Reference;
+	box_task, reference, status = p.collision_task_registry_lookup(&simulation.collision_tasks, int(e.SHAPE_TYPE_BOX), int(e.SHAPE_TYPE_BOX));
+	testing.expect_value(t, status, e.Status.Ok);
+	original_box_task: p.Collision_Task = box_task^;
+	defer box_task^ = original_box_task;
+	box_binding: p.Contextual_Collision_Task_Binding = {user_context=&trace, test=collision_batch_contextual_box};
+	for mode in 0..<4
+	{
+		box_task^ = original_box_task;
+		if mode == 0
+		{
+			box_task.convex_test = collision_batch_override_box;
+		}
+		if mode == 1
+		{
+			registry.batches[e.SHAPE_TYPE_BOX].metadata.bounds = p.sphere_bounds_proc;
+		}
+		matrix_index: int = p.collision_task_matrix_index(int(e.SHAPE_TYPE_BOX), int(e.SHAPE_TYPE_BOX));
+		if mode == 2
+		{
+			simulation.collision_tasks.routes[matrix_index].order = .Flipped;
+		}
+		if mode == 3
+		{
+			box_task.dispatch = .Contextual;
+			box_task.contextual = &box_binding;
+		}
+		for index in 0..<7
+		{
+			expected[index].manifold, expected[index].status = e.collision_query(&world,
+				queries[index].shape_a, queries[index].pose_a, queries[index].shape_b,
+				queries[index].pose_b, queries[index].speculative_margin);
+			expected[index].hit = expected[index].status == .Ok;
+		}
+		for route in 0..<2
+		{
+			trace.calls = 0;
+			status = e.collision_query_batch(&world, queries[:7], actual[:7]) if route == 0 else
+				e.collision_query_batch_with_context(&query_context, queries[:7], actual[:7]);
+			testing.expect_value(t, status, e.Status.Ok);
+			if mode == 3
+			{
+				testing.expect_value(t, trace.calls, 7);
+			}
+			for index in 0..<7
+			{
+				testing.expect_value(t, actual[index], expected[index]);
+			}
+		}
+		registry.batches[e.SHAPE_TYPE_BOX].metadata.bounds = p.box_bounds_proc;
+		simulation.collision_tasks.routes[matrix_index] = reference;
+	}
+	box_task^ = original_box_task;
+	raw_box: rawptr;
+	raw_box, _, status = p.shape_registry_resolve(registry, box_a);
+	testing.expect_value(t, status, e.Status.Ok);
+	stored_box: p.Box = (^p.Box)(raw_box)^;
+	(^p.Box)(raw_box).half_width = -1;
+	expected[0].manifold, expected[0].status = e.collision_query(&world, queries[0].shape_a, queries[0].pose_a, queries[0].shape_b, queries[0].pose_b);
+	expected[0].hit = expected[0].status == .Ok;
+	for route in 0..<2
+	{
+		status = e.collision_query_batch(&world, queries[:1], actual[:1]) if route == 0 else
+			e.collision_query_batch_with_context(&query_context, queries[:1], actual[:1]);
+		testing.expect_value(t, status, e.Status.Invalid_Description);
+		testing.expect_value(t, actual[0], expected[0]);
+	}
+	(^p.Box)(raw_box)^ = stored_box;
+
+	testing.expect_value(t, e.collision_query_batch(&world, queries[:2], actual[:1]), e.Status.Invalid_Argument);
+	testing.expect_value(t, e.collision_query_batch_with_context(&query_context, queries[:2], actual[:1]), e.Status.Invalid_Argument);
 }

@@ -1,11 +1,19 @@
 package entasis_c_shared
 
 import entasis "entasis:entasis"
+import util "entasis:entasis_utilities"
 
 // private layout cookie, not the public ABI generation. mismatched runtime and
 // cooking libraries must reject the handle before reading the shared state or
 // its native world pointee. hierarchy and joint watches change native root offsets
-WORLD_MAGIC :: u64(0x454E54574F524C4B);
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	WORLD_MAGIC :: u64(0x454E54574F524C4C);
+}
+else
+{
+	WORLD_MAGIC :: u64(0x454E54574F524C4B);
+}
 World_Access :: enum u8
 {
 	Ready,

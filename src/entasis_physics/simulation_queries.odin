@@ -82,18 +82,23 @@ simulation_ray_query_leaf :: proc "contextless" (
 	{
 		return .Invalid_Argument;
 	}
-	// this callback is only installed by simulation_ray_tree_query below.
-	// resolve both active and sleeping/static leaves from their existing handles
-	target, status := simulation_query_target(
-		query_context.simulation, query_context.leaves.memory[leaf_index],
-	);
+	// filter the live leaf identity before resolving its shape and pose
+	reference := query_context.leaves.memory[leaf_index];
+	if query_filter_target(
+		query_context.collector.callbacks.filter, query_context.collector.callbacks.user_context,
+		i32(reference.packed),
+	) != .Allow
+	{
+		return .Ok;
+	}
+	target, status := simulation_query_target(query_context.simulation, reference);
 	if status != .Ok
 	{
 		return status;
 	}
 	return query_ray_shape_with_maximum_filtered(
 		query_context.shapes, target, query_context.ray, query_context.collector,
-		maximum_t, 0, .Missing, query_context.pool,
+		maximum_t, 0, .Present, query_context.pool,
 	);
 }
 

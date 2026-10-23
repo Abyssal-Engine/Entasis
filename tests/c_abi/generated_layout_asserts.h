@@ -1376,6 +1376,214 @@ ENTASIS_LAYOUT_ASSERT(offsetof(entasis_joint_break_update_result_t, break_requir
 ENTASIS_LAYOUT_ASSERT(offsetof(entasis_joint_break_update_result_t, alpha) == 36u, "entasis_joint_break_update_result_t.alpha offset");
 ENTASIS_LAYOUT_ASSERT(offsetof(entasis_joint_break_update_result_t, pending) == 40u, "entasis_joint_break_update_result_t.pending offset");
 ENTASIS_LAYOUT_ASSERT(offsetof(entasis_joint_break_update_result_t, reserved) == 41u, "entasis_joint_break_update_result_t.reserved offset");
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_position_t) == 24u, "entasis_global_position_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_position_t) == 8u, "entasis_global_position_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_position_t, x) == 0u, "entasis_global_position_t.x offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_position_t, y) == 8u, "entasis_global_position_t.y offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_position_t, z) == 16u, "entasis_global_position_t.z offset");
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_origin_frame_t) == 24u, "entasis_origin_frame_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_origin_frame_t) == 8u, "entasis_origin_frame_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_origin_frame_t, origin) == 0u, "entasis_origin_frame_t.origin offset");
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_pose_t) == 40u, "entasis_global_pose_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_pose_t) == 8u, "entasis_global_pose_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_t, position) == 0u, "entasis_global_pose_t.position offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_t, orientation) == 24u, "entasis_global_pose_t.orientation offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_pose_integration_view_t) == 64u, "entasis_global_pose_integration_view_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_pose_integration_view_t) == 8u, "entasis_global_pose_integration_view_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, body_handles) == 0u, "entasis_global_pose_integration_view_t.body_handles offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, active_mask) == 8u, "entasis_global_pose_integration_view_t.active_mask offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, position) == 16u, "entasis_global_pose_integration_view_t.position offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, orientation) == 24u, "entasis_global_pose_integration_view_t.orientation offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, inertia) == 32u, "entasis_global_pose_integration_view_t.inertia offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, dt) == 40u, "entasis_global_pose_integration_view_t.dt offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, velocity) == 48u, "entasis_global_pose_integration_view_t.velocity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, worker_index) == 56u, "entasis_global_pose_integration_view_t.worker_index offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_pose_integration_view_t, _reserved0) == 60u, "entasis_global_pose_integration_view_t._reserved0 offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_velocity_callbacks_t) == 56u, "entasis_global_velocity_callbacks_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_velocity_callbacks_t) == 8u, "entasis_global_velocity_callbacks_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, struct_size) == 0u, "entasis_global_velocity_callbacks_t.struct_size offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, struct_version) == 4u, "entasis_global_velocity_callbacks_t.struct_version offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, angular_mode) == 8u, "entasis_global_velocity_callbacks_t.angular_mode offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, allow_substeps_for_unconstrained) == 9u, "entasis_global_velocity_callbacks_t.allow_substeps_for_unconstrained offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, integrate_kinematic_velocity) == 10u, "entasis_global_velocity_callbacks_t.integrate_kinematic_velocity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, _reserved0) == 11u, "entasis_global_velocity_callbacks_t._reserved0 offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, user_context) == 16u, "entasis_global_velocity_callbacks_t.user_context offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, initialize) == 24u, "entasis_global_velocity_callbacks_t.initialize offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, prepare) == 32u, "entasis_global_velocity_callbacks_t.prepare offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, integrate) == 40u, "entasis_global_velocity_callbacks_t.integrate offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_velocity_callbacks_t, dispose) == 48u, "entasis_global_velocity_callbacks_t.dispose offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_body_state_t) == 136u, "entasis_global_body_state_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_body_state_t) == 8u, "entasis_global_body_state_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_body_state_t, pose) == 0u, "entasis_global_body_state_t.pose offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_body_state_t, velocity) == 40u, "entasis_global_body_state_t.velocity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_body_state_t, local_inertia) == 72u, "entasis_global_body_state_t.local_inertia offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_body_state_t, collidable) == 104u, "entasis_global_body_state_t.collidable offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_body_state_t, activity) == 128u, "entasis_global_body_state_t.activity offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_static_state_t) == 56u, "entasis_global_static_state_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_static_state_t) == 8u, "entasis_global_static_state_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_static_state_t, pose) == 0u, "entasis_global_static_state_t.pose offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_static_state_t, shape) == 40u, "entasis_global_static_state_t.shape offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_static_state_t, continuity) == 44u, "entasis_global_static_state_t.continuity offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_constraint_target_state_t) == 32u, "entasis_global_constraint_target_state_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_constraint_target_state_t) == 8u, "entasis_global_constraint_target_state_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_constraint_target_state_t, position) == 0u, "entasis_global_constraint_target_state_t.position offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_constraint_target_state_t, kind) == 24u, "entasis_global_constraint_target_state_t.kind offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_kinematic_target_state_t) == 48u, "entasis_global_kinematic_target_state_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_kinematic_target_state_t) == 8u, "entasis_global_kinematic_target_state_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_kinematic_target_state_t, pose) == 0u, "entasis_global_kinematic_target_state_t.pose offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_kinematic_target_state_t, presence) == 40u, "entasis_global_kinematic_target_state_t.presence offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_state_selection_t) == 64u, "entasis_global_state_selection_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_state_selection_t) == 8u, "entasis_global_state_selection_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, bodies) == 0u, "entasis_global_state_selection_t.bodies offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, bodies_count) == 8u, "entasis_global_state_selection_t.bodies_count offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, statics) == 16u, "entasis_global_state_selection_t.statics offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, statics_count) == 24u, "entasis_global_state_selection_t.statics_count offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, constraint_targets) == 32u, "entasis_global_state_selection_t.constraint_targets offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, constraint_targets_count) == 40u, "entasis_global_state_selection_t.constraint_targets_count offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, kinematic_targets) == 48u, "entasis_global_state_selection_t.kinematic_targets offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_selection_t, kinematic_targets_count) == 56u, "entasis_global_state_selection_t.kinematic_targets_count offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_state_snapshot_t) == 64u, "entasis_global_state_snapshot_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_state_snapshot_t) == 8u, "entasis_global_state_snapshot_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, bodies) == 0u, "entasis_global_state_snapshot_t.bodies offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, bodies_capacity) == 8u, "entasis_global_state_snapshot_t.bodies_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, statics) == 16u, "entasis_global_state_snapshot_t.statics offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, statics_capacity) == 24u, "entasis_global_state_snapshot_t.statics_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, constraint_targets) == 32u, "entasis_global_state_snapshot_t.constraint_targets offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, constraint_targets_capacity) == 40u, "entasis_global_state_snapshot_t.constraint_targets_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, kinematic_targets) == 48u, "entasis_global_state_snapshot_t.kinematic_targets offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_snapshot_t, kinematic_targets_capacity) == 56u, "entasis_global_state_snapshot_t.kinematic_targets_capacity offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_state_counts_t) == 32u, "entasis_global_state_counts_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_state_counts_t) == 8u, "entasis_global_state_counts_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_counts_t, bodies) == 0u, "entasis_global_state_counts_t.bodies offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_counts_t, statics) == 8u, "entasis_global_state_counts_t.statics offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_counts_t, constraint_targets) == 16u, "entasis_global_state_counts_t.constraint_targets offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_state_counts_t, kinematic_targets) == 24u, "entasis_global_state_counts_t.kinematic_targets offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_world_precision_segment_t) == 48u, "entasis_world_precision_segment_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_world_precision_segment_t) == 8u, "entasis_world_precision_segment_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_world_precision_segment_t, start) == 0u, "entasis_world_precision_segment_t.start offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_world_precision_segment_t, end) == 24u, "entasis_world_precision_segment_t.end offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_bounds_t) == 48u, "entasis_global_bounds_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_bounds_t) == 8u, "entasis_global_bounds_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_bounds_t, min) == 0u, "entasis_global_bounds_t.min offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_bounds_t, max) == 24u, "entasis_global_bounds_t.max offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_ray_hit_t) == 56u, "entasis_global_ray_hit_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_ray_hit_t) == 8u, "entasis_global_ray_hit_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_ray_hit_t, t) == 0u, "entasis_global_ray_hit_t.t offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_ray_hit_t, location) == 8u, "entasis_global_ray_hit_t.location offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_ray_hit_t, normal) == 32u, "entasis_global_ray_hit_t.normal offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_ray_hit_t, collidable) == 44u, "entasis_global_ray_hit_t.collidable offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_ray_hit_t, child_index) == 48u, "entasis_global_ray_hit_t.child_index offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_sweep_result_t) == 64u, "entasis_global_sweep_result_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_sweep_result_t) == 8u, "entasis_global_sweep_result_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, state) == 0u, "entasis_global_sweep_result_t.state offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, reserved) == 1u, "entasis_global_sweep_result_t.reserved offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, t0) == 4u, "entasis_global_sweep_result_t.t0 offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, t1) == 8u, "entasis_global_sweep_result_t.t1 offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, location) == 16u, "entasis_global_sweep_result_t.location offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, normal) == 40u, "entasis_global_sweep_result_t.normal offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, child_a) == 52u, "entasis_global_sweep_result_t.child_a offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_result_t, child_b) == 56u, "entasis_global_sweep_result_t.child_b offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_sweep_hit_t) == 72u, "entasis_global_sweep_hit_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_sweep_hit_t) == 8u, "entasis_global_sweep_hit_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_hit_t, collidable) == 0u, "entasis_global_sweep_hit_t.collidable offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_sweep_hit_t, sweep) == 8u, "entasis_global_sweep_hit_t.sweep offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_distance_geometry_t) == 80u, "entasis_global_distance_geometry_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_distance_geometry_t) == 8u, "entasis_global_distance_geometry_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, state) == 0u, "entasis_global_distance_geometry_t.state offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, point_a) == 8u, "entasis_global_distance_geometry_t.point_a offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, point_b) == 32u, "entasis_global_distance_geometry_t.point_b offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, normal) == 56u, "entasis_global_distance_geometry_t.normal offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, distance) == 68u, "entasis_global_distance_geometry_t.distance offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, depth) == 72u, "entasis_global_distance_geometry_t.depth offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_geometry_t, iterations) == 76u, "entasis_global_distance_geometry_t.iterations offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_shape_distance_result_t) == 88u, "entasis_global_shape_distance_result_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_shape_distance_result_t) == 8u, "entasis_global_shape_distance_result_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_shape_distance_result_t, geometry) == 0u, "entasis_global_shape_distance_result_t.geometry offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_shape_distance_result_t, child_a) == 80u, "entasis_global_shape_distance_result_t.child_a offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_shape_distance_result_t, child_b) == 84u, "entasis_global_shape_distance_result_t.child_b offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_query_t) == 144u, "entasis_global_query_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_query_t) == 8u, "entasis_global_query_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_t, kind) == 0u, "entasis_global_query_t.kind offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_t, _reserved0) == 1u, "entasis_global_query_t._reserved0 offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_t, payload) == 8u, "entasis_global_query_t.payload offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_query_result_t) == 80u, "entasis_global_query_result_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_query_result_t) == 8u, "entasis_global_query_result_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, kind) == 0u, "entasis_global_query_result_t.kind offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, status) == 1u, "entasis_global_query_result_t.status offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, hit) == 2u, "entasis_global_query_result_t.hit offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, _reserved0) == 3u, "entasis_global_query_result_t._reserved0 offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, count) == 4u, "entasis_global_query_result_t.count offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_result_t, payload) == 8u, "entasis_global_query_result_t.payload offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_query_scratch_t) == 80u, "entasis_global_query_scratch_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_query_scratch_t) == 8u, "entasis_global_query_scratch_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, ray_hits) == 0u, "entasis_global_query_scratch_t.ray_hits offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, ray_capacity) == 8u, "entasis_global_query_scratch_t.ray_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, sweep_hits) == 16u, "entasis_global_query_scratch_t.sweep_hits offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, sweep_capacity) == 24u, "entasis_global_query_scratch_t.sweep_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, overlap_hits) == 32u, "entasis_global_query_scratch_t.overlap_hits offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, overlap_capacity) == 40u, "entasis_global_query_scratch_t.overlap_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, volume_hits) == 48u, "entasis_global_query_scratch_t.volume_hits offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, volume_capacity) == 56u, "entasis_global_query_scratch_t.volume_capacity offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, traversal_stack) == 64u, "entasis_global_query_scratch_t.traversal_stack offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_query_scratch_t, stack_capacity) == 72u, "entasis_global_query_scratch_t.stack_capacity offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_distance_query_t) == 136u, "entasis_global_distance_query_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_distance_query_t) == 8u, "entasis_global_distance_query_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, kind) == 0u, "entasis_global_distance_query_t.kind offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, shape_a) == 4u, "entasis_global_distance_query_t.shape_a offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, shape_b) == 8u, "entasis_global_distance_query_t.shape_b offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, pose_a) == 16u, "entasis_global_distance_query_t.pose_a offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, pose_b) == 56u, "entasis_global_distance_query_t.pose_b offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, point) == 96u, "entasis_global_distance_query_t.point offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_t, settings) == 120u, "entasis_global_distance_query_t.settings offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+ENTASIS_LAYOUT_ASSERT(sizeof(entasis_global_distance_query_result_t) == 120u, "entasis_global_distance_query_result_t size");
+ENTASIS_LAYOUT_ASSERT(ENTASIS_LAYOUT_ALIGNOF(entasis_global_distance_query_result_t) == 8u, "entasis_global_distance_query_result_t alignment");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_result_t, status) == 0u, "entasis_global_distance_query_result_t.status offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_result_t, shape) == 8u, "entasis_global_distance_query_result_t.shape offset");
+ENTASIS_LAYOUT_ASSERT(offsetof(entasis_global_distance_query_result_t, correction) == 96u, "entasis_global_distance_query_result_t.correction offset");
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 ENTASIS_LAYOUT_ASSERT(ENTASIS_STATUS_OK == 0, "status value");
 ENTASIS_LAYOUT_ASSERT(ENTASIS_STATUS_DISPOSED == 6, "status value");

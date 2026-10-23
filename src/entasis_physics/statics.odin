@@ -5,18 +5,45 @@ package entasis_physics
 
 import util "entasis:entasis_utilities"
 
-Statics :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	statics:         util.Buffer(Static),
-	handle_to_index: util.Buffer(i32),
-	index_to_handle: util.Buffer(Static_Handle),
-	handle_pool:     util.Id_Pool,
-	pool:            ^util.Buffer_Pool,
-	shapes:          ^Shape_Registry,
-	count:           int,
-	state:           Body_Set_State,
-	triggers: ^Trigger_System,
-	restitution: ^Restitution_Storage,
+	Static_Local_Bounds :: struct
+	{
+		bounds: Shape_Bounds,
+		state: Reference_State,
+	}
+
+	Statics :: struct
+	{
+		statics:         util.Buffer(Static),
+		global_positions: util.Buffer(Global_Position),
+		local_bounds: util.Buffer(Static_Local_Bounds),
+		handle_to_index: util.Buffer(i32),
+		index_to_handle: util.Buffer(Static_Handle),
+		handle_pool:     util.Id_Pool,
+		pool:            ^util.Buffer_Pool,
+		shapes:          ^Shape_Registry,
+		count:           int,
+		state:           Body_Set_State,
+		triggers: ^Trigger_System,
+		restitution: ^Restitution_Storage,
+	}
+}
+else
+{
+	Statics :: struct
+	{
+		statics:         util.Buffer(Static),
+		handle_to_index: util.Buffer(i32),
+		index_to_handle: util.Buffer(Static_Handle),
+		handle_pool:     util.Id_Pool,
+		pool:            ^util.Buffer_Pool,
+		shapes:          ^Shape_Registry,
+		count:           int,
+		state:           Body_Set_State,
+		triggers: ^Trigger_System,
+		restitution: ^Restitution_Storage,
+	}
 }
 
 statics_capacity :: proc "contextless" (statics: ^Statics) -> int
@@ -25,13 +52,18 @@ statics_capacity :: proc "contextless" (statics: ^Statics) -> int
 	{
 		return 0;
 	}
-	return min(
+	capacity: int = min(
 		int(statics.statics.length),
 		min(
 			int(statics.handle_to_index.length),
 			int(statics.index_to_handle.length),
 		),
 	);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		capacity = min(capacity, min(int(statics.global_positions.length), int(statics.local_bounds.length)));
+	}
+	return capacity;
 }
 
 statics_bind_shape_registry :: proc "contextless" (statics: ^Statics, shapes: ^Shape_Registry) -> Physics_Status
@@ -56,12 +88,39 @@ statics_initialize :: proc (statics: ^Statics, capacity: int, pool: ^util.Buffer
 	{
 		return physics_memory_status(static_status);
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		global_positions: util.Buffer(Global_Position);
+		positions_status: util.Memory_Status;
+		global_positions, positions_status = util.buffer_pool_take_at_least(pool, Global_Position, int(static_buffer.length));
+		if positions_status != .Ok
+		{
+			physics_return_buffer(pool, &static_buffer);
+			return physics_memory_status(positions_status);
+		}
+		_ = util.buffer_clear(global_positions, 0, int(global_positions.length));
+		local_bounds: util.Buffer(Static_Local_Bounds);
+		bounds_status: util.Memory_Status;
+		local_bounds, bounds_status = util.buffer_pool_take_at_least(pool, Static_Local_Bounds, int(static_buffer.length));
+		if bounds_status != .Ok
+		{
+			physics_return_buffer(pool, &global_positions);
+			physics_return_buffer(pool, &static_buffer);
+			return physics_memory_status(bounds_status);
+		}
+		_ = util.buffer_clear(local_bounds, 0, int(local_bounds.length));
+	}
 	storage_capacity := int(static_buffer.length);
 	handle_to_index, map_status := util.buffer_pool_take_at_least(
 		pool, i32, storage_capacity,
 	);
 	if map_status != .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &local_bounds);
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &static_buffer);
 		return physics_memory_status(map_status);
 	}
@@ -71,6 +130,11 @@ statics_initialize :: proc (statics: ^Statics, capacity: int, pool: ^util.Buffer
 	if reverse_status != .Ok
 	{
 		physics_return_buffer(pool, &handle_to_index);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &local_bounds);
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &static_buffer);
 		return physics_memory_status(reverse_status);
 	}
@@ -86,6 +150,11 @@ statics_initialize :: proc (statics: ^Statics, capacity: int, pool: ^util.Buffer
 	{
 		physics_return_buffer(pool, &index_to_handle);
 		physics_return_buffer(pool, &handle_to_index);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(pool, &local_bounds);
+			physics_return_buffer(pool, &global_positions);
+		}
 		physics_return_buffer(pool, &static_buffer);
 		return physics_memory_status(id_status);
 	}
@@ -97,6 +166,11 @@ statics_initialize :: proc (statics: ^Statics, capacity: int, pool: ^util.Buffer
 		pool=pool,
 		state=.Allocated,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		statics.global_positions = global_positions;
+		statics.local_bounds = local_bounds;
+	}
 	return .Ok;
 }
 
@@ -116,12 +190,39 @@ statics_ensure_capacity :: proc (statics: ^Statics, capacity: int) -> Physics_St
 	{
 		return physics_memory_status(statics_status);
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		new_positions: util.Buffer(Global_Position);
+		positions_status: util.Memory_Status;
+		new_positions, positions_status = util.buffer_pool_take_at_least(statics.pool, Global_Position, int(new_statics.length));
+		if positions_status != .Ok
+		{
+			physics_return_buffer(statics.pool, &new_statics);
+			return physics_memory_status(positions_status);
+		}
+		_ = util.buffer_clear(new_positions, 0, int(new_positions.length));
+		new_bounds: util.Buffer(Static_Local_Bounds);
+		bounds_status: util.Memory_Status;
+		new_bounds, bounds_status = util.buffer_pool_take_at_least(statics.pool, Static_Local_Bounds, int(new_statics.length));
+		if bounds_status != .Ok
+		{
+			physics_return_buffer(statics.pool, &new_positions);
+			physics_return_buffer(statics.pool, &new_statics);
+			return physics_memory_status(bounds_status);
+		}
+		_ = util.buffer_clear(new_bounds, 0, int(new_bounds.length));
+	}
 	storage_capacity := int(new_statics.length);
 	new_reverse, reverse_status := util.buffer_pool_take_at_least(
 		statics.pool, Static_Handle, storage_capacity,
 	);
 	if reverse_status != .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(statics.pool, &new_bounds);
+			physics_return_buffer(statics.pool, &new_positions);
+		}
 		physics_return_buffer(statics.pool, &new_statics);
 		return physics_memory_status(reverse_status);
 	}
@@ -131,6 +232,11 @@ statics_ensure_capacity :: proc (statics: ^Statics, capacity: int) -> Physics_St
 	if map_status != .Ok
 	{
 		physics_return_buffer(statics.pool, &new_reverse);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(statics.pool, &new_bounds);
+			physics_return_buffer(statics.pool, &new_positions);
+		}
 		physics_return_buffer(statics.pool, &new_statics);
 		return physics_memory_status(map_status);
 	}
@@ -141,6 +247,11 @@ statics_ensure_capacity :: proc (statics: ^Statics, capacity: int) -> Physics_St
 	{
 		physics_return_buffer(statics.pool, &new_map);
 		physics_return_buffer(statics.pool, &new_reverse);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(statics.pool, &new_bounds);
+			physics_return_buffer(statics.pool, &new_positions);
+		}
 		physics_return_buffer(statics.pool, &new_statics);
 		return physics_memory_status(ids_status);
 	}
@@ -157,6 +268,17 @@ statics_ensure_capacity :: proc (statics: ^Statics, capacity: int) -> Physics_St
 		0,
 		statics.count
 	);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if copy_status == .Ok
+		{
+			copy_status = util.buffer_copy(util.buffer_view(statics.global_positions), 0, util.buffer_view(new_positions), 0, statics.count);
+		}
+		if copy_status == .Ok
+		{
+			copy_status = util.buffer_copy(util.buffer_view(statics.local_bounds), 0, util.buffer_view(new_bounds), 0, statics.count);
+		}
+	}
 	if copy_status == .Ok
 	{
 		copy_status = util.buffer_copy(
@@ -190,14 +312,30 @@ statics_ensure_capacity :: proc (statics: ^Statics, capacity: int) -> Physics_St
 		physics_return_buffer(statics.pool, &new_available_ids);
 		physics_return_buffer(statics.pool, &new_map);
 		physics_return_buffer(statics.pool, &new_reverse);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			physics_return_buffer(statics.pool, &new_bounds);
+			physics_return_buffer(statics.pool, &new_positions);
+		}
 		physics_return_buffer(statics.pool, &new_statics);
 		return physics_memory_status(copy_status);
 	}
 	physics_return_buffer(statics.pool, &statics.handle_pool.available_ids);
 	physics_return_buffer(statics.pool, &statics.handle_to_index);
 	physics_return_buffer(statics.pool, &statics.index_to_handle);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		physics_return_buffer(statics.pool, &statics.local_bounds);
+		physics_return_buffer(statics.pool, &statics.global_positions);
+	}
 	physics_return_buffer(statics.pool, &statics.statics);
 	statics.statics = new_statics;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		statics.global_positions = new_positions;
+		statics.local_bounds = new_bounds;
+	}
+
 	statics.index_to_handle = new_reverse;
 	statics.handle_to_index = new_map;
 	statics.handle_pool.available_ids = new_available_ids;
@@ -225,6 +363,19 @@ statics_resize :: proc (statics: ^Statics, capacity: int) -> Physics_Status
 	if status != .Ok
 	{
 		return status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		status = physics_resize_buffer_capacity(statics.pool, &statics.local_bounds, required_capacity, statics.count);
+		if status != .Ok
+		{
+			return status;
+		}
+		status = physics_resize_buffer_capacity(statics.pool, &statics.global_positions, required_capacity, statics.count);
+		if status != .Ok
+		{
+			return status;
+		}
 	}
 	status = physics_resize_buffer_capacity(
 		statics.pool, &statics.index_to_handle,
@@ -334,6 +485,11 @@ statics_add :: proc (statics: ^Statics, description: ^Static_Description) -> (St
 		continuity=description.continuity,
 		broad_phase_index=-1,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		statics.global_positions.memory[index] = world_precision_position_from_float(description.pose.position);
+		statics.local_bounds.memory[index] = {};
+	}
 	if statics.triggers != nil
 	{
 		trigger_changed(statics.triggers, .Static, handle.value, .Modified);
@@ -353,11 +509,23 @@ statics_remove :: proc (statics: ^Statics, handle: Static_Handle) -> Physics_Sta
 	if index < statics.count
 	{
 		statics.statics.memory[index] = statics.statics.memory[statics.count];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			statics.global_positions.memory[index] = statics.global_positions.memory[statics.count];
+			statics.local_bounds.memory[index] = statics.local_bounds.memory[statics.count];
+		}
+
 		moved_handle := statics.index_to_handle.memory[statics.count];
 		statics.index_to_handle.memory[index] = moved_handle;
 		statics.handle_to_index.memory[moved_handle.value] = i32(index);
 	}
 	statics.statics.memory[statics.count] = {};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		statics.global_positions.memory[statics.count] = {};
+		statics.local_bounds.memory[statics.count] = {};
+	}
+
 	statics.index_to_handle.memory[statics.count] = {};
 	statics.handle_to_index.memory[handle.value] = -1;
 	if statics.triggers != nil
@@ -390,6 +558,7 @@ statics_get_description :: proc "contextless" (
 
 statics_apply_description :: proc "contextless" (
 	statics: ^Statics, handle: Static_Handle, description: ^Static_Description,
+	global_position: ^Global_Position = nil,
 ) -> Physics_Status
 {
 	validation := static_description_validate(description);
@@ -401,6 +570,18 @@ statics_apply_description :: proc "contextless" (
 	if resolve_status != .Ok
 	{
 		return resolve_status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position: Global_Position = world_precision_position_from_float(description.pose.position);
+		if global_position != nil
+		{
+			position = global_position^;
+			if world_precision_position_validate(position) != .Ok
+			{
+				return .Invalid_Argument;
+			}
+		}
 	}
 	old_shape := statics.statics.memory[index].shape;
 	if old_shape.packed != description.shape.packed
@@ -415,6 +596,10 @@ statics_apply_description :: proc "contextless" (
 			return retain_status;
 		}
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		previous_orientation: util.Quaternion = statics.statics.memory[index].pose.orientation;
+	}
 	broad_phase_index := statics.statics.memory[index].broad_phase_index;
 	statics.statics.memory[index] = {
 		pose=description.pose,
@@ -422,6 +607,15 @@ statics_apply_description :: proc "contextless" (
 		continuity=description.continuity,
 		broad_phase_index=broad_phase_index,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if old_shape.packed != description.shape.packed || previous_orientation != description.pose.orientation
+		{
+			statics.local_bounds.memory[index] = {};
+		}
+		statics.global_positions.memory[index] = position;
+		statics.statics.memory[index].pose.position = world_precision_position_cache(position);
+	}
 	if old_shape.packed != description.shape.packed
 	{
 		_ = shape_registry_release(statics.shapes, old_shape);
@@ -458,6 +652,10 @@ statics_set_shape :: proc "contextless" (statics: ^Statics, handle: Static_Handl
 	{
 		return retain_status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		statics.local_bounds.memory[index] = {};
+	}
 	statics.statics.memory[index].shape = shape;
 	_ = shape_registry_release(statics.shapes, old_shape);
 	if statics.triggers != nil
@@ -485,6 +683,11 @@ statics_clear :: proc (statics: ^Statics) -> Physics_Status
 				return status;
 			}
 		}
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		_ = util.buffer_clear(statics.local_bounds, 0, statics.count);
+		_ = util.buffer_clear(statics.global_positions, 0, statics.count);
 	}
 	_ = util.buffer_clear(statics.statics, 0, statics.count);
 	_ = util.buffer_clear(statics.index_to_handle, 0, statics.count);
@@ -522,7 +725,31 @@ statics_dispose :: proc (statics: ^Statics) -> Physics_Status
 	_ = util.id_pool_dispose(&statics.handle_pool, pool);
 	physics_return_buffer(pool, &statics.index_to_handle);
 	physics_return_buffer(pool, &statics.handle_to_index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		physics_return_buffer(pool, &statics.local_bounds);
+		physics_return_buffer(pool, &statics.global_positions);
+	}
 	physics_return_buffer(pool, &statics.statics);
 	statics^ = {};
 	return .Ok;
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	// publish only after the producer commits the matching world bounds
+	statics_publish_local_bounds :: proc "contextless" (
+		statics: ^Statics, index: int, bounds: Shape_Bounds,
+	)
+	{
+		shape: Typed_Index = statics.statics.memory[index].shape;
+		if typed_index_type(shape) == MESH_TYPE_ID
+		{
+			batch: ^Shape_Batch = &statics.shapes.batches[MESH_TYPE_ID];
+			if batch.dispatch == .Native && batch.metadata.bounds == mesh_bounds_proc
+			{
+				statics.local_bounds.memory[index] = {bounds=bounds, state=.Present};
+			}
+		}
+	}
 }

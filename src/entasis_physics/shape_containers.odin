@@ -940,10 +940,10 @@ mesh_recenter :: proc "contextless" (
 	for index in 0 ..< mesh.tree.node_count
 	{
 		node := &mesh.tree.nodes.memory[index];
-		node.a.min = util.vector3_subtract(node.a.min, center);
-		node.a.max = util.vector3_subtract(node.a.max, center);
-		node.b.min = util.vector3_subtract(node.b.min, center);
-		node.b.max = util.vector3_subtract(node.b.max, center);
+		node.a.min = tree_position_subtract(node.a.min, tree_position_from_local(center));
+		node.a.max = tree_position_subtract(node.a.max, tree_position_from_local(center));
+		node.b.min = tree_position_subtract(node.b.min, tree_position_from_local(center));
+		node.b.max = tree_position_subtract(node.b.max, tree_position_from_local(center));
 	}
 	return .Ok;
 }

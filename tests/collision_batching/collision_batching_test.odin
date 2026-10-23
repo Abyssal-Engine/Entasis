@@ -576,7 +576,7 @@ compound_mesh_continuations_filter_children_and_reduce_to_bounded_nonconvex_resu
 	for child_index in 0 ..< DEEP_CHILD_COUNT
 	{
 		added_child, add_status := physics.tree_add_without_refinement(
-			&deep_compound.tree, deep_compound.child_bounds.memory[child_index],
+			&deep_compound.tree, physics.tree_bounds_from_local(deep_compound.child_bounds.memory[child_index]),
 		);
 		testing.expect_value(t, add_status, physics.Physics_Status.Ok);
 		testing.expect_value(t, added_child, child_index);

@@ -144,3 +144,28 @@ These procedures transfer no ownership and bypass ordinary facade safety boundar
 Use them only on the owner thread while the world is idle. Do not retain returned pointers across mutation, stepping, clear, or destruction
 
 Broad-phase scheduler tuning and other low-level simulation access remain application responsibilities after borrowing
+
+## Precision and borrowed position views
+
+`Body_Dynamics` and static-view records retain their float layouts in both profiles. In mixed64 these positions are rounded caches. Global accessors and ordered global pose export read authority without importing an unchanged cache
+
+Direct writes to active motion positions remain supported, including shapeless bodies. At the next admitted step or standalone stage entry, the engine validates every changed position first, then imports changed caches by exact f32-to-f64 widening. Untouched caches retain their f64 positions. Invalid changed input returns `Invalid_Argument` before any position import and leaves the cache available for correction. Use global setters for edits smaller than the float cache can represent. A successful nonzero shift invalidates borrowed views
+
+## Global authoring snapshots
+
+Mixed64 exposes `Global_Body_State` and `Global_Static_State` with a `Global_Pose` and the ordinary authoring fields. `body_get_global_state` and `static_get_global_state` copy these values without awakening. `body_add_global_state`, `body_apply_global_state`, `static_add_global_state` and `static_apply_global_state` use ordinary complete-description mutation, including its allocation, waking and target-cancellation behavior
+
+`world_export_global_states` and `world_apply_global_states` operate on a `Global_State_Selection` of caller-owned handle spans and a `Global_State_Snapshot` of disjoint value spans. Each value span must hold at least one entry per selected handle. Both operations process four streams in this order:
+
+1. Body authoring states
+2. Static authoring states
+3. Built-in absolute constraint targets
+4. Queued kinematic body targets
+
+All stream capacities are checked before any record is read or applied. A later record failure returns `Global_State_Counts` for the successful prefixes. Export leaves unwritten output untouched, and apply stops before later records. Duplicate handles execute in input order. Apply is not a transaction across records, and an underlying failed mutation can retain its documented wake side effects. Kinematic targets are applied last because complete body replacement cancels queued targets
+
+Constraint-target entries follow the [supported kinds and matching rules](CONSTRAINTS.md#absolute-targets-and-position-space). `body_get_global_target_state` returns `.Absent` for a missing or expired target, including when body controls are disabled, and requires a kinematic body. `body_apply_global_target_state` clears an `.Absent` target or queues a new `.Present` target. Applying `.Present` requires controls to be enabled. It does not restore the target's previous phase, velocity or step state
+
+Snapshots contain authoring values in the simulation frame at capture. Translate every absolute position consistently before applying them after an origin shift. Shape and constraint handles still refer to live objects in the intended world. Create destination objects and enable their optional controls first. There is no identity remapping or restoration of topology, contact/solver history, sleep counters, callbacks or exact replay state. Capture requires an immutable idle world, and apply requires exclusive idle-world ownership
+
+For poses only, `world_export_global_poses` writes `Global_Pose` values in caller-supplied `Collidable_Reference` order, including sleeping bodies and statics. Its optional `Origin_Frame` adds an application origin in f64. Capacity or frame admission failure writes nothing. A later invalid reference or coordinate overflow returns the valid written prefix. Input/output spans must be disjoint, and returned values do not borrow engine storage

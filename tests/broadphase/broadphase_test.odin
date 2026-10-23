@@ -554,7 +554,7 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.active_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.active_tree, leaf_index);
-		if physics.tree_bounds_intersect(bounds, query_bounds) == .Present
+		if physics.tree_bounds_intersect(bounds, physics.tree_bounds_from_local(query_bounds)) == .Present
 		{
 			expected_volume_count += 1;
 			testing.expect_value(
@@ -569,7 +569,7 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.static_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.static_tree, leaf_index);
-		if physics.tree_bounds_intersect(bounds, query_bounds) == .Present
+		if physics.tree_bounds_intersect(bounds, physics.tree_bounds_from_local(query_bounds)) == .Present
 		{
 			expected_volume_count += 1;
 			testing.expect_value(
@@ -606,7 +606,7 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.active_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.active_tree, leaf_index);
-		_, hit := physics.tree_ray_intersection(bounds, ray);
+		_, hit := physics.tree_ray_intersection(bounds, physics.tree_ray_from_local(ray));
 		if hit == .Present
 		{
 			expected_ray_count += 1;
@@ -622,7 +622,7 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.static_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.static_tree, leaf_index);
-		_, hit := physics.tree_ray_intersection(bounds, ray);
+		_, hit := physics.tree_ray_intersection(bounds, physics.tree_ray_from_local(ray));
 		if hit == .Present
 		{
 			expected_ray_count += 1;
@@ -650,11 +650,11 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.active_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.active_tree, leaf_index);
-		expanded := util.Bounding_Box{
-			min=util.vector3_subtract(bounds.min, sweep_bounds.max),
-			max=util.vector3_subtract(bounds.max, sweep_bounds.min),
+		expanded: physics.Tree_Bounds = {
+			min=physics.tree_position_subtract(bounds.min, physics.tree_position_from_local(sweep_bounds.max)),
+			max=physics.tree_position_subtract(bounds.max, physics.tree_position_from_local(sweep_bounds.min)),
 		};
-		_, hit := physics.tree_ray_intersection(expanded, sweep_ray);
+		_, hit := physics.tree_ray_intersection(expanded, physics.tree_ray_from_local(sweep_ray));
 		if hit == .Present
 		{
 			expected_sweep_count += 1;
@@ -670,11 +670,11 @@ volume_ray_and_sweep_queries_return_complete_unique_results :: proc(t: ^testing.
 	for leaf_index in 0 ..< fixture.broad_phase.static_tree.leaf_count
 	{
 		bounds, _ := physics.tree_get_leaf_bounds(&fixture.broad_phase.static_tree, leaf_index);
-		expanded := util.Bounding_Box{
-			min=util.vector3_subtract(bounds.min, sweep_bounds.max),
-			max=util.vector3_subtract(bounds.max, sweep_bounds.min),
+		expanded: physics.Tree_Bounds = {
+			min=physics.tree_position_subtract(bounds.min, physics.tree_position_from_local(sweep_bounds.max)),
+			max=physics.tree_position_subtract(bounds.max, physics.tree_position_from_local(sweep_bounds.min)),
 		};
-		_, hit := physics.tree_ray_intersection(expanded, sweep_ray);
+		_, hit := physics.tree_ray_intersection(expanded, physics.tree_ray_from_local(sweep_ray));
 		if hit == .Present
 		{
 			expected_sweep_count += 1;

@@ -27,7 +27,7 @@ The body, static, and shape batch APIs process input in exact order
 
 A batch stops at the first failure. Earlier successful entries remain applied, and the returned count identifies that prefix. After correcting the failure, retry only the remaining entries
 
-For add operations, caller-owned handle output must have at least the input length. Entries at and after the committed count remain invalid
+For add operations, caller-owned handle output must have at least the input length. After length checks and, for statics, awakening-policy validation, the input-sized output region is initialized to invalid handles. Entries from the committed count to the input length remain invalid, while an oversized output tail remains unchanged. Rejection before initialization leaves output untouched
 
 Batch procedures do not create hidden command storage. Input arrays, output arrays, and result counts belong to the caller
 
@@ -71,7 +71,9 @@ Commands run in exact input order. Add commands write their returned handle to t
 
 Use the returned completed count to update application mappings only for successful commands. The command buffer is not transactional: a later failure does not undo earlier changes
 
-Result slots that were not reached remain unchanged or hold the caller's initial sentinel value according to the supplied storage
+After status-capacity validation, command admission resets every supplied body/static result slot to an invalid handle before validating individual commands. Slots without a successful add remain invalid, including unused slots. A missing buffer, short nonempty status span or mismatched global position count rejects before that reset
+
+During execution, per-command status entries are written only for attempted commands, including the failing command. Admission failure leaves status entries unchanged, and entries after the attempted prefix remain unchanged
 
 Use one of these application policies:
 
@@ -110,3 +112,11 @@ After successful removals, apply the [property-table lifecycle rules](DATA-ACCES
 Collect commands from worker jobs into thread-local or partitioned caller-owned arrays. Merge them into the required application order, then submit from the world owner thread while the world is idle
 
 Do not call structural APIs from narrow-phase callbacks, pose callbacks, stage callbacks, dispatched physics work, or concurrent scene queries
+
+## Global position streams
+
+In mixed64, `body_add_batch_global`, `body_apply_batch_global`, `static_add_batch_global` and `static_apply_batch_global` take one `Global_Position` per description. Positions use the current simulation frame and replace the description's f32 position before ordinary validation. Output capacity and parallel stream lengths are checked before mutation. A coordinate or mutation failure stops at that row and returns the successful prefix count
+
+`world_apply_commands_global` uses the existing `Command_Buffer` with one position per command ordinal. Remove rows ignore their position entry, including nonfinite values. A mismatched position count rejects before result arrays are reset. At an add/apply row, coordinate failure preserves earlier successful commands and stops the remaining sequence. The ordinary command result-slot, per-command status and capacity rules still apply
+
+These operations require the same exclusive idle-world ownership as local structural operations. The caller owns the input and output spans and must translate queued positions after an [origin shift](WORLD.md#precision-profiles-and-origin-frames)

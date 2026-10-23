@@ -81,7 +81,7 @@ Every stable static mutation takes an `Awakening_Policy`
 - `.Overlaps` wakes sleeping dynamic islands intersecting the old or new static bounds
 - `.None` leaves sleeping islands asleep
 
-The filtered static APIs accept `Static_Awakening_Filter_Proc` when the application must choose which overlap candidates wake
+The filtered static APIs accept `Static_Awakening_Filter_Proc` when the application must choose which overlap candidates wake. Native callbacks return `Collision_Testing_State.Allow` or `.Reject`
 
 Statics do not carry body velocity or inertia
 
@@ -229,3 +229,20 @@ Set, clear and control disable awaken connected sleeping islands through the exi
 Removal, becoming kinematic, world clear and destruction retire the owned row. Handle reuse never inherits it. `bodies_sleep_group` is only for constraint-disconnected bodies and rejects locked/jointed bodies. Ordinary sleeping gathers the complete connected island. Disabling controls removes only the engine-owned rows, not explicit joints, and leaves the owner attached if awakening cannot complete. World destruction releases sleeping rows with the solver without awakening them merely for teardown
 
 Axis locks are visible through constraint inspection and accumulated-impulse APIs. The six scalars represent world-linear X/Y/Z impulses followed by reference-angular X/Y/Z impulses. Unselected rows are zero. See [constraint inspection](CONSTRAINTS.md#body-axis-locks)
+
+## High positional authoring
+
+These operations require mixed64 and use f64 positions in the [current simulation frame](WORLD.md#precision-profiles-and-origin-frames)
+
+| Body operation | Static operation | Behavior |
+| --- | --- | --- |
+| `body_add_global` | `static_add_global` | Add a description with a separately supplied position |
+| `body_apply_global` | `static_apply_global` | Replace the complete description and position |
+| `body_set_global_pose` | `static_set_global_pose` | Replace position and orientation |
+| `body_get_global_pose` | `static_get_global_pose` | Copy the authoritative pose without awakening or importing a float cache |
+
+For add/apply, the supplied global position replaces `description.pose.position` before ordinary description validation. Other description fields retain their usual meaning. Mutations require exclusive idle-world ownership and may allocate through the normal growth paths. `static_add_global_filtered` and `static_apply_global_filtered` use the [static awakening filter](#statics) with the authoritative old/new bounds. The filter may read poses but must not mutate the world
+
+Legacy pose descriptions and setters explicitly author f32 positions, replacing authority with the exactly widened supplied float. Non-position edits preserve the f64 position. Legacy `body_bounds` and `static_bounds` return outward-rounded f32 envelopes and reject results that cannot be represented. For complete authoring-value copies, use [global states and snapshots](DATA-ACCESS.md#global-authoring-snapshots)
+
+`body_add_force_at_global_position` computes the lever arm from the current authoritative body center in f64, then queues the resulting local-float force/torque. Invalid positions or unrepresentable lever arms queue no input. `body_set_global_kinematic_target` queues a `Global_Pose`, and `body_get_global_kinematic_target` copies it or returns `Not_Found` when absent or expired. These operations require enabled body controls and retain the [input/target lifetime](#step-and-target-lifetime) and wake policy

@@ -22,6 +22,43 @@ visual_result_components_preserve_units_and_absence :: proc(t: ^testing.T)
 	defer test_directory_remove(path);
 	dataset: Result_Dataset;
 	defer result_dataset_close(&dataset);
+	for group, index in ([2]string{"convex.collision_batch", "mesh.shape_distance"})
+	{
+		components: string = "common" if index == 0 else "all";
+		fixture: string = focused_query_fixture(group, components, 2, 3, 4);
+		testing.expect_value(t, write_lane(path, 1, fixture), Report_Status.Ok);
+		loaded: Report_Result = result_dataset_open(&dataset, path, "query_extensions");
+		testing.expect_value(t, loaded.status, Report_Status.Ok);
+		request: Report_Request = test_request(path, {1}, 1);
+		request.package_name = "query_extensions";
+		request.query = {group=group, components=components, repetitions=2, warmup_repetitions=3};
+		collected: Report_Result = collect_summaries(request);
+		testing.expect_value(t, collected.status, Report_Status.Ok);
+		if loaded.status == .Ok && collected.status == .Ok
+		{
+			lane: Result_Lane = dataset.lanes[0];
+			testing.expect_value(t, lane.summary.median, f64(4));
+			testing.expect_value(t, lane.summary.query.repetitions, 2);
+			testing.expect_value(t, lane.columns[4].unit, Result_Unit.Milliseconds);
+			unavailable: int;
+			for column, column_index in lane.columns
+			{
+				if column.unit == .Milliseconds && lane.values[column_index].availability == .Unavailable
+				{
+					unavailable += 1;
+				}
+			}
+			testing.expect_value(t, unavailable, 31 if index == 0 else 48);
+			markdown: string = render_markdown(request, collected.summaries[:]);
+			testing.expect(t, strings.contains(markdown, group));
+			testing.expect(t, strings.contains(markdown, "Mean ns/API call"));
+			if index == 0
+			{
+				testing.expect(t, strings.contains(markdown, "16384 calls and 32768 pair tests"));
+			}
+		}
+	}
+
 	component_modes: [2]string = {"common", "all"};
 	for components in component_modes
 	{
@@ -175,6 +212,61 @@ visual_result_inputs_reject_mixed_or_invalid_rows :: proc(t: ^testing.T)
 	defer test_directory_remove(path);
 	dataset: Result_Dataset;
 	defer result_dataset_close(&dataset);
+	focused: string = focused_query_fixture("convex.ray_all", "common", 2, 3, 4);
+	for pair in ([][2]string{
+		{"query_repetitions", "unknown_count"},
+		{"convex.ray_all,2,3", "convex.ray_all,0,3"},
+		{"convex.ray_all,2,3", "convex.ray_all,1000001,3"},
+		{"convex.ray_all,2,3", "convex.ray_all,2,0"},
+		{"convex.ray_all,2,3", "convex.shape_distance,2,3"},
+		{"16384,ok", "8192,ok"},
+		{"excluded,excluded,excluded", "0,0,0"},
+		{"4.000000000,16384,24", "0,16384,24"},
+		{"4.000000000,16384,24", "NaN,16384,24"},
+		{"4.000000000,16384,24", "3.000000000,16384,24"},
+		{"Excluded", "Unavailable"},
+	})
+	{
+		invalid: string;
+		invalid, _ = strings.replace_all(focused, pair[0], pair[1]);
+		testing.expect_value(t, write_lane(path, 1, invalid), Report_Status.Ok);
+		testing.expect(t, result_dataset_open(&dataset, path, "query_extensions").status != .Ok);
+		request: Report_Request = test_request(path, {1}, 1);
+		request.package_name = "query_extensions";
+		testing.expect(t, collect_summaries(request).status != .Ok);
+	}
+	for other in ([]Query_Measurement{
+		{group="convex.ray_closest", components="common", repetitions=2, warmup_repetitions=3},
+		{group="convex.ray_all", components="all", repetitions=2, warmup_repetitions=3},
+		{group="convex.ray_all", components="common", repetitions=3, warmup_repetitions=3},
+		{group="convex.ray_all", components="common", repetitions=2, warmup_repetitions=4},
+	})
+	{
+		_ = write_lane(path, 1, focused);
+		second: string = focused_query_fixture(other.group, other.components, other.repetitions, other.warmup_repetitions, 4, 2);
+		_ = write_lane(path, 2, second);
+		request: Report_Request = test_request(path, {1, 2}, 1);
+		request.package_name = "query_extensions";
+		testing.expect(t, collect_summaries(request).status != .Ok);
+		testing.expect(t, result_dataset_open(&dataset, path, "query_extensions").status != .Ok);
+		testing.expect_value(t, os.remove(fmt.tprintf("%s/workers-2.csv", path)), nil);
+	}
+	stripped_header, _ := strings.replace_all(focused, ",query_group,query_repetitions,query_warmup_repetitions", "");
+	stripped, _ := strings.replace_all(stripped_header, ",convex.ray_all,2,3", "");
+	_ = write_lane(path, 1, stripped);
+	testing.expect(t, result_dataset_open(&dataset, path, "query_extensions").status != .Ok);
+	stripped_request: Report_Request = test_request(path, {1}, 1);
+	stripped_request.package_name = "query_extensions";
+	testing.expect(t, collect_summaries(stripped_request).status != .Ok);
+	// equal selection must also hold across observations in one worker lane
+	second: string = focused_query_fixture("convex.ray_all", "common", 2, 4, 4);
+	separator: int = strings.index_byte(second, '\n');
+	_ = write_lane(path, 1, strings.concatenate({focused, second[separator+1:]}));
+	testing.expect(t, result_dataset_open(&dataset, path, "query_extensions").status != .Ok);
+	request: Report_Request = test_request(path, {1}, 2);
+	request.package_name = "query_extensions";
+	testing.expect(t, collect_summaries(request).status != .Ok);
+
 	invalid_rows: [5]string = {
 		"worker_count,case_status,metric_status,physics_elapsed_ms\n2,ok,ok,10\n",
 		"worker_count,case_status,metric_status,physics_elapsed_ms\n1,ok,ok,NaN\n",
@@ -262,4 +354,54 @@ saved_physical_evidence_never_infers_a_pass :: proc(t: ^testing.T)
 	invalid, _ := strings.replace_all(PHYSICAL_TEST_HEADER+PHYSICAL_TEST_PASS, ",62,0.1,", ",0,0.1,")
 	_ = write_lane(path, 1, invalid)
 	testing.expect_value(t, result_dataset_open(&dataset, path, "contact_islands").status, Report_Status.Invalid_Measurement)
+}
+
+focused_query_fixture :: proc(group, components: string, repetitions, warmup: int, elapsed: f64, worker: int = 1) -> string
+{
+	header: strings.Builder;
+	row: strings.Builder;
+	fmt.sbprintf(&header, "worker_count,query_count_per_operation,case_status,metric_status,physics_elapsed_ms,benchmark_components");
+	fmt.sbprintf(&row, "%d,%d,ok,ok,%.9f,%s", worker, u64(repetitions)*8192, elapsed, components);
+	routes: [4]string = {"convex", "compound", "mesh", "native_custom"};
+	operations: [12]string = {"ray_closest", "ray_filtered", "ray_all", "sweep_closest", "sweep_all", "geometric_overlap", "direct_collision", "collision_batch", "closest_point", "shape_distance", "depenetration", "overlap_any"};
+	for route in routes
+	{
+		for operation in operations[:8]
+		{
+			fmt.sbprintf(&header, ",%s_%s_ms,%s_%s_hits,%s_%s_checksum", route, operation, route, operation, route, operation);
+			if group == fmt.tprintf("%s.%s", route, operation)
+			{
+				fmt.sbprintf(&row, ",%.9f,%d,24", elapsed, u64(repetitions)*8192);
+			}
+			else
+			{
+				strings.write_string(&row, ",excluded,excluded,excluded");
+			}
+		}
+	}
+	strings.write_string(&header, ",cq01_state");
+	strings.write_string(&row, ",Excluded");
+	if components == "all"
+	{
+		strings.write_string(&header, ",cq01_elapsed_ms");
+		strings.write_string(&row, ",excluded");
+		for route in routes
+		{
+			for operation in operations[8:]
+			{
+				fmt.sbprintf(&header, ",%s_%s_ms,%s_%s_hits,%s_%s_checksum", route, operation, route, operation, route, operation);
+				if group == fmt.tprintf("%s.%s", route, operation)
+				{
+					fmt.sbprintf(&row, ",%.9f,%d,24", elapsed, u64(repetitions)*8192);
+				}
+				else
+				{
+					strings.write_string(&row, ",excluded,excluded,excluded");
+				}
+			}
+		}
+	}
+	strings.write_string(&header, ",precision,query_group,query_repetitions,query_warmup_repetitions");
+	fmt.sbprintf(&row, ",float32,%s,%d,%d", group, repetitions, warmup);
+	return fmt.aprintf("%s\n%s\n", strings.to_string(header), strings.to_string(row));
 }

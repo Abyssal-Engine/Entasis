@@ -455,6 +455,7 @@ triggers_all_owned_failure_cleanup_and_reuse :: proc(t:^testing.T)
 	{
 		return;
 	}
+	testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
 	c: e.Trigger_Configuration = e.Trigger_Configuration{pair_capacity=8, candidates_per_worker=16, child_capacity=64};
 	before: int = tracker.requests;
 	if !testing.expect_value(t, e.world_enable_triggers(&world, c), e.Status.Ok)
@@ -463,6 +464,9 @@ triggers_all_owned_failure_cleanup_and_reuse :: proc(t:^testing.T)
 		return;
 	}
 	allocations: int = tracker.requests-before;
+	before = tracker.requests;
+	testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
+	testing.expect_value(t, tracker.requests, before);
 	for _ in 0..<3
 	{
 		before=tracker.requests;
@@ -504,9 +508,9 @@ triggers_native_custom_shape_uses_registered_collision_route :: proc(t:^testing.
 	};
 	defer e.world_destroy(&s.world);
 	type_id: e.Shape_Type_ID;
-	ok: bool;
-	type_id, ok = register_custom_sphere(t, &s.world);
-	if !ok
+	registration_status: e.Status;
+	type_id, registration_status = register_custom_sphere(t, &s.world);
+	if registration_status != .Ok
 	{
 		return;
 	}
@@ -640,9 +644,9 @@ triggers_trigger_pair_and_explicit_joint_remain_distinct :: proc(t:^testing.T)
 	};
 	defer e.world_destroy(&s.world);
 	type_id: e.Constraint_Type_ID;
-	ok: bool;
-	type_id, ok = register_velocity_target_constraint(t, &s.world);
-	if !ok
+	registration_status: e.Status;
+	type_id, registration_status = register_velocity_target_constraint(t, &s.world);
+	if registration_status != .Ok
 	{
 		return;
 	}
@@ -699,10 +703,13 @@ triggers_reserved_warm_steps_and_failed_growth_preserve_history :: proc(t:^testi
 		_, add = e.body_add(&world, e.body_kinematic(shape, e.pose({1, 0, 0}), {}, e.body_activity(-1, 255)));
 		testing.expect_value(t, add, e.Status.Ok);
 		c: e.Trigger_Configuration = e.Trigger_Configuration{8, 32, 64};
+		testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
 		testing.expect_value(t, e.world_enable_triggers(&world, c), e.Status.Ok);
 		testing.expect_value(t, e.trigger_set(&world, ref), e.Status.Ok);
 		events:[4]e.Trigger_Event;
+		first_requests: int = tracker.requests;
 		testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
+		testing.expect_value(t, tracker.requests, first_requests);
 		_, _, _=e.trigger_events_drain(&world, events[:]);
 		first: e.Trigger_Pair = events[0].pair;
 		testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
@@ -1266,6 +1273,7 @@ triggers_real_capacity_failure_preserves_committed_history :: proc(t: ^testing.T
 			candidates_per_worker=initial_pairs if capacity_limit == .Candidates else initial_pairs+1,
 			child_capacity=64,
 		};
+		testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
 		testing.expect_value(t, e.world_enable_triggers(&world, c), e.Status.Ok);
 		events: []e.Trigger_Event = make([]e.Trigger_Event, initial_pairs+1);
 		defer delete(events);
@@ -1710,10 +1718,10 @@ triggers_mixed_static_mutation_wakes_only_solid_bounds :: proc(t:^testing.T)
 	filter_calls: int;
 	testing.expect_value(t, e.static_apply_filtered(&reversed.world, reversed.sensor,
 		e.static_body(reversed.shape, e.pose()),
-		proc "contextless" (user: rawptr, body: e.Body_Handle) -> bool
+		proc "contextless" (user: rawptr, body: e.Body_Handle) -> e.Collision_Testing_State
 		{
 			(^int)(user)^ += 1;
-			return false;
+			return .Reject;
 		}, &filter_calls), e.Status.Ok);
 	testing.expect_value(t, filter_calls, 1);
 	location, _ = p.bodies_resolve(&reversed_sim.bodies, reversed.body);
@@ -1744,7 +1752,16 @@ triggers_mixed_reservation_failure_and_warmed_ownership :: proc(t:^testing.T)
 		{
 			return;
 		}
+		testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
 		testing.expect_value(t, e.world_enable_triggers(&world, {pair_capacity=8, candidates_per_worker=16, child_capacity=64}), e.Status.Ok);
+		worker_requests: int;
+		if fail == 0
+		{
+			before: int = tracker.requests;
+			testing.expect_value(t, e.trigger_reserve(&world, {pair_capacity=8, candidates_per_worker=256, child_capacity=64}), e.Status.Ok);
+			worker_requests = tracker.requests-before;
+		}
+
 		if fail>0
 		{
 			tracker.fail_from=tracker.requests+fail;
@@ -1768,6 +1785,13 @@ triggers_mixed_reservation_failure_and_warmed_ownership :: proc(t:^testing.T)
 			reference, _ = p.collidable_reference_static(a);
 			_, status=e.collider_part_set(&world, reference, 0, {role=.Trigger, options={.Static_Static, .Stay}});
 			testing.expect_value(t, status, e.Status.Ok);
+			parent_sensor: e.Static_Handle;
+			parent_sensor, _ = e.static_add(&world, e.static_body(shape, e.pose({10, 0, 0})), .None);
+			_, _ = e.static_add(&world, e.static_body(shape, e.pose({11, 0, 0})), .None);
+			parent_reference: e.Collidable_Reference;
+			parent_reference, _ = e.static_collidable_reference(&world, parent_sensor);
+			testing.expect_value(t, e.trigger_set(&world, parent_reference, {static_static=.Enabled}), e.Status.Ok);
+			testing.expect_value(t, e.trigger_reserve(&world, {pair_capacity=8, candidates_per_worker=16, child_capacity=64}), e.Status.Ok);
 			parent:[8]e.Trigger_Event;
 			parts:[8]e.Collider_Part_Event;
 			for _ in 0..<3
@@ -1785,6 +1809,35 @@ triggers_mixed_reservation_failure_and_warmed_ownership :: proc(t:^testing.T)
 				_, _, _=e.trigger_part_events_drain(&world, parts[:]);
 			}
 			testing.expect_value(t, tracker.requests, requests);
+			if fail == 0
+			{
+				sim: ^e.Simulation;
+				sim, _ = e.world_borrow_simulation(&world);
+				parent_count: int = sim.triggers.previous_count;
+				part_count: int = sim.triggers.mixed.previous_count;
+				testing.expect(t, parent_count > 0 && part_count > 0);
+				parent_first: e.Trigger_Pair = sim.triggers.previous[0];
+				part_first: p.Collider_Part_Pair = sim.triggers.mixed.previous.memory[0];
+				index: u64 = sim.step_index;
+				// both reservations construct fresh workers with the same capped 256-pair scratch
+				tracker.fail_from = tracker.requests+worker_requests+1;
+				status = e.trigger_reserve(&world, {pair_capacity=8, candidates_per_worker=1048576, child_capacity=64});
+				testing.expect_value(t, status, e.Status.Capacity_Missing);
+				testing.expect_value(t, len(sim.triggers.workers[0].candidates), 1048576);
+				testing.expect(t, int(sim.triggers.mixed.workers.memory[0].roles.length) < len(sim.triggers.workers[0].candidates));
+				testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Capacity_Missing);
+				testing.expect_value(t, sim.step_index, index);
+				testing.expect_value(t, sim.triggers.previous_count, parent_count);
+				testing.expect_value(t, sim.triggers.previous[0], parent_first);
+				testing.expect_value(t, sim.triggers.mixed.previous_count, part_count);
+				testing.expect_value(t, sim.triggers.mixed.previous.memory[0], part_first);
+				tracker.fail_from = 0;
+				testing.expect_value(t, e.trigger_reserve(&world, {pair_capacity=8, candidates_per_worker=1048576, child_capacity=64}), e.Status.Ok);
+				requests = tracker.requests;
+				testing.expect_value(t, e.world_step(&world, 0.01), e.Status.Ok);
+				testing.expect_value(t, tracker.requests, requests);
+			}
+
 		}
 		else
 		{
@@ -1848,9 +1901,9 @@ triggers_mixed_filters_custom_routes_and_failed_sample :: proc(t:^testing.T)
 	}
 	defer e.world_destroy(&s.world);
 	type_id: e.Shape_Type_ID;
-	ok: bool;
-	type_id, ok = register_custom_sphere(t, &s.world);
-	if !ok
+	registration_status: e.Status;
+	type_id, registration_status = register_custom_sphere(t, &s.world);
+	if registration_status != .Ok
 	{
 		return;
 	}
@@ -3021,9 +3074,9 @@ triggers_nested_custom_routes_filters_and_failed_sample :: proc(t:^testing.T)
 	_, bind_status = e.collider_part_set(&s.world, s.sensor_ref, 1, {role=.Trigger});
 	testing.expect_value(t, bind_status, e.Status.Ok);
 	type_id: e.Shape_Type_ID;
-	ok: bool;
-	type_id, ok = register_custom_sphere(t, &s.world);
-	if !ok
+	registration_status: e.Status;
+	type_id, registration_status = register_custom_sphere(t, &s.world);
+	if registration_status != .Ok
 	{
 		return;
 	}

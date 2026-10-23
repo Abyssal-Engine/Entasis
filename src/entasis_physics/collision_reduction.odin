@@ -944,7 +944,7 @@ collision_batcher_test_child_against_tree :: proc "contextless" (
 		parent_flipped=parent_flipped,
 	};
 	return tree_volume_traverse(
-		tree, query_bounds, collision_batcher_child_tree_leaf, &query_context,
+		tree, tree_bounds_from_local(query_bounds), collision_batcher_child_tree_leaf, &query_context,
 		batcher.traversal_pool,
 	);
 }

@@ -5,7 +5,7 @@ import "core:math"
 import "core:os"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "worker_count,static_body_count,shape_count,query_count,warmup_batches,measured_batches,ray_query_count,sphere_cast_query_count,overlap_query_count,ray_hit_count,sphere_cast_hit_count,overlap_hit_count,ray_checksum,sphere_cast_checksum,overlap_checksum,ray_elapsed_ms,sphere_cast_elapsed_ms,overlap_elapsed_ms,queries_per_second,ray_queries_per_second,sphere_cast_queries_per_second,overlap_queries_per_second,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "worker_count,static_body_count,shape_count,query_count,warmup_batches,measured_batches,ray_query_count,sphere_cast_query_count,overlap_query_count,ray_hit_count,sphere_cast_hit_count,overlap_hit_count,ray_checksum,sphere_cast_checksum,overlap_checksum,ray_elapsed_ms,sphere_cast_elapsed_ms,overlap_elapsed_ms,queries_per_second,ray_queries_per_second,sphere_cast_queries_per_second,overlap_queries_per_second,case_status,metric_status,physics_elapsed_ms,precision,ray_pattern";
 
 Argument_Status :: enum u8
 {
@@ -13,10 +13,22 @@ Argument_Status :: enum u8
 	Invalid,
 }
 
+Argument_Option :: enum u8
+{
+	Worker_Count,
+	Output,
+	Ray_Pattern,
+	Family, Warmup, Measured,
+}
+
 Arguments :: struct
 {
 	worker_count: int,
 	output_path:  string,
+	ray_pattern:  Ray_Pattern,
+	query_family: string,
+	families: bit_set[Query_Family],
+	warmup_batches, measured_batches: int,
 }
 
 argument_value :: proc "contextless" (argument, prefix: string) -> (string, Argument_Status)
@@ -55,20 +67,25 @@ parse_positive_integer :: proc "contextless" (value: string) -> (int, Argument_S
 	return result, .Ok;
 }
 
-parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argument_Status)
+Query_Family_Policy :: enum
 {
-	if len(arguments) != 3
+	Allow, Reject,
+}
+
+parse_arguments :: proc "contextless" (arguments: []string, allow_query_family: Query_Family_Policy = .Allow) -> (Arguments, Argument_Status)
+{
+	if len(arguments) < 3 || len(arguments) > 7
 	{
 		return {}, .Invalid;
 	}
-	result: Arguments;
-	worker_seen, output_seen := false, false;
+	result: Arguments = {query_family="all", families={.Ray, .Sphere_Cast, .Overlap}, warmup_batches=WARMUP_BATCH_COUNT, measured_batches=MEASURED_BATCH_COUNT};
+	seen: bit_set[Argument_Option; u8];
 	for argument in arguments[1:]
 	{
 		value, status := argument_value(argument, "--worker-count=");
 		if status == .Ok
 		{
-			if worker_seen
+			if .Worker_Count in seen
 			{
 				return {}, .Invalid;
 			}
@@ -77,96 +94,178 @@ parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argum
 			{
 				return {}, .Invalid;
 			}
-			worker_seen = true;
+			seen += {.Worker_Count};
 			continue;
 		}
 		value, status = argument_value(argument, "--output=");
 		if status == .Ok
 		{
-			if output_seen || len(value) == 0
+			if .Output in seen || len(value) == 0
 			{
 				return {}, .Invalid;
 			}
 			result.output_path = value;
-			output_seen = true;
+			seen += {.Output};
+			continue;
+		}
+		value, status = argument_value(argument, "--ray-pattern=");
+		if status == .Ok
+		{
+			if .Ray_Pattern in seen
+			{
+				return {}, .Invalid;
+			}
+			switch value
+			{
+			case "axial": result.ray_pattern = .Axial;
+			case "oblique": result.ray_pattern = .Oblique;
+			case: return {}, .Invalid;
+			}
+			seen += {.Ray_Pattern};
+			continue;
+		}
+		value, status = argument_value(argument, "--query-family=");
+		if status == .Ok
+		{
+			if .Family in seen || allow_query_family == .Reject
+			{
+				return {}, .Invalid;
+			}
+			switch value
+			{
+			case "all": result.families = {.Ray, .Sphere_Cast, .Overlap};
+			case "ray": result.families = {.Ray};
+			case "sphere-cast": result.families = {.Sphere_Cast};
+			case "aabb-presence": result.families = {.Overlap};
+			case: return {}, .Invalid;
+			}
+			result.query_family = value;
+			seen += {.Family};
+			continue;
+		}
+		for option in ([]Argument_Option{.Warmup, .Measured})
+		{
+			prefix: string = "--warmup-batches=" if option == .Warmup else "--measured-batches=";
+			value, status = argument_value(argument, prefix);
+			if status == .Ok
+			{
+				count: int;
+				count, status = parse_positive_integer(value);
+				if status != .Ok || count > 1_000_000 || option in seen
+				{
+					return {}, .Invalid;
+				}
+				if option == .Warmup
+				{
+					result.warmup_batches = count;
+				}
+				else
+				{
+					result.measured_batches = count;
+				}
+				seen += {option};
+				break;
+			}
+		}
+		if status == .Ok
+		{
 			continue;
 		}
 		return {}, .Invalid;
 	}
-	if !worker_seen || !output_seen
+	if .Worker_Count not_in seen || .Output not_in seen || (result.ray_pattern == .Oblique && .Ray not_in result.families)
 	{
 		return {}, .Invalid;
 	}
 	return result, .Ok;
 }
 
-finite_positive :: #force_inline proc "contextless" (value: f64) -> bool
+finite_positive :: #force_inline proc "contextless" (value: f64) -> Argument_Status
 {
-	return value > 0 && !math.is_nan(value) && !math.is_inf(value);
+	return .Ok if value > 0 && !math.is_nan(value) && !math.is_inf(value) else .Invalid;
 }
 
-write_result :: proc(
-	path: string,
-	worker_count: int,
-	result: Benchmark_Result,
-) -> Case_Status
+write_result :: proc(path: string, worker_count: int, result: Benchmark_Result, arguments: Arguments) -> Case_Status
 {
 	_, stat_error := os.stat(path, context.temp_allocator);
-	write_header := stat_error != nil;
 	file, open_error := os.open(path, {.Write, .Append, .Create}, os.Permissions_Default_File);
 	if open_error != nil || file == nil
 	{
 		return .Validation_Failed;
 	}
-	if write_header && fmt.fprintfln(file, CSV_HEADER) <= 0
+	if stat_error != nil
+	{
+		if fmt.fprint(file, CSV_HEADER) <= 0 ||
+			(arguments.query_family != "all" && fmt.fprint(file, ",query_family") <= 0) || fmt.fprintln(file) <= 0
+		{
+			_ = os.close(file);
+			return .Validation_Failed;
+		}
+	}
+	counts: [3]int = {RAY_QUERY_COUNT, SPHERE_CAST_QUERY_COUNT, OVERLAP_QUERY_COUNT};
+	hits: [3]u64 = {result.ray_hits, result.sphere_cast_hits, result.overlap_hits};
+	checksums: [3]u64 = {result.ray_checksum, result.sphere_cast_checksum, result.overlap_checksum};
+	nanoseconds: [3]u64 = {result.ray_nanoseconds, result.sphere_nanoseconds, result.overlap_nanoseconds};
+	query_count: int;
+	physics_ms: f64;
+	for family in Query_Family
+	{
+		if family in arguments.families
+		{
+			query_count += counts[int(family)];
+			physics_ms += f64(nanoseconds[int(family)])/1e6;
+		}
+	}
+	if finite_positive(physics_ms) != .Ok
 	{
 		_ = os.close(file);
 		return .Validation_Failed;
 	}
-	ray_ms := f64(result.ray_nanoseconds) / 1_000_000;
-	sphere_ms := f64(result.sphere_nanoseconds) / 1_000_000;
-	overlap_ms := f64(result.overlap_nanoseconds) / 1_000_000;
-	physics_ms := ray_ms + sphere_ms + overlap_ms;
-	measured_batches := f64(MEASURED_BATCH_COUNT);
-	ray_rate := f64(RAY_QUERY_COUNT) * measured_batches * 1_000_000_000 / f64(result.ray_nanoseconds);
-	sphere_rate := f64(SPHERE_CAST_QUERY_COUNT) * measured_batches * 1_000_000_000 / f64(result.sphere_nanoseconds);
-	overlap_rate := f64(OVERLAP_QUERY_COUNT) * measured_batches * 1_000_000_000 / f64(result.overlap_nanoseconds);
-	query_rate := f64(QUERY_COUNT_PER_BATCH) * measured_batches * 1000 / physics_ms;
-	if !finite_positive(ray_ms) || !finite_positive(sphere_ms) || !finite_positive(overlap_ms) ||
-		!finite_positive(physics_ms) || !finite_positive(query_rate) || !finite_positive(ray_rate) ||
-		!finite_positive(sphere_rate) || !finite_positive(overlap_rate)
+	written: int = fmt.fprintf(file, "%d,%d,2,%d,%d,%d", worker_count, STATIC_BODY_COUNT, query_count, arguments.warmup_batches, arguments.measured_batches);
+	for values in ([3][3]u64{{u64(counts[0]), u64(counts[1]), u64(counts[2])}, hits, checksums})
 	{
-		_ = os.close(file);
-		return .Validation_Failed;
+		for family in Query_Family
+		{
+			if family in arguments.families
+			{
+				written += fmt.fprintf(file, ",%d", values[int(family)]);
+			}
+			else
+			{
+				written += fmt.fprint(file, ",excluded");
+			}
+		}
 	}
-	written := fmt.fprintfln(
-		file,
-		"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,ok,ok,%.9f",
-		worker_count,
-		STATIC_BODY_COUNT,
-		2,
-		QUERY_COUNT_PER_BATCH,
-		WARMUP_BATCH_COUNT,
-		MEASURED_BATCH_COUNT,
-		RAY_QUERY_COUNT,
-		SPHERE_CAST_QUERY_COUNT,
-		OVERLAP_QUERY_COUNT,
-		result.ray_hits,
-		result.sphere_cast_hits,
-		result.overlap_hits,
-		result.ray_checksum,
-		result.sphere_cast_checksum,
-		result.overlap_checksum,
-		ray_ms,
-		sphere_ms,
-		overlap_ms,
-		query_rate,
-		ray_rate,
-		sphere_rate,
-		overlap_rate,
-		physics_ms,
-	);
-	if written <= 0 || os.close(file) != nil
+	for family in Query_Family
+	{
+		if family in arguments.families
+		{
+			written += fmt.fprintf(file, ",%.9f", f64(nanoseconds[int(family)])/1e6);
+		}
+		else
+		{
+			written += fmt.fprint(file, ",excluded");
+		}
+	}
+	written += fmt.fprintf(file, ",%.9f", f64(query_count)*f64(arguments.measured_batches)*1000/physics_ms);
+	for family in Query_Family
+	{
+		if family in arguments.families
+		{
+			written += fmt.fprintf(file, ",%.9f", f64(counts[int(family)])*f64(arguments.measured_batches)*1e9/f64(nanoseconds[int(family)]));
+		}
+		else
+		{
+			written += fmt.fprint(file, ",excluded");
+		}
+	}
+	written += fmt.fprintf(file, ",ok,ok,%.9f,%s,%s", physics_ms, entasis.PRECISION_NAME, ray_pattern_name(arguments.ray_pattern));
+	if arguments.query_family != "all"
+	{
+		written += fmt.fprintf(file, ",%s", arguments.query_family);
+	}
+	written += fmt.fprintln(file);
+	if os.close(file) != nil || written <= 0
 	{
 		return .Validation_Failed;
 	}
@@ -185,12 +284,12 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Result
 		_ = entasis.buffer_pool_destroy(&pool);
 	}
 	owner: Benchmark_Owner;
-	owner_status := benchmark_owner_create(&owner, &pool, arguments.worker_count);
+	owner_status := benchmark_owner_create(&owner, &pool, arguments.worker_count, arguments.ray_pattern);
 	if owner_status != .Ok
 	{
 		return {status=owner_status};
 	}
-	result := benchmark_execute(&owner);
+	result := benchmark_execute(&owner, arguments.families, arguments.warmup_batches, arguments.measured_batches);
 	if benchmark_owner_destroy(&owner) != .Ok
 	{
 		return {status=.Release_Failed};
@@ -199,7 +298,7 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Result
 	{
 		return result;
 	}
-	result.status = write_result(arguments.output_path, arguments.worker_count, result);
+	result.status = write_result(arguments.output_path, arguments.worker_count, result, arguments);
 	return result;
 }
 
@@ -208,7 +307,7 @@ main :: proc()
 	arguments, status := parse_arguments(os.args);
 	if status != .Ok
 	{
-		fmt.eprintln("usage: entasis_spatial_query_trace --worker-count=<positive count up to engine maximum> --output=<path>");
+		fmt.eprintln("usage: entasis_spatial_query_trace --worker-count=<positive count up to engine maximum> --output=<path> [--ray-pattern=axial|oblique]");
 		os.exit(2);
 	}
 	result := run_benchmark(arguments);

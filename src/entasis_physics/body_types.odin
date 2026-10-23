@@ -155,6 +155,13 @@ body_description_validate :: proc "contextless" (description: ^Body_Description)
 	{
 		return .Invalid_Description;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if world_precision_position_validate(world_precision_position_from_float(description.pose.position)) != .Ok
+		{
+			return .Invalid_Description;
+		}
+	}
 	q := description.pose.orientation;
 	length_squared := util.quaternion_length_squared(q);
 	if math.abs(length_squared - 1) > 1e-3
@@ -174,6 +181,13 @@ static_description_validate :: proc "contextless" (description: ^Static_Descript
 	if description == nil || typed_index_state(description.shape) != .Present
 	{
 		return .Invalid_Description;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if world_precision_position_validate(world_precision_position_from_float(description.pose.position)) != .Ok
+		{
+			return .Invalid_Description;
+		}
 	}
 	if math.abs(util.quaternion_length_squared(description.pose.orientation) - 1) > 1e-3
 	{

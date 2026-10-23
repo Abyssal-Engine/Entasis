@@ -1250,7 +1250,7 @@ distance_query_next_leaf :: proc "contextless" (
 	for cursor.node >= 0
 	{
 		child: ^Tree_Node_Child = tree_child(&root.tree.nodes.memory[cursor.node], cursor.side);
-		if distance_query_bounds_distance_squared(query_bounds, tree_child_bounds(child^)) > f64(limit)*f64(limit)
+		if tree_local_bounds_distance_squared(query_bounds, tree_child_bounds(child^)) > f64(limit)*f64(limit)
 		{
 			distance_query_cursor_advance(root.tree, cursor);
 			continue;

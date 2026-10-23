@@ -59,6 +59,22 @@ Owner_State :: enum u8
 	Released,
 }
 
+Ray_Pattern :: enum u8
+{
+	Axial,
+	Oblique,
+}
+
+ray_pattern_name :: proc "contextless" (pattern: Ray_Pattern) -> string
+{
+	switch pattern
+	{
+	case .Axial: return "axial";
+	case .Oblique: return "oblique";
+	}
+	unreachable();
+}
+
 Query_Family :: enum u8
 {
 	Ray,
@@ -212,7 +228,7 @@ vector_set_component :: #force_inline proc "contextless" (
 	return result;
 }
 
-query_generate :: proc "contextless" (global_index: int) -> (util.Vector3, util.Vector3)
+query_generate :: proc "contextless" (global_index: int, ray_pattern: Ray_Pattern = .Axial) -> (util.Vector3, util.Vector3)
 {
 	family_index := global_index;
 	if global_index >= RAY_QUERY_COUNT + SPHERE_CAST_QUERY_COUNT
@@ -294,10 +310,35 @@ query_generate :: proc "contextless" (global_index: int) -> (util.Vector3, util.
 			origin = vector_set_component(origin, component, coordinate);
 		}
 	}
+	if global_index < RAY_QUERY_COUNT && ray_pattern == .Oblique
+	{
+		t_to_center := (vector_component(center, axis) - vector_component(origin, axis)) /
+			vector_component(direction, axis);
+		for component in 0 ..< 3
+		{
+			if component == axis
+			{
+				continue;
+			}
+			transverse_direction := f32(1.0 / 64.0);
+			if (sample >> uint(component)) & 1 != 0
+			{
+				transverse_direction = -transverse_direction;
+			}
+			coordinate := vector_component(center, component) - t_to_center * transverse_direction;
+			if !intended_hit && component == first_transverse
+			{
+				coordinate = vector_component(scene_maximum, component) + MISS_OFFSET;
+				transverse_direction = f32(1.0 / 64.0);
+			}
+			origin = vector_set_component(origin, component, coordinate);
+			direction = vector_set_component(direction, component, transverse_direction);
+		}
+	}
 	return origin, direction;
 }
 
-query_inputs_create :: proc(owner: ^Benchmark_Owner) -> Case_Status
+query_inputs_create :: proc(owner: ^Benchmark_Owner, ray_pattern: Ray_Pattern) -> Case_Status
 {
 	if owner == nil
 	{
@@ -312,7 +353,7 @@ query_inputs_create :: proc(owner: ^Benchmark_Owner) -> Case_Status
 	}
 	for index in 0 ..< RAY_QUERY_COUNT
 	{
-		origin, direction := query_generate(index);
+		origin, direction := query_generate(index, ray_pattern);
 		owner.ray_inputs[index] = {
 			ray={origin=origin, direction=direction, maximum_t=QUERY_DISTANCE},
 		};
@@ -435,6 +476,7 @@ benchmark_owner_create :: proc(
 	owner: ^Benchmark_Owner,
 	pool: ^entasis.Buffer_Pool,
 	worker_count: int,
+	ray_pattern: Ray_Pattern,
 ) -> Case_Status
 {
 	if owner == nil || pool == nil || owner.state != .Empty ||
@@ -452,7 +494,7 @@ benchmark_owner_create :: proc(
 		return .Creation_Failed;
 	}
 	owner.state = .Ready;
-	input_status := query_inputs_create(owner);
+	input_status := query_inputs_create(owner, ray_pattern);
 	if input_status != .Ok
 	{
 		_ = benchmark_owner_destroy(owner);
@@ -935,71 +977,79 @@ family_execute :: proc(
 batch_execute :: proc(
 	owner: ^Benchmark_Owner,
 	mode: Execution_Mode,
+	families: bit_set[Query_Family] = {.Ray, .Sphere_Cast, .Overlap},
 ) -> Batch_Result
 {
 	result := Batch_Result{status=.Ok, physics_status=.Ok};
-	start := time.tick_now();
-	ray_result := family_execute(owner, .Ray, mode);
-	end := time.tick_now();
-	if ray_result.status != .Ok
+	if .Ray in families
 	{
-		return {status=.Query_Failed, physics_status=ray_result.status};
+		start := time.tick_now();
+		ray_result := family_execute(owner, .Ray, mode);
+		end := time.tick_now();
+		if ray_result.status != .Ok
+		{
+			return {status=.Query_Failed, physics_status=ray_result.status};
+		}
+		result.ray_nanoseconds = u64(time.tick_diff(start, end));
+		result.ray_hits = ray_result.hit_count;
+		result.ray_checksum = ray_result.checksum;
 	}
-	result.ray_nanoseconds = u64(time.tick_diff(start, end));
-	result.ray_hits = ray_result.hit_count;
-	result.ray_checksum = ray_result.checksum;
-
-	start = time.tick_now();
-	sphere_result := family_execute(owner, .Sphere_Cast, mode);
-	end = time.tick_now();
-	if sphere_result.status != .Ok
+	if .Sphere_Cast in families
 	{
-		return {status=.Query_Failed, physics_status=sphere_result.status};
+		start := time.tick_now();
+		sphere_result := family_execute(owner, .Sphere_Cast, mode);
+		end := time.tick_now();
+		if sphere_result.status != .Ok
+		{
+			return {status=.Query_Failed, physics_status=sphere_result.status};
+		}
+		result.sphere_nanoseconds = u64(time.tick_diff(start, end));
+		result.sphere_cast_hits = sphere_result.hit_count;
+		result.sphere_cast_checksum = sphere_result.checksum;
 	}
-	result.sphere_nanoseconds = u64(time.tick_diff(start, end));
-	result.sphere_cast_hits = sphere_result.hit_count;
-	result.sphere_cast_checksum = sphere_result.checksum;
-
-	start = time.tick_now();
-	overlap_result := family_execute(owner, .Overlap, mode);
-	end = time.tick_now();
-	if overlap_result.status != .Ok
+	if .Overlap in families
 	{
-		return {status=.Query_Failed, physics_status=overlap_result.status};
+		start := time.tick_now();
+		overlap_result := family_execute(owner, .Overlap, mode);
+		end := time.tick_now();
+		if overlap_result.status != .Ok
+		{
+			return {status=.Query_Failed, physics_status=overlap_result.status};
+		}
+		result.overlap_nanoseconds = u64(time.tick_diff(start, end));
+		result.overlap_hits = overlap_result.hit_count;
+		result.overlap_checksum = overlap_result.checksum;
 	}
-	result.overlap_nanoseconds = u64(time.tick_diff(start, end));
-	result.overlap_hits = overlap_result.hit_count;
-	result.overlap_checksum = overlap_result.checksum;
 	return result;
 }
 
-batch_hits_valid :: #force_inline proc "contextless" (result: Batch_Result) -> bool
+batch_hits_valid :: #force_inline proc "contextless" (result: Batch_Result, families: bit_set[Query_Family] = {.Ray, .Sphere_Cast, .Overlap}) -> bool
 {
-	return result.ray_hits == EXPECTED_RAY_HITS &&
-		result.sphere_cast_hits == EXPECTED_SPHERE_CAST_HITS &&
-		result.overlap_hits == EXPECTED_OVERLAP_HITS;
+	return (.Ray not_in families || result.ray_hits == EXPECTED_RAY_HITS) &&
+		(.Sphere_Cast not_in families || result.sphere_cast_hits == EXPECTED_SPHERE_CAST_HITS) &&
+		(.Overlap not_in families || result.overlap_hits == EXPECTED_OVERLAP_HITS);
 }
 
-benchmark_execute :: proc(owner: ^Benchmark_Owner) -> Benchmark_Result
+benchmark_execute :: proc(owner: ^Benchmark_Owner, families: bit_set[Query_Family] = {.Ray, .Sphere_Cast, .Overlap}, warmup_batches: int = WARMUP_BATCH_COUNT, measured_batches: int = MEASURED_BATCH_COUNT) -> Benchmark_Result
 {
-	validation := batch_execute(owner, .Validate);
+	validation := batch_execute(owner, .Validate, families);
 	if validation.status != .Ok
 	{
 		return {status=validation.status, physics_status=validation.physics_status};
 	}
-	if !batch_hits_valid(validation) || validation.ray_checksum == 0 ||
-		validation.sphere_cast_checksum == 0 || validation.overlap_checksum == 0
+	if !batch_hits_valid(validation, families) || (.Ray in families && validation.ray_checksum == 0) ||
+		(.Sphere_Cast in families && validation.sphere_cast_checksum == 0) || (.Overlap in families && validation.overlap_checksum == 0)
 	{
 		return {status=.Validation_Failed};
 	}
-	for _ in 0 ..< WARMUP_BATCH_COUNT
+	for _ in 0 ..< warmup_batches
 	{
-		warmup := batch_execute(owner, .Timed);
+		warmup := batch_execute(owner, .Timed, families);
 		if warmup.status != .Ok
 		{
 			return {status=warmup.status, physics_status=warmup.physics_status};
 		}
-		if !batch_hits_valid(warmup)
+		if !batch_hits_valid(warmup, families)
 		{
 			return {status=.Validation_Failed};
 		}
@@ -1011,14 +1061,14 @@ benchmark_execute :: proc(owner: ^Benchmark_Owner) -> Benchmark_Result
 		sphere_cast_checksum=validation.sphere_cast_checksum,
 		overlap_checksum=validation.overlap_checksum,
 	};
-	for _ in 0 ..< MEASURED_BATCH_COUNT
+	for _ in 0 ..< measured_batches
 	{
-		batch := batch_execute(owner, .Timed);
+		batch := batch_execute(owner, .Timed, families);
 		if batch.status != .Ok
 		{
 			return {status=batch.status, physics_status=batch.physics_status};
 		}
-		if !batch_hits_valid(batch)
+		if !batch_hits_valid(batch, families)
 		{
 			return {status=.Validation_Failed};
 		}
@@ -1029,8 +1079,8 @@ benchmark_execute :: proc(owner: ^Benchmark_Owner) -> Benchmark_Result
 		result.sphere_nanoseconds += batch.sphere_nanoseconds;
 		result.overlap_nanoseconds += batch.overlap_nanoseconds;
 	}
-	if result.ray_nanoseconds == 0 || result.sphere_nanoseconds == 0 ||
-		result.overlap_nanoseconds == 0
+	if (.Ray in families && result.ray_nanoseconds == 0) || (.Sphere_Cast in families && result.sphere_nanoseconds == 0) ||
+		(.Overlap in families && result.overlap_nanoseconds == 0)
 	{
 		return {status=.Validation_Failed};
 	}

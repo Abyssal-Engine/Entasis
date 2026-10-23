@@ -2,6 +2,8 @@
 
 This benchmark measures `entasis.query_batch` against the same scene and ray inputs as `spatial_query_trace`: 50,000 closest rays per frame, submitted in batches of 256, with ten warmup frames and 100 measured frames
 
+Windows Run accepts `-RayPattern axial|oblique`, default axial. Axial retains the published inputs. Oblique rays have one unit dominant component and two transverse components of magnitude 1/64. Hit origins project backward from target centers, while misses point outward beyond the scene. Both distributions retain 25,000 hits, the 64-unit limit and the existing timing boundaries. The CSV appends `ray_pattern`, and the reporter labels it and rejects mixed distributions. Oblique results are isolated under `spatial_query_batch/oblique[/mixed64]/release/<attempt>/`
+
 Each worker processes a contiguous input range. Timing includes query submission, output initialization and writes, hit consumption, and worker dispatch. Scene creation, worker storage allocation, warmup, and scalar validation are outside timing. Worker storage is allocated once and reused
 
 Every result is compared against a scalar query before and after measurement: hit or miss, target, child, distance, position, and normal. Floating-point comparisons use `0.0002 * max(1, abs(a), abs(b))`. The CSV records the validation checksum and total measured time in `ray_elapsed_ms`:

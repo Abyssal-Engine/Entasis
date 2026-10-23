@@ -286,7 +286,7 @@ struct entasis_collision_task_wide_input_t {
 /**
  * copied scalar and wide convex collision route
  *
- * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+ * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
  */
 struct entasis_collision_task_registration_t {
     /* initialize to sizeof this structure */
@@ -312,7 +312,7 @@ struct entasis_collision_task_registration_t {
 /**
  * copied top-level and child sweep route
  *
- * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+ * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
  */
 struct entasis_sweep_task_registration_t {
     /* initialize to sizeof this structure */
@@ -1158,7 +1158,7 @@ ENTASIS_API entasis_collision_task_registration_t ENTASIS_CALL entasis_collision
 /**
  * registers one contextual collision pair route
  *
- * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+ * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
  *
  * @param world world while idle
  * @param registration description copied during registration
@@ -1179,7 +1179,7 @@ ENTASIS_API entasis_sweep_task_registration_t ENTASIS_CALL entasis_sweep_task_re
 /**
  * registers one contextual sweep pair route
  *
- * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no global/TLS routing, payload header or per-pair allocation is used
+ * register before stepping. descriptors are snapshotted before output writes and allocator callbacks. user_context remains caller-owned through world destruction. registration does not replace an existing route or consume an ID on failure. both callbacks are required. clear/reuse preserves bindings. callbacks may run concurrently and must synchronize shared application data. no per-pair allocation is used
  *
  * @param world world while idle
  * @param registration description copied during registration

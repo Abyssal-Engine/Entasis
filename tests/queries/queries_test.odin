@@ -378,6 +378,11 @@ wide_ray_routes_match_scalar_results_for_every_convex_shape_and_mask_tails :: pr
 	}
 }
 
+ray_batcher_identity_filter :: proc "contextless" (user: rawptr, target: i32) -> physics.Query_Filter_Result
+{
+	return .Allow if target == (^i32)(user)^ else .Reject;
+}
+
 @(test)
 ray_batcher_executes_full_wide_bundle_and_tail_without_reordering_results :: proc(t: ^testing.T)
 {
@@ -414,6 +419,40 @@ ray_batcher_executes_full_wide_bundle_and_tail_without_reordering_results :: pro
 	{
 		testing.expect_value(t, collector.hits.memory[request_index].target_id, i32(77));
 		testing.expect(t, collector.hits.memory[request_index].t >= 4 && collector.hits.memory[request_index].t <= 5);
+	}
+	for count in ([2]int{8, 9})
+	{
+		for first_id in ([2]i32{77, 88})
+		{
+			for accepted_id in ([2]i32{77, 88})
+			{
+				collector.count = 0;
+				accepted: i32 = accepted_id;
+				collector.callbacks.filter = {allow_target=ray_batcher_identity_filter};
+				collector.callbacks.user_context = &accepted;
+				for index in 0..<count
+				{
+					request_target: physics.Shape_Query_Target = target;
+					request_target.target_id = first_id if index%2 == 0 else 165-first_id;
+					raycast: physics.Tree_Ray = {origin={-5, 0, 0}, direction={1, 0, 0}, maximum_t=20};
+					testing.expect_value(t, physics.ray_batcher_add(&batcher, request_target, raycast, i32(index)), physics.Physics_Status.Ok);
+				}
+				testing.expect_value(t, physics.ray_batcher_flush(&batcher, &shapes, &collector), physics.Physics_Status.Ok);
+				expected_count: int;
+				for index in 0..<count
+				{
+					request_id: i32 = first_id if index%2 == 0 else 165-first_id;
+					if request_id == accepted_id
+					{
+						testing.expect_value(t, hit_data[expected_count].target_id, request_id);
+						testing.expect_value(t, hit_data[expected_count].ray_id, i32(index));
+						testing.expect_value(t, hit_data[expected_count].t, f32(4));
+						expected_count += 1;
+					}
+				}
+				testing.expect_value(t, collector.count, expected_count);
+			}
+		}
 	}
 }
 
@@ -711,7 +750,7 @@ pathological_tree_queries_grow_caller_and_worker_owned_scratch :: proc(t: ^testi
 			shape_index=sphere_index,
 		};
 		added_leaf, add_status := physics.tree_add_without_refinement(
-			&tree, {min={x, -0.5, -0.5}, max={x, 0.5, 0.5}},
+			&tree, {min={physics.Tree_Scalar(x), -0.5, -0.5}, max={physics.Tree_Scalar(x), 0.5, 0.5}},
 		);
 		testing.expect_value(t, add_status, physics.Physics_Status.Ok);
 		testing.expect_value(t, added_leaf, leaf_index);
@@ -736,7 +775,7 @@ pathological_tree_queries_grow_caller_and_worker_owned_scratch :: proc(t: ^testi
 	for child_index in 0 ..< LEAF_COUNT
 	{
 		added_child, add_status := physics.tree_add_without_refinement(
-			&deep_compound.tree, deep_compound.child_bounds.memory[child_index],
+			&deep_compound.tree, physics.tree_bounds_from_local(deep_compound.child_bounds.memory[child_index]),
 		);
 		testing.expect_value(t, add_status, physics.Physics_Status.Ok);
 		testing.expect_value(t, added_child, child_index);
@@ -970,8 +1009,8 @@ pathological_tree_queries_grow_caller_and_worker_owned_scratch :: proc(t: ^testi
 		target := target_data[leaf_index];
 		_, add_status := physics.tree_add_without_refinement(
 			&shallow_tree, {
-				min={target.pose.position.x, -0.5, -0.5},
-				max={target.pose.position.x, 0.5, 0.5},
+				min={physics.Tree_Scalar(target.pose.position.x), -0.5, -0.5},
+				max={physics.Tree_Scalar(target.pose.position.x), 0.5, 0.5},
 			},
 		);
 		testing.expect_value(t, add_status, physics.Physics_Status.Ok);

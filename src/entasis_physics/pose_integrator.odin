@@ -31,16 +31,36 @@ Pose_Integrator_Velocity_Proc :: #type proc "contextless" (
 );
 Pose_Integrator_Dispose_Proc :: #type proc "contextless" (user_context: rawptr);
 
-Pose_Integrator_Callbacks :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	initialize:                  Pose_Integrator_Initialize_Proc,
-	prepare_for_integration:     Pose_Integrator_Prepare_Proc,
-	integrate_velocity:          Pose_Integrator_Velocity_Proc,
-	dispose:                     Pose_Integrator_Dispose_Proc,
-	angular_mode:                Angular_Integration_Mode,
-	allow_substeps_for_unconstrained: Velocity_Integration_State,
-	integrate_kinematic_velocity: Velocity_Integration_State,
-	user_context:                rawptr,
+	Pose_Integrator_Callbacks :: struct
+	{
+		initialize:                  Pose_Integrator_Initialize_Proc,
+		prepare_for_integration:     Pose_Integrator_Prepare_Proc,
+		integrate_velocity:          Pose_Integrator_Velocity_Proc,
+		dispose:                     Pose_Integrator_Dispose_Proc,
+		angular_mode:                Angular_Integration_Mode,
+		allow_substeps_for_unconstrained: Velocity_Integration_State,
+		integrate_kinematic_velocity: Velocity_Integration_State,
+		user_context:                rawptr,
+		// exactly one velocity callback is installed. the native high-coordinate
+		// hook does not change the legacy callback signature or float pose cache
+		integrate_velocity_global:   Pose_Integrator_Global_Velocity_Proc,
+	}
+}
+else
+{
+	Pose_Integrator_Callbacks :: struct
+	{
+		initialize:                  Pose_Integrator_Initialize_Proc,
+		prepare_for_integration:     Pose_Integrator_Prepare_Proc,
+		integrate_velocity:          Pose_Integrator_Velocity_Proc,
+		dispose:                     Pose_Integrator_Dispose_Proc,
+		angular_mode:                Angular_Integration_Mode,
+		allow_substeps_for_unconstrained: Velocity_Integration_State,
+		integrate_kinematic_velocity: Velocity_Integration_State,
+		user_context:                rawptr,
+	}
 }
 
 Default_Pose_Integrator_Context :: struct
@@ -138,12 +158,26 @@ pose_integrator_default_callbacks :: proc "contextless" (
 
 pose_integrator_callbacks_validate :: proc "contextless" (callbacks: Pose_Integrator_Callbacks) -> Physics_Status
 {
-	if callbacks.initialize == nil || callbacks.prepare_for_integration == nil ||
-		callbacks.integrate_velocity == nil || callbacks.dispose == nil
+	when util.PRECISION_MODE == .Double_Coordinates
 	{
-		return .Invalid_Argument;
+		if callbacks.initialize == nil || callbacks.prepare_for_integration == nil ||
+			(callbacks.integrate_velocity == nil && callbacks.integrate_velocity_global == nil) ||
+			(callbacks.integrate_velocity != nil && callbacks.integrate_velocity_global != nil) ||
+			callbacks.dispose == nil
+		{
+			return .Invalid_Argument;
+		}
+		return .Ok;
 	}
-	return .Ok;
+	else
+	{
+		if callbacks.initialize == nil || callbacks.prepare_for_integration == nil ||
+			callbacks.integrate_velocity == nil || callbacks.dispose == nil
+		{
+			return .Invalid_Argument;
+		}
+		return .Ok;
+	}
 }
 
 pose_integrator_initialize :: proc "contextless" (
@@ -259,8 +293,8 @@ pose_integrator_predict_velocity :: proc "contextless" (
 	util.vector3_wide_write_slot(&wide_velocity.angular, 0, velocity.angular);
 	mask_values: [util.PRODUCTION_LANE_COUNT]i32;
 	mask_values[0] = -1;
-	integrator.callbacks.integrate_velocity(
-		integrator.callbacks.user_context, indices, position, orientation, inertia,
+	pose_integrator_invoke_velocity(
+		integrator, indices, position, orientation, inertia,
 		transmute(util.I32x8)mask_values, worker_index, util.F32x8(dt), &wide_velocity,
 	);
 	velocity.linear = util.vector3_wide_read_slot(wide_velocity.linear, 0);
@@ -314,8 +348,8 @@ pose_integrator_integrate_velocity_bundle :: proc "contextless" (
 	{
 		return gather_status;
 	}
-	integrator.callbacks.integrate_velocity(
-		integrator.callbacks.user_context, gather_indices, position, orientation, inertia,
+	pose_integrator_invoke_velocity(
+		integrator, gather_indices, position, orientation, inertia,
 		transmute(util.I32x8)mask_values, worker_index, util.F32x8(dt), &velocity,
 	);
 	return bodies_scatter_active_velocities(integrator.bodies, transmute(util.I32x8)scatter_values, velocity);
@@ -597,7 +631,16 @@ pose_integrator_integrate_pose_body :: proc "contextless" (
 		world_inertia := util.symmetric3x3_invert(dynamics.inertia.world.inverse_inertia_tensor);
 		angular_momentum = util.symmetric3x3_transform(velocity.angular, world_inertia);
 	}
-	pose.position = util.vector3_add(pose.position, util.vector3_scale(velocity.linear, dt));
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		pose.position = world_precision_advance_position(
+			&active.global_positions.memory[index], util.vector3_scale(velocity.linear, dt),
+		);
+	}
+	else
+	{
+		pose.position = util.vector3_add(pose.position, util.vector3_scale(velocity.linear, dt));
+	}
 	pose.orientation = pose_integrator_integrate_orientation(pose.orientation, velocity.angular, dt);
 	pose_integrator_update_world_inertia(dynamics);
 	if conserves_momentum
@@ -731,4 +774,46 @@ pose_integrator_dispose :: proc "contextless" (integrator: ^Pose_Integrator) -> 
 	}
 	integrator^ = {state=.Disposed};
 	return .Ok;
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	pose_integrator_invoke_global_velocity :: #force_no_inline proc "contextless" (
+		integrator: ^Pose_Integrator, body_indices: util.I32x8,
+		orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+		integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+	)
+	{
+		positions: Global_Position_Bundle;
+		active: ^Body_Set = &integrator.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		indices: [util.PRODUCTION_LANE_COUNT]i32 = transmute([util.PRODUCTION_LANE_COUNT]i32)body_indices;
+		mask: [util.PRODUCTION_LANE_COUNT]i32 = transmute([util.PRODUCTION_LANE_COUNT]i32)integration_mask;
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			if mask[lane] != 0
+			{
+				positions[lane] = active.global_positions.memory[indices[lane]];
+			}
+		}
+		integrator.callbacks.integrate_velocity_global(integrator.callbacks.user_context,
+			body_indices, &positions, orientation, inertia, integration_mask, worker_index, dt, velocity);
+	}
+
+}
+
+pose_integrator_invoke_velocity :: #force_inline proc "contextless" (
+	integrator: ^Pose_Integrator, body_indices: util.I32x8,
+	position: util.Vector3_Wide, orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+	integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+)
+{
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if integrator.callbacks.integrate_velocity_global != nil
+		{
+			pose_integrator_invoke_global_velocity(integrator, body_indices, orientation, inertia, integration_mask, worker_index, dt, velocity);
+			return;
+		}
+	}
+	integrator.callbacks.integrate_velocity(integrator.callbacks.user_context, body_indices, position, orientation, inertia, integration_mask, worker_index, dt, velocity);
 }

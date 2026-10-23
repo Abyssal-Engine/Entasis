@@ -65,12 +65,26 @@ Body_Control_Damping_Record :: struct
 	linear_multiplier, angular_multiplier: f32,
 }
 
-Body_Control_Target :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	pose: Rigid_Pose,
-	velocity, previous_velocity: Body_Velocity,
-	phase: Body_Target_Phase,
-	applied: Reference_State,
+	Body_Control_Target :: struct
+	{
+		pose: Rigid_Pose,
+		global_position: Global_Position,
+		velocity, previous_velocity: Body_Velocity,
+		phase: Body_Target_Phase,
+		applied: Reference_State,
+	}
+}
+else
+{
+	Body_Control_Target :: struct
+	{
+		pose: Rigid_Pose,
+		velocity, previous_velocity: Body_Velocity,
+		phase: Body_Target_Phase,
+		applied: Reference_State,
+	}
 }
 
 Body_Control_Binding :: struct
@@ -78,21 +92,44 @@ Body_Control_Binding :: struct
 	input, damping, target: i32,
 }
 
-Body_Control_Storage :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	simulation: ^Simulation,
-	allocator: mem.Allocator,
-	scope: util.Allocation_Scope,
-	configuration: Body_Control_Configuration,
-	callbacks: Pose_Integrator_Callbacks,
-	undamped: Pose_Integrator_Velocity_Proc,
-	inputs: util.Quick_Dictionary(i32, Body_Control_Input),
-	damping: util.Quick_Dictionary(i32, Body_Control_Damping_Record),
-	targets: util.Quick_Dictionary(i32, Body_Control_Target),
-	bindings: util.Buffer(Body_Control_Binding),
-	activation: Reference_State,
-	phase: Body_Control_Phase,
-	step_dt: f32,
+	Body_Control_Storage :: struct
+	{
+		simulation: ^Simulation,
+		allocator: mem.Allocator,
+		scope: util.Allocation_Scope,
+		configuration: Body_Control_Configuration,
+		callbacks: Pose_Integrator_Callbacks,
+		undamped: Pose_Integrator_Velocity_Proc,
+		undamped_global: Pose_Integrator_Global_Velocity_Proc,
+		inputs: util.Quick_Dictionary(i32, Body_Control_Input),
+		damping: util.Quick_Dictionary(i32, Body_Control_Damping_Record),
+		targets: util.Quick_Dictionary(i32, Body_Control_Target),
+		bindings: util.Buffer(Body_Control_Binding),
+		activation: Reference_State,
+		phase: Body_Control_Phase,
+		step_dt: f32,
+	}
+}
+else
+{
+	Body_Control_Storage :: struct
+	{
+		simulation: ^Simulation,
+		allocator: mem.Allocator,
+		scope: util.Allocation_Scope,
+		configuration: Body_Control_Configuration,
+		callbacks: Pose_Integrator_Callbacks,
+		undamped: Pose_Integrator_Velocity_Proc,
+		inputs: util.Quick_Dictionary(i32, Body_Control_Input),
+		damping: util.Quick_Dictionary(i32, Body_Control_Damping_Record),
+		targets: util.Quick_Dictionary(i32, Body_Control_Target),
+		bindings: util.Buffer(Body_Control_Binding),
+		activation: Reference_State,
+		phase: Body_Control_Phase,
+		step_dt: f32,
+	}
 }
 
 body_control_configuration_default :: proc "contextless" () -> Body_Control_Configuration
@@ -244,7 +281,21 @@ body_control_select_callbacks :: proc "contextless" (storage: ^Body_Control_Stor
 	{
 		callbacks: Pose_Integrator_Callbacks = storage.callbacks;
 		callbacks.prepare_for_integration = body_control_prepare_callback;
-		callbacks.integrate_velocity = body_control_velocity_callback;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if storage.callbacks.integrate_velocity_global != nil
+			{
+				callbacks.integrate_velocity_global = body_control_global_velocity_callback;
+			}
+			else
+			{
+				callbacks.integrate_velocity = body_control_high_legacy_velocity_callback;
+			}
+		}
+		else
+		{
+			callbacks.integrate_velocity = body_control_velocity_callback;
+		}
 		callbacks.user_context = storage;
 		// sleeping-only controls do not wrap unrelated active bodies. re-selection
 		// after collision awakening occurs at the solve preparation boundary
@@ -461,9 +512,27 @@ body_control_damping_set :: proc (
 	}
 	if body_inertia_mobility(dynamics.inertia.local) != .Dynamic ||
 	!(value.linear >= 0) || !(value.angular >= 0) || math.is_inf(value.linear, 0) || math.is_inf(value.angular, 0) ||
-	(value.mode != .Additional && value.mode != .Override) || (value.mode == .Override && storage.undamped == nil)
+	(value.mode != .Additional && value.mode != .Override)
 	{
 		return .Invalid_Argument;
+	}
+	if value.mode == .Override
+	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if (storage.callbacks.integrate_velocity_global == nil && storage.undamped == nil) ||
+				(storage.callbacks.integrate_velocity_global != nil && storage.undamped_global == nil)
+			{
+				return .Invalid_Argument;
+			}
+		}
+		else
+		{
+			if storage.undamped == nil
+			{
+				return .Invalid_Argument;
+			}
+		}
 	}
 	key: i32 = handle.value;
 	if value.mode == .Additional && value.linear == 0 && value.angular == 0
@@ -492,8 +561,16 @@ body_control_damping_set :: proc (
 
 body_control_target_set :: proc (
 	storage: ^Body_Control_Storage, handle: Body_Handle, pose: Rigid_Pose, wake: Body_Control_Wake,
+	global_position: ^Global_Position = nil,
 ) -> Physics_Status
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil && world_precision_position_validate(global_position^) != .Ok
+		{
+			return .Invalid_Argument;
+		}
+	}
 	dynamics: ^Body_Dynamics;
 	location: Body_Memory_Location;
 	status: Physics_Status;
@@ -529,6 +606,14 @@ body_control_target_set :: proc (
 		storage.simulation.bodies.sets.memory[location.set_index].activity.memory[location.index].sleep_candidate = .Not_Candidate;
 	}
 	value: Body_Control_Target = {pose=pose};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		value.global_position = world_precision_position_from_float(pose.position);
+		if global_position != nil
+		{
+			value.global_position = global_position^;
+		}
+	}
 	if index >= 0
 	{
 		previous: ^Body_Control_Target = &storage.targets.values.memory[index];
@@ -658,7 +743,15 @@ body_control_step_prepare :: #force_no_inline proc (storage: ^Body_Control_Stora
 		if location.set_index == BODIES_ACTIVE_SET_INDEX
 		{
 			dynamics: ^Body_Dynamics = &storage.simulation.bodies.sets.memory[location.set_index].dynamics_state.memory[location.index];
-			velocity: Body_Velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, dt);
+			velocity: Body_Velocity;
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				velocity = body_control_target_velocity_global(storage.simulation.bodies.sets.memory[location.set_index].global_positions.memory[location.index], dynamics.motion.pose.orientation, value, dt);
+			}
+			else
+			{
+				velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, dt);
+			}
 			if constraint_vector3_finite(velocity.linear) == .Missing || constraint_vector3_finite(velocity.angular) == .Missing
 			{
 				return .Invalid_Argument;
@@ -691,7 +784,14 @@ body_control_step_prepare :: #force_no_inline proc (storage: ^Body_Control_Stora
 		}
 		if location.set_index == BODIES_ACTIVE_SET_INDEX
 		{
-			value.velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, dt);
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				value.velocity = body_control_target_velocity_global(storage.simulation.bodies.sets.memory[location.set_index].global_positions.memory[location.index], dynamics.motion.pose.orientation, value, dt);
+			}
+			else
+			{
+				value.velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, dt);
+			}
 			if value.phase != .Prepared
 			{
 				value.previous_velocity = dynamics.motion.velocity;
@@ -755,7 +855,14 @@ body_control_prepare_callback :: proc "contextless" (user_context: rawptr, dt: f
 			if value.phase == .Pending
 			{
 				dynamics: ^Body_Dynamics = &active.dynamics_state.memory[location.index];
-				value.velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, storage.step_dt);
+				when util.PRECISION_MODE == .Double_Coordinates
+				{
+					value.velocity = body_control_target_velocity_global(active.global_positions.memory[location.index], dynamics.motion.pose.orientation, value, storage.step_dt);
+				}
+				else
+				{
+					value.velocity = body_control_target_velocity(dynamics.motion.pose, value.pose, storage.step_dt);
+				}
 				if constraint_vector3_finite(value.velocity.linear) == .Missing || constraint_vector3_finite(value.velocity.angular) == .Missing
 				{
 					return .Invalid_Argument;
@@ -773,114 +880,267 @@ body_control_prepare_callback :: proc "contextless" (user_context: rawptr, dt: f
 	return storage.callbacks.prepare_for_integration(storage.callbacks.user_context, dt);
 }
 
-body_control_velocity_callback :: proc "contextless" (
-	user_context: rawptr, body_indices: util.I32x8,
-	position: util.Vector3_Wide, orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
-	integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
-)
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	storage: ^Body_Control_Storage = (^Body_Control_Storage)(user_context);
-	indices: [8]i32 = transmute([8]i32)body_indices;
-	masks: [8]i32 = transmute([8]i32)integration_mask;
-	base_indices: [8]i32 = indices;
-	base_masks: [8]i32 = masks;
-	override_masks: [8]i32;
-	base_count, override_count: int;
-	for lane in 0 ..< 8
+	body_control_high_legacy_velocity_callback :: proc "contextless" (
+		user_context: rawptr, body_indices: util.I32x8,
+		position: util.Vector3_Wide, orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+		integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+	)
 	{
-		if masks[lane] == 0
-		{
-			continue;
-		}
-		binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
-		if binding.target >= 0 || (storage.callbacks.integrate_kinematic_velocity == .Disabled &&
-			body_inertia_mobility(storage.simulation.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].dynamics_state.memory[indices[lane]].inertia.local) == .Kinematic)
-		{
-			base_masks[lane] = 0;
-			base_indices[lane] = -1;
-			continue;
-		}
-		base_count += 1;
-		if binding.damping >= 0 && storage.damping.values.memory[binding.damping].settings.mode == .Override
-		{
-			override_masks[lane] = -1;
-			override_count += 1;
-		}
+		body_control_velocity_execute((^Body_Control_Storage)(user_context), body_indices,
+			position, nil, orientation, inertia, integration_mask, worker_index, dt, velocity);
 	}
-	prior: Body_Velocity_Wide = velocity^;
-	if base_count > 0
+
+	body_control_global_velocity_callback :: proc "contextless" (
+		user_context: rawptr, body_indices: util.I32x8,
+		position: ^Global_Position_Bundle, orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+		integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+	)
 	{
-		storage.callbacks.integrate_velocity(storage.callbacks.user_context,
-			transmute(util.I32x8)base_indices, position, orientation, inertia,
-			transmute(util.I32x8)base_masks, worker_index, dt, velocity);
-		velocity.linear = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.linear, prior.linear);
-		velocity.angular = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.angular, prior.angular);
+		body_control_velocity_execute((^Body_Control_Storage)(user_context), body_indices,
+			{}, position, orientation, inertia, integration_mask, worker_index, dt, velocity);
 	}
-	if override_count > 0
+
+	body_control_velocity_execute :: proc "contextless" (
+		storage: ^Body_Control_Storage, body_indices: util.I32x8,
+		position: util.Vector3_Wide, position_global: ^Global_Position_Bundle,
+		orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+		integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+	)
 	{
-		undamped: Body_Velocity_Wide = prior;
-		storage.undamped(storage.callbacks.user_context, body_indices, position, orientation, inertia,
-			transmute(util.I32x8)override_masks, worker_index, dt, &undamped);
-		velocity.linear = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.linear, velocity.linear);
-		velocity.angular = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.angular, velocity.angular);
-	}
-	for lane in 0 ..< 8
-	{
-		if masks[lane] == 0
+		indices: [8]i32 = transmute([8]i32)body_indices;
+		masks: [8]i32 = transmute([8]i32)integration_mask;
+		base_indices: [8]i32 = indices;
+		base_masks: [8]i32 = masks;
+		override_masks: [8]i32;
+		base_count, override_count: int;
+		for lane in 0 ..< 8
 		{
-			continue;
-		}
-		binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
-		if binding.target >= 0
-		{
-			target: ^Body_Control_Target = &storage.targets.values.memory[binding.target];
-			util.vector3_wide_write_slot(&velocity.linear, lane, target.velocity.linear);
-			util.vector3_wide_write_slot(&velocity.angular, lane, target.velocity.angular);
-			if storage.phase == .Integrating
+			if masks[lane] == 0
 			{
-				target.applied = .Present;
+				continue;
 			}
-			continue;
-		}
-		if binding.input < 0 && binding.damping < 0
-		{
-			continue;
-		}
-		h: f32 = simd.extract(dt, lane);
-		linear: util.Vector3 = util.vector3_wide_read_slot(velocity.linear, lane);
-		angular: util.Vector3 = util.vector3_wide_read_slot(velocity.angular, lane);
-		if binding.input >= 0
-		{
-			input: ^Body_Control_Input = &storage.inputs.values.memory[binding.input];
-			linear = util.vector3_add(linear, util.vector3_scale(util.vector3_add(
-						util.vector3_scale(input.force, simd.extract(inertia.inverse_mass, lane)), input.acceleration), h));
-			angular_delta: util.Vector3 = input.angular_acceleration;
-			if input.torque != (util.Vector3{})
+			binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
+			if binding.target >= 0 || (storage.callbacks.integrate_kinematic_velocity == .Disabled &&
+				body_inertia_mobility(storage.simulation.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].dynamics_state.memory[indices[lane]].inertia.local) == .Kinematic)
 			{
-				local_inertia: util.Symmetric3x3 = util.Symmetric3x3{
-					xx=simd.extract(inertia.inverse_inertia_tensor.xx, lane), yx=simd.extract(inertia.inverse_inertia_tensor.yx, lane),
-					yy=simd.extract(inertia.inverse_inertia_tensor.yy, lane), zx=simd.extract(inertia.inverse_inertia_tensor.zx, lane),
-					zy=simd.extract(inertia.inverse_inertia_tensor.zy, lane), zz=simd.extract(inertia.inverse_inertia_tensor.zz, lane)};
-				rotation: util.Matrix3x3 = util.matrix3x3_from_quaternion(util.quaternion_wide_read_slot(orientation, lane));
-				world_inertia: util.Symmetric3x3 = util.symmetric3x3_rotation_sandwich(rotation, local_inertia);
-				angular_delta = util.vector3_add(angular_delta, util.symmetric3x3_transform(input.torque, world_inertia));
+					base_masks[lane] = 0;
+					base_indices[lane] = -1;
+					continue;
 			}
-			angular = util.vector3_add(angular, util.vector3_scale(angular_delta, h));
-			// existing integration responsibilities assign each body to one writer.
-			// prediction never consumes. every actual substep uses the same input
-			if storage.phase == .Integrating
+			base_count += 1;
+			if binding.damping >= 0 && storage.damping.values.memory[binding.damping].settings.mode == .Override
 			{
-				input.applied = .Present;
+				override_masks[lane] = -1;
+				override_count += 1;
 			}
 		}
-		if binding.damping >= 0
+		prior: Body_Velocity_Wide = velocity^;
+		if base_count > 0
 		{
-			value: ^Body_Control_Damping_Record = &storage.damping.values.memory[binding.damping];
-			linear = util.vector3_scale(linear, value.linear_multiplier);
-			angular = util.vector3_scale(angular, value.angular_multiplier);
+			if storage.callbacks.integrate_velocity_global != nil
+			{
+				storage.callbacks.integrate_velocity_global(storage.callbacks.user_context,
+					transmute(util.I32x8)base_indices, position_global, orientation, inertia,
+					transmute(util.I32x8)base_masks, worker_index, dt, velocity);
+			}
+			else
+			{
+				storage.callbacks.integrate_velocity(storage.callbacks.user_context,
+					transmute(util.I32x8)base_indices, position, orientation, inertia,
+					transmute(util.I32x8)base_masks, worker_index, dt, velocity);
+			}
+			velocity.linear = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.linear, prior.linear);
+			velocity.angular = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.angular, prior.angular);
 		}
-		util.vector3_wide_write_slot(&velocity.linear, lane, linear);
-		util.vector3_wide_write_slot(&velocity.angular, lane, angular);
+		if override_count > 0
+		{
+			undamped: Body_Velocity_Wide = prior;
+			if storage.callbacks.integrate_velocity_global != nil
+			{
+				storage.undamped_global(storage.callbacks.user_context, body_indices, position_global, orientation, inertia,
+					transmute(util.I32x8)override_masks, worker_index, dt, &undamped);
+			}
+			else
+			{
+				storage.undamped(storage.callbacks.user_context, body_indices, position, orientation, inertia,
+					transmute(util.I32x8)override_masks, worker_index, dt, &undamped);
+			}
+			velocity.linear = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.linear, velocity.linear);
+			velocity.angular = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.angular, velocity.angular);
+		}
+		for lane in 0 ..< 8
+		{
+			if masks[lane] == 0
+			{
+				continue;
+			}
+			binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
+			if binding.target >= 0
+			{
+				target: ^Body_Control_Target = &storage.targets.values.memory[binding.target];
+				util.vector3_wide_write_slot(&velocity.linear, lane, target.velocity.linear);
+				util.vector3_wide_write_slot(&velocity.angular, lane, target.velocity.angular);
+				if storage.phase == .Integrating
+				{
+					target.applied = .Present;
+				}
+				continue;
+			}
+			if binding.input < 0 && binding.damping < 0
+			{
+				continue;
+			}
+			h: f32 = simd.extract(dt, lane);
+			linear: util.Vector3 = util.vector3_wide_read_slot(velocity.linear, lane);
+			angular: util.Vector3 = util.vector3_wide_read_slot(velocity.angular, lane);
+			if binding.input >= 0
+			{
+				input: ^Body_Control_Input = &storage.inputs.values.memory[binding.input];
+				linear = util.vector3_add(linear, util.vector3_scale(util.vector3_add(
+							util.vector3_scale(input.force, simd.extract(inertia.inverse_mass, lane)), input.acceleration), h));
+				angular_delta: util.Vector3 = input.angular_acceleration;
+				if input.torque != (util.Vector3{})
+				{
+					local_inertia: util.Symmetric3x3 = util.Symmetric3x3{
+						xx=simd.extract(inertia.inverse_inertia_tensor.xx, lane), yx=simd.extract(inertia.inverse_inertia_tensor.yx, lane),
+						yy=simd.extract(inertia.inverse_inertia_tensor.yy, lane), zx=simd.extract(inertia.inverse_inertia_tensor.zx, lane),
+						zy=simd.extract(inertia.inverse_inertia_tensor.zy, lane), zz=simd.extract(inertia.inverse_inertia_tensor.zz, lane)};
+					rotation: util.Matrix3x3 = util.matrix3x3_from_quaternion(util.quaternion_wide_read_slot(orientation, lane));
+					world_inertia: util.Symmetric3x3 = util.symmetric3x3_rotation_sandwich(rotation, local_inertia);
+					angular_delta = util.vector3_add(angular_delta, util.symmetric3x3_transform(input.torque, world_inertia));
+				}
+				angular = util.vector3_add(angular, util.vector3_scale(angular_delta, h));
+				// existing integration responsibilities assign each body to one writer
+				// prediction never consumes. every actual substep uses the same input
+				if storage.phase == .Integrating
+				{
+					input.applied = .Present;
+				}
+			}
+			if binding.damping >= 0
+			{
+				value: ^Body_Control_Damping_Record = &storage.damping.values.memory[binding.damping];
+				linear = util.vector3_scale(linear, value.linear_multiplier);
+				angular = util.vector3_scale(angular, value.angular_multiplier);
+			}
+			util.vector3_wide_write_slot(&velocity.linear, lane, linear);
+			util.vector3_wide_write_slot(&velocity.angular, lane, angular);
+		}
+	}
+}
+else
+{
+	body_control_velocity_callback :: proc "contextless" (
+		user_context: rawptr, body_indices: util.I32x8,
+		position: util.Vector3_Wide, orientation: util.Quaternion_Wide, inertia: Body_Inertia_Wide,
+		integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^Body_Velocity_Wide,
+	)
+	{
+		storage: ^Body_Control_Storage = (^Body_Control_Storage)(user_context);
+		indices: [8]i32 = transmute([8]i32)body_indices;
+		masks: [8]i32 = transmute([8]i32)integration_mask;
+		base_indices: [8]i32 = indices;
+		base_masks: [8]i32 = masks;
+		override_masks: [8]i32;
+		base_count, override_count: int;
+		for lane in 0 ..< 8
+		{
+			if masks[lane] == 0
+			{
+				continue;
+			}
+			binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
+			if binding.target >= 0 || (storage.callbacks.integrate_kinematic_velocity == .Disabled &&
+				body_inertia_mobility(storage.simulation.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].dynamics_state.memory[indices[lane]].inertia.local) == .Kinematic)
+			{
+					base_masks[lane] = 0;
+					base_indices[lane] = -1;
+					continue;
+			}
+			base_count += 1;
+			if binding.damping >= 0 && storage.damping.values.memory[binding.damping].settings.mode == .Override
+			{
+				override_masks[lane] = -1;
+				override_count += 1;
+			}
+		}
+		prior: Body_Velocity_Wide = velocity^;
+		if base_count > 0
+		{
+			storage.callbacks.integrate_velocity(storage.callbacks.user_context,
+				transmute(util.I32x8)base_indices, position, orientation, inertia,
+				transmute(util.I32x8)base_masks, worker_index, dt, velocity);
+			velocity.linear = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.linear, prior.linear);
+			velocity.angular = util.vector3_wide_select(transmute(util.I32x8)base_masks, velocity.angular, prior.angular);
+		}
+		if override_count > 0
+		{
+			undamped: Body_Velocity_Wide = prior;
+			storage.undamped(storage.callbacks.user_context, body_indices, position, orientation, inertia,
+				transmute(util.I32x8)override_masks, worker_index, dt, &undamped);
+			velocity.linear = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.linear, velocity.linear);
+			velocity.angular = util.vector3_wide_select(transmute(util.I32x8)override_masks, undamped.angular, velocity.angular);
+		}
+		for lane in 0 ..< 8
+		{
+			if masks[lane] == 0
+			{
+				continue;
+			}
+			binding: Body_Control_Binding = storage.bindings.memory[indices[lane]];
+			if binding.target >= 0
+			{
+				target: ^Body_Control_Target = &storage.targets.values.memory[binding.target];
+				util.vector3_wide_write_slot(&velocity.linear, lane, target.velocity.linear);
+				util.vector3_wide_write_slot(&velocity.angular, lane, target.velocity.angular);
+				if storage.phase == .Integrating
+				{
+					target.applied = .Present;
+				}
+				continue;
+			}
+			if binding.input < 0 && binding.damping < 0
+			{
+				continue;
+			}
+			h: f32 = simd.extract(dt, lane);
+			linear: util.Vector3 = util.vector3_wide_read_slot(velocity.linear, lane);
+			angular: util.Vector3 = util.vector3_wide_read_slot(velocity.angular, lane);
+			if binding.input >= 0
+			{
+				input: ^Body_Control_Input = &storage.inputs.values.memory[binding.input];
+				linear = util.vector3_add(linear, util.vector3_scale(util.vector3_add(
+							util.vector3_scale(input.force, simd.extract(inertia.inverse_mass, lane)), input.acceleration), h));
+				angular_delta: util.Vector3 = input.angular_acceleration;
+				if input.torque != (util.Vector3{})
+				{
+					local_inertia: util.Symmetric3x3 = util.Symmetric3x3{
+						xx=simd.extract(inertia.inverse_inertia_tensor.xx, lane), yx=simd.extract(inertia.inverse_inertia_tensor.yx, lane),
+						yy=simd.extract(inertia.inverse_inertia_tensor.yy, lane), zx=simd.extract(inertia.inverse_inertia_tensor.zx, lane),
+						zy=simd.extract(inertia.inverse_inertia_tensor.zy, lane), zz=simd.extract(inertia.inverse_inertia_tensor.zz, lane)};
+					rotation: util.Matrix3x3 = util.matrix3x3_from_quaternion(util.quaternion_wide_read_slot(orientation, lane));
+					world_inertia: util.Symmetric3x3 = util.symmetric3x3_rotation_sandwich(rotation, local_inertia);
+					angular_delta = util.vector3_add(angular_delta, util.symmetric3x3_transform(input.torque, world_inertia));
+				}
+				angular = util.vector3_add(angular, util.vector3_scale(angular_delta, h));
+				// existing integration responsibilities assign each body to one writer
+				// prediction never consumes. every actual substep uses the same input
+				if storage.phase == .Integrating
+				{
+					input.applied = .Present;
+				}
+			}
+			if binding.damping >= 0
+			{
+				value: ^Body_Control_Damping_Record = &storage.damping.values.memory[binding.damping];
+				linear = util.vector3_scale(linear, value.linear_multiplier);
+				angular = util.vector3_scale(angular, value.angular_multiplier);
+			}
+			util.vector3_wide_write_slot(&velocity.linear, lane, linear);
+			util.vector3_wide_write_slot(&velocity.angular, lane, angular);
+		}
 	}
 }
 
@@ -941,10 +1201,24 @@ body_control_step_complete :: #force_no_inline proc (storage: ^Body_Control_Stor
 			// different duration is never teleported through missing motion
 			if status == .Ok
 			{
-				delta: util.Vector3 = util.vector3_subtract(dynamics.motion.pose.position, value.pose.position);
-				if util.vector3_length_squared(delta) <= 1e-8
+				when util.PRECISION_MODE == .Double_Coordinates
 				{
-					dynamics.motion.pose.position = value.pose.position;
+					position: ^Global_Position = &storage.simulation.bodies.sets.memory[location.set_index].global_positions.memory[location.index];
+					delta: Global_Position = {position.x - value.global_position.x,
+						position.y - value.global_position.y, position.z - value.global_position.z};
+					if delta.x * delta.x + delta.y * delta.y + delta.z * delta.z <= 1e-8
+					{
+						position^ = value.global_position;
+						dynamics.motion.pose.position = value.pose.position;
+					}
+				}
+				else
+				{
+					delta: util.Vector3 = util.vector3_subtract(dynamics.motion.pose.position, value.pose.position);
+					if util.vector3_length_squared(delta) <= 1e-8
+					{
+						dynamics.motion.pose.position = value.pose.position;
+					}
 				}
 			}
 			value.phase = .Expired;
@@ -952,4 +1226,36 @@ body_control_step_complete :: #force_no_inline proc (storage: ^Body_Control_Stor
 	}
 	storage.phase = .Idle;
 	body_control_select_callbacks(storage);
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	body_control_target_set_global :: proc (
+		storage: ^Body_Control_Storage, handle: Body_Handle,
+		position: Global_Position, orientation: util.Quaternion, wake: Body_Control_Wake,
+	) -> Physics_Status
+	{
+		stored: Global_Position = position;
+		return body_control_target_set(storage, handle,
+			{position=world_precision_position_cache(position), orientation=orientation}, wake, &stored);
+	}
+}
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	body_control_target_velocity_global :: proc "contextless" (
+		start_position: Global_Position, start_orientation: util.Quaternion,
+		target: ^Body_Control_Target, dt: f32,
+	) -> Body_Velocity
+	{
+		velocity: Body_Velocity = body_control_target_velocity(
+			{orientation=start_orientation}, {orientation=target.pose.orientation}, dt,
+		);
+		delta: util.Vector3 = {
+			f32(target.global_position.x - start_position.x),
+			f32(target.global_position.y - start_position.y),
+			f32(target.global_position.z - start_position.z),
+		};
+		velocity.linear = util.vector3_scale(delta, 1 / dt);
+		return velocity;
+	}
 }

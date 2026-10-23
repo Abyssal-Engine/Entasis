@@ -43,7 +43,7 @@ Tree_Binned_Node_Task_Context :: struct
 	node_index: int,
 	start:      int,
 	count:      int,
-	centroid_bounds: util.Bounding_Box,
+	centroid_bounds: Tree_Bounds,
 }
 Tree_Reify_Context :: struct
 {
@@ -72,8 +72,8 @@ Tree_Binned_Bin_Task_Context :: struct
 	task_data:    Tree_Binned_Inner_Task_Data,
 	owner_worker: int,
 	axis:         int,
-	axis_min:     f32,
-	axis_span:    f32,
+	axis_min:     Tree_Scalar,
+	axis_span:    Tree_Scalar,
 	bin_count:    int,
 }
 Tree_Binned_Partition_Counters :: struct #align(128)
@@ -145,7 +145,7 @@ tree_task_wait_filtered :: proc "contextless" (
 }
 tree_binned_inner_target_task_count :: proc "contextless" (build: ^Tree_Binned_Build_Context, count: int) -> int
 {
-	return int(math.ceil(f32(build.target_task_count * count) / f32(build.original_subtree_count)));
+	return int(math.ceil(Tree_Scalar(build.target_task_count * count) / Tree_Scalar(build.original_subtree_count)));
 }
 tree_binned_inner_task_data :: proc "contextless" (
 	start, count, target_task_count: int,
@@ -242,7 +242,7 @@ tree_binned_bin_task :: proc "contextless" (
 	}
 	start, count := tree_binned_inner_task_interval(ctx.task_data, int(task_id));
 	bin_index_base := ctx.owner_worker * workspace.refinement_capacity;
-	scale := f32(ctx.bin_count) / ctx.axis_span;
+	scale := Tree_Scalar(ctx.bin_count) / ctx.axis_span;
 	for index in start ..< start + count
 	{
 		reference := ctx.build.references.memory[index];
@@ -261,8 +261,8 @@ tree_binned_bin_task :: proc "contextless" (
 		else
 		{
 			bin.bounds = tree_bounds_merge(bin.bounds, bounds);
-			bin.centroid_bounds.min = util.vector3_min(bin.centroid_bounds.min, centroid);
-			bin.centroid_bounds.max = util.vector3_max(bin.centroid_bounds.max, centroid);
+			bin.centroid_bounds.min = tree_position_min(bin.centroid_bounds.min, centroid);
+			bin.centroid_bounds.max = tree_position_max(bin.centroid_bounds.max, centroid);
 		}
 		bin.count += 1;
 		bin.leaf_count += reference.leaf_count;
@@ -311,9 +311,9 @@ tree_binned_partition_task :: proc "contextless" (
 }
 tree_binned_partition_node_children_tasked :: proc "contextless" (
 	build: ^Tree_Binned_Build_Context, node_index, start, count, worker_index: int,
-	centroid_bounds: util.Bounding_Box, centroid_state: Reference_State,
+	centroid_bounds: Tree_Bounds, centroid_state: Reference_State,
 	dispatcher: ^util.Thread_Dispatcher_Boundary,
-) -> (left_count: int, left_centroid_bounds, right_centroid_bounds: util.Bounding_Box, status: Physics_Status)
+) -> (left_count: int, left_centroid_bounds, right_centroid_bounds: Tree_Bounds, status: Physics_Status)
 {
 	node_centroid_bounds := centroid_bounds;
 	target_inner_task_count := tree_binned_inner_target_task_count(build, count);
@@ -349,7 +349,7 @@ tree_binned_partition_node_children_tasked :: proc "contextless" (
 			node_centroid_bounds = tree_node_child_centroid_bounds(build.references, start, count);
 		}
 	}
-	span := util.vector3_subtract(node_centroid_bounds.max, node_centroid_bounds.min);
+	span := tree_position_subtract(node_centroid_bounds.max, node_centroid_bounds.min);
 	if span.x <= 1e-12 && span.y <= 1e-12 && span.z <= 1e-12
 	{
 		left_count = count / 2;
@@ -464,7 +464,7 @@ tree_binned_partition_node_children_tasked :: proc "contextless" (
 }
 tree_binned_build_node_tasked :: proc "contextless" (
 	build: ^Tree_Binned_Build_Context, node_index, start, count, worker_index: int,
-	centroid_bounds: util.Bounding_Box, centroid_state: Reference_State,
+	centroid_bounds: Tree_Bounds, centroid_state: Reference_State,
 	dispatcher: ^util.Thread_Dispatcher_Boundary,
 ) -> Physics_Status
 {
@@ -482,8 +482,8 @@ tree_binned_build_node_tasked :: proc "contextless" (
 	}
 	right_count := count - left_count;
 	target_node_task_count := int(math.ceil(
-		f32(TREE_BINNED_NODE_TASK_MULTIPLIER * build.target_task_count * count) /
-		f32(build.original_subtree_count),
+		Tree_Scalar(TREE_BINNED_NODE_TASK_MULTIPLIER * build.target_task_count * count) /
+		Tree_Scalar(build.original_subtree_count),
 	));
 	if target_node_task_count > 1 &&
 		left_count >= TREE_BINNED_MIN_SUBTREES_PER_NODE_TASK &&
@@ -738,7 +738,7 @@ tree_execute_refinement_task :: proc "contextless" (
 	}
 	denominator := max(1, min(schedule.root_refinement_size, tree.leaf_count) + total_subtree_leaf_count);
 	refinement_task_count := int(math.ceil(
-		f32(target_task_budget * refinement_leaf_count) / f32(denominator),
+		Tree_Scalar(target_task_budget * refinement_leaf_count) / Tree_Scalar(denominator),
 	));
 	if refinement_task_count > 1
 	{
@@ -1220,7 +1220,7 @@ tree_refit2_with_cache_optimization_parallel :: proc "contextless" (
 	{
 		return .Ok;
 	}
-	leaf_count_per_task := max(32, int(math.ceil(f32(tree.leaf_count) / f32(target_task_count))));
+	leaf_count_per_task := max(32, int(math.ceil(Tree_Scalar(tree.leaf_count) / Tree_Scalar(target_task_count))));
 	task_count := 0;
 	status := tree_cache_prepare_tasks(
 		tree.nodes, workspace.cache_nodes, workspace.cache_metanodes, 0, 0, -1, -1,

@@ -16,7 +16,7 @@ From the full checkout or extracted Odin package root, after installing the [pla
 
 The executable is written under `build/examples/development/`. The falling box prints its settled height near `0.5`, followed by `RUN_EXAMPLES_OK`. Replace `falling_box` with any package name below
 
-Each package keeps its authored setup, step/operation, checks and teardown in adjacent `case.odin`, with `main.odin` driving the standalone sequence. In the full checkout, `tools/physics_viewer` imports these same cases for finite paused inspection and interactive controls. Its graphical chooser presents 13 motion examples and 13 diagnostic stepping examples; nine correctness-first examples remain on the headless and explicit capture routes. It never reconstructs benchmark simulations. Headless examples need neither the workspace nor its graphics/compression dependencies
+Each package keeps its authored setup, step/operation, checks and teardown in adjacent `case.odin`, with `main.odin` driving the standalone sequence. For interactive inspection in the full checkout, use the [physics viewer](https://github.com/Abyssal-Engine/Entasis/blob/main/tools/physics_viewer/README.md#examples). Headless examples need neither the workspace nor its graphics/compression dependencies
 
 ## Create and update a world
 

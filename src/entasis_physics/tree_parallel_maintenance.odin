@@ -58,7 +58,7 @@ Tree_Refinement_Root_Stack_Entry :: struct
 Tree_Refinement_Heap_Entry :: struct
 {
 	node_index: i32,
-	cost:       f32,
+	cost:       Tree_Scalar,
 }
 Tree_Refit_Refine_Workspace :: struct
 {
@@ -68,7 +68,7 @@ Tree_Refit_Refine_Workspace :: struct
 	static_refinement_targets:   util.Buffer(i32),
 	task_records:                util.Buffer(Tree_Maintenance_Task),
 	static_task_records:         util.Buffer(Tree_Maintenance_Task),
-	binned_centroid_bounds:      util.Buffer(util.Bounding_Box),
+	binned_centroid_bounds:      util.Buffer(Tree_Bounds),
 	binned_bins:                 util.Buffer(Tree_Bin),
 	binned_bin_indices:          util.Buffer(u8),
 	references:                  util.Buffer(Tree_Build_Reference),
@@ -132,7 +132,7 @@ tree_refit_refine_workspace_initialize :: proc (
 	{
 		return .Invalid_Argument;
 	}
-	refinement_capacity := max(treelet_size, min(maximum_leaves, int(math.ceil(math.sqrt(f32(maximum_leaves)) * 4))));
+	refinement_capacity := max(treelet_size, min(maximum_leaves, int(math.ceil(math.sqrt(Tree_Scalar(maximum_leaves)) * 4))));
 	binned_inner_slot_count := worker_count + 1;
 	workspace^ = {
 		worker_count=worker_count, maximum_leaves=maximum_leaves, treelet_size=treelet_size,
@@ -181,7 +181,7 @@ tree_refit_refine_workspace_initialize :: proc (
 		return physics_memory_status(status);
 	}
 	workspace.binned_centroid_bounds, status = util.buffer_pool_take_at_least(
-		pool, util.Bounding_Box, worker_count * binned_inner_slot_count,
+		pool, Tree_Bounds, worker_count * binned_inner_slot_count,
 	);
 	if status != .Ok
 	{
@@ -964,7 +964,7 @@ tree_collect_root_priority_child :: proc "contextless" (
 	return tree_refinement_heap_insert(
 		heap, heap_count, {
 			node_index=child.index,
-			cost=tree_bounds_metric(tree_child_bounds(child)) * f32(child.leaf_count)
+			cost=tree_bounds_metric(tree_child_bounds(child)) * Tree_Scalar(child.leaf_count)
 		},
 	);
 }

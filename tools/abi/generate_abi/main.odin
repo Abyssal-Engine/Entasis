@@ -49,6 +49,16 @@ expected_outputs :: proc(manifest: ^Manifest) -> ([dynamic]Output, External_Flag
 	output_add(&outputs, "generated/abi/entasis.def", render_def(manifest, "runtime"))
 	output_add(&outputs, "generated/abi/entasis_cooking.map", render_version_script(manifest, "cooking"))
 	output_add(&outputs, "generated/abi/entasis_cooking.def", render_def(manifest, "cooking"))
+	for library in ([]string{"runtime", "cooking"})
+	{
+		name: string = "entasis";
+		if library == "cooking"
+		{
+			name = "entasis_cooking";
+		}
+		output_add(&outputs, fmt.aprintf("generated/abi/mixed64/%s.map", name), render_version_script(manifest, library, "mixed64"));
+		output_add(&outputs, fmt.aprintf("generated/abi/mixed64/%s.def", name), render_def(manifest, library, "mixed64"));
+	}
 	output_add(&outputs, "tests/c_abi/generated_layout_asserts.h", render_layout_header(manifest))
 	for header in node_entries(root_field(manifest, "header_layout"))
 	{

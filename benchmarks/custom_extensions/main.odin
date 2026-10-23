@@ -65,13 +65,15 @@ main :: proc()
 	{
 		body_control_results: [5]Body_Control_Result = measure_body_control_components(args.workers);
 		joint_break_results: [5]Joint_Break_Component = measure_joint_break_components(args.workers);
+		gravity_results: [GRAVITY_NATIVE_COUNT]Gravity_Result = measure_gravity_components(args.workers);
+		c_gravity_results: [C_GRAVITY_COUNT]Gravity_Result = measure_c_gravity_components(args.workers);
 	}
 	file: ^os.File;
 	csv_state: support.Extension_CSV_State;
 	file, csv_state = support.extension_csv_open(args.output);
 	if csv_state == .Empty
 	{
-		if fmt.fprint(file, "worker_count,body_count,measured_steps,case_status,metric_status,physics_elapsed_ms,benchmark_components") <= 0
+		if fmt.fprint(file, "worker_count,body_count,measured_steps,case_status,metric_status,physics_elapsed_ms,benchmark_components,precision,velocity_iterations,substeps") <= 0
 		{
 			panic("CSV header");
 		}
@@ -108,13 +110,31 @@ main :: proc()
 					panic("CSV header");
 				}
 			}
+			if fmt.fprint(file, ",gravity_state,gravity_bodies,gravity_measured_steps,c_gravity_state,c_gravity_bodies,c_gravity_measured_steps") <= 0
+			{
+				panic("CSV header");
+			}
+			for name in GRAVITY_NAMES
+			{
+				if fmt.fprintf(file, ",gravity_%s_step_ms,gravity_%s_active_bodies,gravity_%s_position_checksum,gravity_%s_velocity_checksum,gravity_%s_world_pool_bytes,gravity_%s_worker_pool_bytes", name, name, name, name, name, name) <= 0
+				{
+					panic("CSV header");
+				}
+			}
+			for name in C_GRAVITY_NAMES
+			{
+				if fmt.fprintf(file, ",c_gravity_%s_step_ms,c_gravity_%s_active_bodies,c_gravity_%s_position_checksum,c_gravity_%s_velocity_checksum,c_gravity_%s_world_owned_bytes,c_gravity_%s_worker_owned_bytes,c_gravity_%s_visits,c_gravity_%s_tails", name, name, name, name, name, name, name, name) <= 0
+				{
+					panic("CSV header");
+				}
+			}
 		}
 		if fmt.fprintln(file) <= 0
 		{
 			panic("CSV header");
 		}
 	}
-	if fmt.fprintf(file, "%d,%d,%d,ok,ok,%.9f,%s", args.workers, BODY_COUNT, MEASURED_STEPS, total, support.BENCHMARK_COMPONENTS) <= 0
+	if fmt.fprintf(file, "%d,%d,%d,ok,ok,%.9f,%s,%s,1,4", args.workers, BODY_COUNT, MEASURED_STEPS, total, support.BENCHMARK_COMPONENTS, e.PRECISION_NAME) <= 0
 	{
 		panic("CSV row");
 	}
@@ -148,6 +168,24 @@ main :: proc()
 		{
 			if fmt.fprintf(file, ",%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%d,%d", result.step_ms, result.drain_ms, result.rebuild_ms,
 				result.watches, result.events, result.remaining_constraints, result.maximum_force, result.world_pool_bytes, result.worker_pool_bytes) <= 0
+			{
+				panic("CSV row");
+			}
+		}
+		if fmt.fprintf(file, ",Available,%d,%d,Available,%d,%d", GRAVITY_BODY_COUNT, GRAVITY_MEASURED_STEPS, GRAVITY_BODY_COUNT, GRAVITY_MEASURED_STEPS) <= 0
+		{
+			panic("CSV row");
+		}
+		for result in gravity_results
+		{
+			if fmt.fprintf(file, ",%.9f,%d,%.9f,%.9f,%d,%d", result.step_ms, result.active_bodies, result.position_checksum, result.velocity_checksum, result.world_pool_bytes, result.worker_pool_bytes) <= 0
+			{
+				panic("CSV row");
+			}
+		}
+		for result in c_gravity_results
+		{
+			if fmt.fprintf(file, ",%.9f,%d,%.9f,%.9f,%d,%d,%d,%d", result.step_ms, result.active_bodies, result.position_checksum, result.velocity_checksum, result.world_pool_bytes, result.worker_pool_bytes, result.visits, result.tails) <= 0
 			{
 				panic("CSV row");
 			}

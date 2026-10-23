@@ -7,42 +7,91 @@ import util "entasis:entasis_utilities"
 
 Contextual_Constraint_Validate_Proc :: physics.Contextual_Constraint_Validate_Proc;
 Contextual_Constraint_Kernel_Proc :: physics.Contextual_Constraint_Kernel_Proc;
-Contextual_Custom_Constraint_Registration :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	type_id: Constraint_Type_ID,
-	body_count: i32,
-	description_size: i32,
-	prestep_bundle_size: i32,
-	impulse_bundle_size: i32,
-	initial_access: [4]Body_Access_Mask,
-	solve_access: [4]Body_Access_Mask,
-	user_context: rawptr,
-	validate_description: Contextual_Constraint_Validate_Proc,
-	kernel: Contextual_Constraint_Kernel_Proc,
-	incremental_kernel: Contextual_Constraint_Kernel_Proc,
+	Contextual_Custom_Constraint_Registration :: struct
+	{
+		type_id: Constraint_Type_ID,
+		body_count: i32,
+		description_size: i32,
+		prestep_bundle_size: i32,
+		impulse_bundle_size: i32,
+		initial_access: [4]Body_Access_Mask,
+		solve_access: [4]Body_Access_Mask,
+		position_space: Constraint_Position_Space,
+		user_context: rawptr,
+		validate_description: Contextual_Constraint_Validate_Proc,
+		kernel: Contextual_Constraint_Kernel_Proc,
+		incremental_kernel: Contextual_Constraint_Kernel_Proc,
+	}
+}
+else
+{
+	Contextual_Custom_Constraint_Registration :: struct
+	{
+		type_id: Constraint_Type_ID,
+		body_count: i32,
+		description_size: i32,
+		prestep_bundle_size: i32,
+		impulse_bundle_size: i32,
+		initial_access: [4]Body_Access_Mask,
+		solve_access: [4]Body_Access_Mask,
+		user_context: rawptr,
+		validate_description: Contextual_Constraint_Validate_Proc,
+		kernel: Contextual_Constraint_Kernel_Proc,
+		incremental_kernel: Contextual_Constraint_Kernel_Proc,
+	}
 }
 
 // description is tightly packed f32 data with one F32x8 per scalar in Prestep
-custom_constraint_registration_contextual :: #force_inline proc "contextless" (
-	$Description: typeid, $Prestep_Wide: typeid, $Accumulated_Impulses_Wide: typeid,
-	type_id: Constraint_Type_ID, body_count: int,
-	initial_access, solve_access: [4]Body_Access_Mask, user_context: rawptr,
-	validate_description: Contextual_Constraint_Validate_Proc,
-	kernel: Contextual_Constraint_Kernel_Proc,
-	incremental_kernel: Contextual_Constraint_Kernel_Proc = nil,
-) -> Contextual_Custom_Constraint_Registration
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	resolved_incremental: Contextual_Constraint_Kernel_Proc = incremental_kernel;
-	if resolved_incremental == nil
+	custom_constraint_registration_contextual :: #force_inline proc "contextless" (
+		$Description: typeid, $Prestep_Wide: typeid, $Accumulated_Impulses_Wide: typeid,
+		type_id: Constraint_Type_ID, body_count: int,
+		initial_access, solve_access: [4]Body_Access_Mask, user_context: rawptr,
+		validate_description: Contextual_Constraint_Validate_Proc,
+		kernel: Contextual_Constraint_Kernel_Proc,
+		incremental_kernel: Contextual_Constraint_Kernel_Proc = nil,
+		position_space: Constraint_Position_Space = .Absolute_Float,
+	) -> Contextual_Custom_Constraint_Registration
 	{
-		resolved_incremental = kernel;
+		resolved_incremental: Contextual_Constraint_Kernel_Proc = incremental_kernel;
+		if resolved_incremental == nil
+		{
+			resolved_incremental = kernel;
+		}
+		return {
+			type_id=type_id, body_count=i32(body_count), description_size=i32(size_of(Description)),
+			prestep_bundle_size=i32(size_of(Prestep_Wide)), impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
+			initial_access=initial_access, solve_access=solve_access, user_context=user_context, position_space=position_space,
+			validate_description=validate_description, kernel=kernel, incremental_kernel=resolved_incremental,
+		};
 	}
-	return {
-		type_id=type_id, body_count=i32(body_count), description_size=i32(size_of(Description)),
-		prestep_bundle_size=i32(size_of(Prestep_Wide)), impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
-		initial_access=initial_access, solve_access=solve_access, user_context=user_context,
-		validate_description=validate_description, kernel=kernel, incremental_kernel=resolved_incremental,
-	};
+}
+else
+{
+	custom_constraint_registration_contextual :: #force_inline proc "contextless" (
+		$Description: typeid, $Prestep_Wide: typeid, $Accumulated_Impulses_Wide: typeid,
+		type_id: Constraint_Type_ID, body_count: int,
+		initial_access, solve_access: [4]Body_Access_Mask, user_context: rawptr,
+		validate_description: Contextual_Constraint_Validate_Proc,
+		kernel: Contextual_Constraint_Kernel_Proc,
+		incremental_kernel: Contextual_Constraint_Kernel_Proc = nil,
+	) -> Contextual_Custom_Constraint_Registration
+	{
+		resolved_incremental: Contextual_Constraint_Kernel_Proc = incremental_kernel;
+		if resolved_incremental == nil
+		{
+			resolved_incremental = kernel;
+		}
+		return {
+			type_id=type_id, body_count=i32(body_count), description_size=i32(size_of(Description)),
+			prestep_bundle_size=i32(size_of(Prestep_Wide)), impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
+			initial_access=initial_access, solve_access=solve_access, user_context=user_context,
+			validate_description=validate_description, kernel=kernel, incremental_kernel=resolved_incremental,
+		};
+	}
 }
 
 @(private)
@@ -115,6 +164,13 @@ custom_constraint_register_contextual :: proc (
 	{
 		return .Invalid_Argument;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if physics.constraint_position_space_validate(registration.position_space) != .Ok
+		{
+			return .Invalid_Description;
+		}
+	}
 	// snapshot before the application allocator runs. it may mutate caller-owned
 	// descriptor storage, but that cannot change the registration being installed
 	binding: physics.Contextual_Constraint_Binding = physics.Contextual_Constraint_Binding{
@@ -129,6 +185,10 @@ custom_constraint_register_contextual :: proc (
 		move_record=physics.constraint_storage_move_lane, remove_record=physics.constraint_storage_remove_lane,
 		dispatch=.Contextual,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		record.position_space = registration.position_space;
+	}
 	memory: rawptr;
 	error: mem.Allocator_Error;
 	memory, error = mem.alloc(size_of(contextual_constraint_record), align_of(contextual_constraint_record), data.allocator);

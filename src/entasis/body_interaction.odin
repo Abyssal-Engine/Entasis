@@ -148,7 +148,21 @@ body_bounds :: proc "contextless" (
 	{
 		tree = &simulation.broad_phase.static_tree;
 	}
-	return physics.tree_get_leaf_bounds(tree, int(collidable_value.broad_phase_index));
+	bounds: physics.Tree_Bounds;
+	bounds_status: Status;
+	bounds, bounds_status = physics.tree_get_leaf_bounds(tree, int(collidable_value.broad_phase_index));
+	if bounds_status != .Ok
+	{
+		return {}, bounds_status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		return physics.world_precision_bounds_to_float(bounds);
+	}
+	else
+	{
+		return bounds, .Ok;
+	}
 }
 
 // body_update_bounds recomputes one body's broad-phase bounds after an advanced
@@ -170,10 +184,18 @@ body_update_bounds :: proc "contextless" (
 	{
 		return .Not_Found;
 	}
-	bounds, bounds_status := physics.shape_registry_compute_world_bounds(
-		&simulation.shapes,
-		collidable_value.shape,
-		dynamics.motion.pose,
+	position: physics.Tree_Position = physics.broad_phase_body_position(set, int(location.index));
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if dynamics.motion.pose.position != physics.world_precision_position_cache(position)
+		{
+			position = physics.world_precision_position_from_float(dynamics.motion.pose.position);
+		}
+	}
+	bounds: physics.Tree_Bounds;
+	bounds_status: Status;
+	bounds, bounds_status = physics.broad_phase_shape_bounds(
+		&simulation.shapes, collidable_value.shape, position, dynamics.motion.pose.orientation,
 	);
 	if bounds_status != .Ok
 	{
@@ -196,6 +218,10 @@ body_update_bounds :: proc "contextless" (
 	);
 	if update_status == .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			set.global_positions.memory[location.index] = position;
+		}
 		world_invalidate_views_data(data);
 	}
 	return update_status;
@@ -226,10 +252,21 @@ static_bounds :: proc "contextless" (
 	{
 		return {}, .Not_Found;
 	}
-	return physics.tree_get_leaf_bounds(
-		&data.simulation.broad_phase.static_tree,
-		int(static_value.broad_phase_index),
-	);
+	bounds: physics.Tree_Bounds;
+	bounds_status: Status;
+	bounds, bounds_status = physics.tree_get_leaf_bounds(&data.simulation.broad_phase.static_tree, int(static_value.broad_phase_index));
+	if bounds_status != .Ok
+	{
+		return {}, bounds_status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		return physics.world_precision_bounds_to_float(bounds);
+	}
+	else
+	{
+		return bounds, .Ok;
+	}
 }
 
 // static_update_bounds recomputes one static's broad-phase bounds after an
@@ -253,13 +290,28 @@ static_update_bounds :: proc "contextless" (
 	{
 		return status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		data.simulation.statics.local_bounds.memory[index] = {};
+	}
 	static_value := &data.simulation.statics.statics.memory[index];
 	if static_value.broad_phase_index < 0
 	{
 		return .Not_Found;
 	}
-	bounds, bounds_status := physics.shape_registry_compute_world_bounds(
-		&data.simulation.shapes, static_value.shape, static_value.pose,
+	position: physics.Tree_Position = physics.broad_phase_static_position(&data.simulation.statics, index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if static_value.pose.position != physics.world_precision_position_cache(position)
+		{
+			position = physics.world_precision_position_from_float(static_value.pose.position);
+		}
+	}
+	local_bounds: physics.Shape_Bounds;
+	bounds: physics.Tree_Bounds;
+	bounds_status: Status;
+	bounds, bounds_status = physics.broad_phase_shape_bounds(
+		&data.simulation.shapes, static_value.shape, position, static_value.pose.orientation, &local_bounds,
 	);
 	if bounds_status != .Ok
 	{
@@ -272,6 +324,11 @@ static_update_bounds :: proc "contextless" (
 	);
 	if update_status == .Ok
 	{
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			data.simulation.statics.global_positions.memory[index] = position;
+			physics.statics_publish_local_bounds(&data.simulation.statics, index, local_bounds);
+		}
 		world_invalidate_views_data(data);
 	}
 	return update_status;

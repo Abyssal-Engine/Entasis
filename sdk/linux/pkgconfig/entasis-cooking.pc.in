@@ -9,4 +9,4 @@ Version: @ENTASIS_VERSION@
 Requires: entasis
 Libs: -L${libdir} -lentasis_cooking
 Libs.private: -Wl,--allow-multiple-definition -ldl -lpthread -lm
-Cflags: -I${includedir}
+Cflags: -I${includedir} -DENTASIS_PRECISION_MIXED64=@ENTASIS_PRECISION_MIXED64@

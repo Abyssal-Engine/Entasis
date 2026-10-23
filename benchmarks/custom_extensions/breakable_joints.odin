@@ -1,6 +1,8 @@
 package custom_extensions
 
 @(require)
+import "core:fmt"
+@(require)
 import "core:math"
 @(require)
 import "core:time"
@@ -28,6 +30,7 @@ when support.BENCHMARK_COMPONENTS == "all"
 		description: e.World_Description,
 		bodies: [JOINT_BREAK_PAIR_COUNT*2]e.Body_Handle,
 		joints: [JOINT_BREAK_PAIR_COUNT]e.Constraint_Handle,
+		oracle_impulses: [JOINT_BREAK_PAIR_COUNT]f32,
 	}
 	Joint_Break_Component :: struct
 	{
@@ -53,6 +56,7 @@ when support.BENCHMARK_COMPONENTS == "all"
 			spring_settings=e.spring_settings(30, 1)};
 		for &handle, index in owner.joints
 		{
+			owner.oracle_impulses[index] = 0;
 			status: e.Status;
 			handle, status = e.constraint_add_2(&owner.world, owner.bodies[index*2], owner.bodies[index*2+1], joint);
 			if status != .Ok
@@ -83,7 +87,7 @@ when support.BENCHMARK_COMPONENTS == "all"
 		description.capacity.bodies = JOINT_BREAK_PAIR_COUNT*2;
 		description.capacity.constraints = JOINT_BREAK_PAIR_COUNT;
 		description.capacity.initial_constraints_per_type_batch = JOINT_BREAK_PAIR_COUNT;
-		description.solve = {velocity_iterations=4, substeps=1, fallback_batch_threshold=64};
+		description.solve = {velocity_iterations=1, substeps=4, fallback_batch_threshold=64};
 		owner.description = description;
 		if failure: e.Status = e.world_init(&owner.world, description); failure != .Ok
 		{
@@ -111,11 +115,72 @@ when support.BENCHMARK_COMPONENTS == "all"
 		}
 		return joint_break_create_constraints(owner, mode);
 	}
+	Joint_Break_Oracle :: struct
+	{
+		force_a, maximum_force: f32,
+		substep: u32,
+		velocities: [2]f32,
+		positions: [2]f64,
+	}
+
+	// each isolated axial pair has one scalar row, including its retained warmstart impulse
+	joint_break_oracle :: proc(owner: ^Joint_Break_Benchmark_Owner, index: int) -> Joint_Break_Oracle
+	{
+		h: f32 = DT/4;
+		spring: e.Spring_Settings = e.spring_settings(30, 1);
+		omega_dt: f32 = spring.angular_frequency*h;
+		denominator: f32 = omega_dt+spring.twice_damping_ratio;
+		position_scale: f32 = spring.angular_frequency/denominator;
+		extra: f32 = 1/(omega_dt*denominator);
+		mass_scale: f32 = 1/(1+extra);
+		softness: f32 = extra*mass_scale;
+		effective_mass: f32 = 0.5*mass_scale;
+		impulse: f32 = owner.oracle_impulses[index];
+		result: Joint_Break_Oracle = {velocities={1, -1}, positions={f64(index*4), f64(index*4+1)}};
+		for substep in 0..<4
+		{
+			error: f32 = f32(result.positions[1]-result.positions[0])-1;
+			bias: f32 = error*position_scale;
+			result.velocities[0] += impulse;
+			result.velocities[1] -= impulse;
+			velocity_error: f32 = result.velocities[0]-result.velocities[1];
+			change: f32 = (bias-velocity_error)*effective_mass-impulse*softness;
+			impulse += change;
+			result.velocities[0] += change;
+			result.velocities[1] -= change;
+			force: f32 = impulse/h;
+			// torque is zero for these collinear offsets. strict improvement retains the earliest tie
+			if substep == 0 || abs(force) > result.maximum_force
+			{
+				result.force_a = force;
+				result.substep = u32(substep);
+			}
+			result.maximum_force = max(result.maximum_force, abs(force));
+			for body in 0..<2
+			{
+				displacement: f32 = result.velocities[body]*h;
+				when e.PRECISION_MODE == .Double_Coordinates
+				{
+					result.positions[body] += f64(displacement);
+				}
+				else
+				{
+					result.positions[body] = f64(f32(result.positions[body])+displacement);
+				}
+			}
+		}
+		owner.oracle_impulses[index] = impulse;
+		return result;
+	}
+
 	joint_break_validate_reaction :: proc(owner: ^Joint_Break_Benchmark_Owner, index: int, reaction: e.Joint_Reaction) -> e.Status
 	{
-		if reaction.state != .Solved || reaction.sample.body_count != 2 || reaction.sample.substep_duration != DT ||
-		!(reaction.maximum_force > 0) || math.is_nan(reaction.maximum_force) || math.is_inf(reaction.maximum_force, 0)
+		expected: Joint_Break_Oracle = joint_break_oracle(owner, index);
+		if reaction.state != .Solved || reaction.sample.body_count != 2 || reaction.sample.substep_duration != DT/4 ||
+			reaction.substep != expected.substep || !(abs(reaction.maximum_force-expected.maximum_force) <= 0.002) ||
+			abs(reaction.maximum_torque) > 0.002
 		{
+			fmt.eprintfln("joint_reaction_oracle_failed pair=%d expected=%v reaction=%v", index, expected, reaction);
 			return .Invalid_Argument;
 		}
 		for body_index in 0..<2
@@ -128,11 +193,13 @@ when support.BENCHMARK_COMPONENTS == "all"
 			{
 				return status;
 			}
-			initial: e.Body_Description = joint_break_body_description(index*2+body_index);
-			force_x: f32 = (state.velocity.linear.x-initial.velocity.linear.x)/DT;
+			force_x: f32 = expected.force_a if body_index == 0 else -expected.force_a;
 			if reaction.sample.bodies[body_index] != body ||
-			abs(reaction.sample.forces[body_index].linear.x-force_x) > 0.002 ||
-			abs(reaction.sample.forces[body_index].linear.y)+abs(reaction.sample.forces[body_index].linear.z) > 0.002
+				abs(reaction.sample.forces[body_index].linear.x-force_x) > 0.002 ||
+				abs(reaction.sample.forces[body_index].linear.y)+abs(reaction.sample.forces[body_index].linear.z) > 0.002 ||
+				abs(reaction.sample.forces[body_index].angular.x)+abs(reaction.sample.forces[body_index].angular.y)+abs(reaction.sample.forces[body_index].angular.z) > 0.002 ||
+				abs(state.velocity.linear.x-expected.velocities[body_index]) > 0.002 ||
+				abs(f64(state.pose.position.x)-expected.positions[body_index]) > 0.002
 			{
 				return .Invalid_Argument;
 			}

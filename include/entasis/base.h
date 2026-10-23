@@ -9,6 +9,13 @@
 #  error "Entasis ABI v1 requires a 64-bit target."
 #endif
 
+#ifndef ENTASIS_PRECISION_MIXED64
+#  define ENTASIS_PRECISION_MIXED64 0
+#endif
+#if ENTASIS_PRECISION_MIXED64 != 0 && ENTASIS_PRECISION_MIXED64 != 1
+#  error "ENTASIS_PRECISION_MIXED64 must be 0 or 1"
+#endif
+
 #if defined(_WIN32)
 #  define ENTASIS_CALL __cdecl
 #  if defined(ENTASIS_BUILD_SHARED)
@@ -365,6 +372,22 @@ typedef uint32_t entasis_joint_reaction_state_t;
  * pending event-stream flags for the combined stepper
  */
 typedef uint8_t entasis_joint_break_pending_t;
+/**
+ * high-position target authoring-state tag
+ */
+typedef uint8_t entasis_global_constraint_target_kind_t;
+/**
+ * high-position target authoring-state tag
+ */
+typedef uint8_t entasis_global_target_presence_t;
+/**
+ * high spatial batch operation tag
+ */
+typedef uint8_t entasis_global_query_kind_t;
+/**
+ * explicit custom-constraint and reaction position contract
+ */
+typedef uint8_t entasis_constraint_position_space_t;
 
 /**
  * boolean constants
@@ -1074,6 +1097,56 @@ enum {
     ENTASIS_JOINT_BREAK_PENDING_BREAK = 8
 };
 
+/**
+ * high-position target state tags
+ */
+enum {
+    /* unsupported target owner */
+    ENTASIS_GLOBAL_TARGET_INVALID = 0,
+    /* one-body linear servo target */
+    ENTASIS_GLOBAL_TARGET_LINEAR_SERVO = 1,
+    /* axis-lock reference position */
+    ENTASIS_GLOBAL_TARGET_AXIS_LOCK = 2,
+    /* no pending kinematic target */
+    ENTASIS_GLOBAL_TARGET_ABSENT = 0,
+    /* pending kinematic target */
+    ENTASIS_GLOBAL_TARGET_PRESENT = 1
+};
+
+/**
+ * high spatial batch operation tags
+ */
+enum {
+    /* ray any */
+    ENTASIS_GLOBAL_QUERY_RAY_ANY = 0,
+    /* ray closest */
+    ENTASIS_GLOBAL_QUERY_RAY_CLOSEST = 1,
+    /* ray all */
+    ENTASIS_GLOBAL_QUERY_RAY_ALL = 2,
+    /* sweep any */
+    ENTASIS_GLOBAL_QUERY_SWEEP_ANY = 3,
+    /* sweep closest */
+    ENTASIS_GLOBAL_QUERY_SWEEP_CLOSEST = 4,
+    /* sweep all */
+    ENTASIS_GLOBAL_QUERY_SWEEP_ALL = 5,
+    /* overlap any */
+    ENTASIS_GLOBAL_QUERY_OVERLAP_ANY = 6,
+    /* overlap all */
+    ENTASIS_GLOBAL_QUERY_OVERLAP_ALL = 7,
+    /* volume all */
+    ENTASIS_GLOBAL_QUERY_VOLUME_ALL = 8
+};
+
+/**
+ * custom position spaces
+ */
+enum {
+    /* legacy rounded absolute float inputs */
+    ENTASIS_CONSTRAINT_ABSOLUTE_FLOAT = 0,
+    /* subtract high positions before narrowing, body A is zero */
+    ENTASIS_CONSTRAINT_BODY_A_RELATIVE = 1
+};
+
 typedef struct entasis_string_view_t entasis_string_view_t;
 typedef struct entasis_body_handle_t entasis_body_handle_t;
 typedef struct entasis_static_handle_t entasis_static_handle_t;
@@ -1174,6 +1247,31 @@ typedef struct entasis_collider_part_contact_update_result_t entasis_collider_pa
 typedef struct entasis_joint_reaction_provider_t entasis_joint_reaction_provider_t;
 typedef struct entasis_joint_break_limits_t entasis_joint_break_limits_t;
 typedef struct entasis_joint_break_update_result_t entasis_joint_break_update_result_t;
+typedef struct entasis_global_position_t entasis_global_position_t;
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_pose_integration_view_t entasis_global_pose_integration_view_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_velocity_callbacks_t entasis_global_velocity_callbacks_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_state_selection_t entasis_global_state_selection_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_state_snapshot_t entasis_global_state_snapshot_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_state_counts_t entasis_global_state_counts_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_query_t entasis_global_query_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_query_result_t entasis_global_query_result_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_query_scratch_t entasis_global_query_scratch_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
 typedef struct entasis_version_t entasis_version_t;
 typedef struct entasis_matrix3x3_t entasis_matrix3x3_t;
 typedef struct entasis_bounding_box_t entasis_bounding_box_t;
@@ -1248,6 +1346,28 @@ typedef struct entasis_collider_part_info_t entasis_collider_part_info_t;
 typedef struct entasis_collider_part_endpoint_t entasis_collider_part_endpoint_t;
 typedef struct entasis_joint_impulse_wrench_t entasis_joint_impulse_wrench_t;
 typedef struct entasis_joint_force_wrench_t entasis_joint_force_wrench_t;
+typedef struct entasis_origin_frame_t entasis_origin_frame_t;
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_pose_t entasis_global_pose_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_constraint_target_state_t entasis_global_constraint_target_state_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_world_precision_segment_t entasis_world_precision_segment_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_bounds_t entasis_global_bounds_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_ray_hit_t entasis_global_ray_hit_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_sweep_result_t entasis_global_sweep_result_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_distance_geometry_t entasis_global_distance_geometry_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
 typedef struct entasis_body_description_t entasis_body_description_t;
 typedef struct entasis_static_description_t entasis_static_description_t;
 typedef struct entasis_default_narrow_policy_t entasis_default_narrow_policy_t;
@@ -1276,6 +1396,24 @@ typedef struct entasis_body_axis_lock_t entasis_body_axis_lock_t;
 typedef struct entasis_collider_part_pair_t entasis_collider_part_pair_t;
 typedef struct entasis_joint_reaction_provider_input_t entasis_joint_reaction_provider_input_t;
 typedef struct entasis_joint_reaction_sample_t entasis_joint_reaction_sample_t;
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_body_state_t entasis_global_body_state_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_static_state_t entasis_global_static_state_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_kinematic_target_state_t entasis_global_kinematic_target_state_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_sweep_hit_t entasis_global_sweep_hit_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_shape_distance_result_t entasis_global_shape_distance_result_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_distance_query_t entasis_global_distance_query_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
 typedef struct entasis_world_description_t entasis_world_description_t;
 typedef struct entasis_narrow_policy_t entasis_narrow_policy_t;
 typedef struct entasis_contact_manifold_t entasis_contact_manifold_t;
@@ -1285,6 +1423,9 @@ typedef struct entasis_convex_manifold_wide_t entasis_convex_manifold_wide_t;
 typedef struct entasis_distance_query_result_t entasis_distance_query_result_t;
 typedef struct entasis_collider_part_event_t entasis_collider_part_event_t;
 typedef struct entasis_joint_reaction_t entasis_joint_reaction_t;
+#if ENTASIS_PRECISION_MIXED64
+typedef struct entasis_global_distance_query_result_t entasis_global_distance_query_result_t;
+#endif /* ENTASIS_PRECISION_MIXED64 */
 typedef struct entasis_overlap_hit_t entasis_overlap_hit_t;
 typedef struct entasis_collision_query_result_t entasis_collision_query_result_t;
 typedef struct entasis_joint_break_event_t entasis_joint_break_event_t;

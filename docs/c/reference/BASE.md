@@ -286,6 +286,38 @@ phase of one registered constraint kernel invocation
 typedef uint32_t entasis_constraint_kernel_phase_t;
 ```
 
+### `entasis_global_constraint_target_kind_t`
+
+high-position target authoring-state tag
+
+```c
+typedef uint8_t entasis_global_constraint_target_kind_t;
+```
+
+### `entasis_global_target_presence_t`
+
+high-position target authoring-state tag
+
+```c
+typedef uint8_t entasis_global_target_presence_t;
+```
+
+### `entasis_global_query_kind_t`
+
+high spatial batch operation tag
+
+```c
+typedef uint8_t entasis_global_query_kind_t;
+```
+
+### `entasis_constraint_position_space_t`
+
+explicit custom-constraint and reaction position contract
+
+```c
+typedef uint8_t entasis_constraint_position_space_t;
+```
+
 ## Constants
 
 | Constant                                   | Value           | Meaning                                                          |
@@ -654,6 +686,43 @@ custom constraint kernel phases
 | `ENTASIS_CONSTRAINT_KERNEL_WARMSTART`          |   `1` | applies accumulated impulses              |
 | `ENTASIS_CONSTRAINT_KERNEL_SOLVE`              |   `2` | performs one velocity iteration           |
 | `ENTASIS_CONSTRAINT_KERNEL_INCREMENTAL_UPDATE` |   `3` | updates between substeps after the first  |
+
+### ``
+
+high-position target state tags
+
+| Constant                             | Value | Meaning                      |
+| ------------------------------------ | ----: | ---------------------------- |
+| `ENTASIS_GLOBAL_TARGET_INVALID`      |   `0` | unsupported target owner     |
+| `ENTASIS_GLOBAL_TARGET_LINEAR_SERVO` |   `1` | one-body linear servo target |
+| `ENTASIS_GLOBAL_TARGET_AXIS_LOCK`    |   `2` | axis-lock reference position |
+| `ENTASIS_GLOBAL_TARGET_ABSENT`       |   `0` | no pending kinematic target  |
+| `ENTASIS_GLOBAL_TARGET_PRESENT`      |   `1` | pending kinematic target     |
+
+### `entasis_global_query_kind_t`
+
+high spatial batch operation tags
+
+| Constant                             | Value | Meaning       |
+| ------------------------------------ | ----: | ------------- |
+| `ENTASIS_GLOBAL_QUERY_RAY_ANY`       |   `0` | ray any       |
+| `ENTASIS_GLOBAL_QUERY_RAY_CLOSEST`   |   `1` | ray closest   |
+| `ENTASIS_GLOBAL_QUERY_RAY_ALL`       |   `2` | ray all       |
+| `ENTASIS_GLOBAL_QUERY_SWEEP_ANY`     |   `3` | sweep any     |
+| `ENTASIS_GLOBAL_QUERY_SWEEP_CLOSEST` |   `4` | sweep closest |
+| `ENTASIS_GLOBAL_QUERY_SWEEP_ALL`     |   `5` | sweep all     |
+| `ENTASIS_GLOBAL_QUERY_OVERLAP_ANY`   |   `6` | overlap any   |
+| `ENTASIS_GLOBAL_QUERY_OVERLAP_ALL`   |   `7` | overlap all   |
+| `ENTASIS_GLOBAL_QUERY_VOLUME_ALL`    |   `8` | volume all    |
+
+### `entasis_constraint_position_space_t`
+
+custom position spaces
+
+| Constant                             | Value | Meaning                                                  |
+| ------------------------------------ | ----: | -------------------------------------------------------- |
+| `ENTASIS_CONSTRAINT_ABSOLUTE_FLOAT`  |   `0` | legacy rounded absolute float inputs                     |
+| `ENTASIS_CONSTRAINT_BODY_A_RELATIVE` |   `1` | subtract high positions before narrowing, body A is zero |
 
 ## Structures
 
@@ -1081,8 +1150,6 @@ returns the invalid body handle sentinel
 ENTASIS_API entasis_body_handle_t ENTASIS_CALL entasis_body_handle_invalid(void);
 ```
 
-returns the invalid body handle sentinel
-
 ### `entasis_body_handle_is_valid`
 
 checks the body handle sentinel representation
@@ -1107,8 +1174,6 @@ returns the invalid static handle sentinel
 ENTASIS_API entasis_static_handle_t ENTASIS_CALL entasis_static_handle_invalid(void);
 ```
 
-returns the invalid static handle sentinel
-
 ### `entasis_static_handle_is_valid`
 
 checks the static handle sentinel representation
@@ -1132,8 +1197,6 @@ returns the invalid constraint handle sentinel
 ```c
 ENTASIS_API entasis_constraint_handle_t ENTASIS_CALL entasis_constraint_handle_invalid(void);
 ```
-
-returns the invalid constraint handle sentinel
 
 ### `entasis_constraint_handle_is_valid`
 

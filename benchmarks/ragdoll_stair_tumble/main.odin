@@ -9,7 +9,7 @@ import replay "../../tools/physics_replay"
 import scene "../../tools/physics_scene"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "worker_count,step_index,active_constraints,active_pairs,body_count,shape_count,constraint_count,sleeping_body_count,invalid_transform_count,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "worker_count,step_index,active_constraints,active_pairs,body_count,shape_count,constraint_count,sleeping_body_count,invalid_transform_count,case_status,metric_status,physics_elapsed_ms,precision";
 
 Argument_Status :: enum u8
 {
@@ -153,12 +153,12 @@ write_result :: proc(arguments: Arguments, sample: Benchmark_Sample) -> Case_Sta
 	// nine 64-bit integers, status text, and finite f64 at %.9f fit in 1 KiB
 	row_buffer: [1024]byte;
 	row := fmt.bprintfln(
-		row_buffer[:], "%d,%d,%d,%d,%d,%d,%d,%d,%d,ok,ok,%.9f%s",
+		row_buffer[:], "%d,%d,%d,%d,%d,%d,%d,%d,%d,ok,ok,%.9f,%s%s",
 		arguments.worker_count, MEASURED_STEP_COUNT,
 		sample.stats.active_constraints, sample.stats.active_pairs,
 		sample.stats.active_bodies + sample.stats.sleeping_bodies + sample.stats.statics,
 		PROTOCOL_SHAPE_COUNT, AUTHORED_CONSTRAINT_COUNT,
-		sample.stats.sleeping_bodies, sample.invalid_transform_count, sample.elapsed_ms,
+		sample.stats.sleeping_bodies, sample.invalid_transform_count, sample.elapsed_ms, entasis.PRECISION_NAME,
 		support.recording_columns(arguments.recording, "native_step_sum"),
 	);
 	written, write_error := os.write(file, transmute([]byte)row);
@@ -328,7 +328,7 @@ when support.RECORDING_ENABLED
 {
 measure_recorded_world :: proc(owner: ^Benchmark_Owner, recording: support.Recording_Options, workers: int) -> (Benchmark_Result, Benchmark_Sample)
 {
-	settings: string = fmt.tprintf("fixture=benchmark/ragdoll_stair_tumble;workers=%d;steps=%d;timestep=%.9g;warmup=%d", workers, MEASURED_STEP_COUNT, TIMESTEP_DURATION, WARMUP_STEP_COUNT);
+	settings: string = fmt.tprintf("fixture=benchmark/ragdoll_stair_tumble;workers=%d;steps=%d;timestep=%.9g;warmup=%d;velocity-iterations=%d;substeps=%d", workers, MEASURED_STEP_COUNT, TIMESTEP_DURATION, WARMUP_STEP_COUNT, VELOCITY_ITERATION_COUNT, SUBSTEP_COUNT);
 	o: Measured_Observation = {budget=recording.budget};
 	defer observation.observation_destroy(&o);
 	w: Measured_Writer;

@@ -291,6 +291,37 @@ required_cli_values_and_command_count_are_rejected :: proc(t: ^testing.T)
 	_, duplicate_status := parse_cli(empty_first_command_args)
 	testing.expect_value(t, blank_status, Report_Status.Invalid_Arguments)
 	testing.expect_value(t, duplicate_status, Report_Status.Invalid_Arguments)
+	valid: []string = {"benchmark_report", "--source", "unused", "--package", "query_extensions", "--configuration", "release", "--runs", "1", "--workers", "1", "--compiler-version", "test", "--operating-system", "test", "--processor", "test", "--logical-processors", "8", "--command", "test"};
+	for options in ([][]string{
+		{"--query-group", "convex.ray_all", "--query-repetitions", "2", "--query-warmup-repetitions", "3"},
+		{"--query-group", "mesh.shape_distance", "--components", "all"},
+	})
+	{
+		args: [dynamic]string;
+		append(&args, ..valid);
+		append(&args, ..options);
+		_, status := parse_cli(args[:]);
+		testing.expect_value(t, status, Report_Status.Ok);
+		delete(args);
+	}
+	for options in ([][]string{
+		{"--query-group"}, {"--query-group", ""},
+		{"--query-group", "convex.ray_all", "--query-group", "convex.ray_all"},
+		{"--query-group", "convex.ray_all", "--query-repetitions", "0"},
+		{"--query-group", "convex.ray_all", "--query-repetitions", "99999999999999999999999"},
+		{"--query-group", "convex.ray_all", "--query-warmup-repetitions", "+2"},
+		{"--query-group", "convex.unknown"}, {"--query-group", "mesh.shape_distance", "--components", "common"},
+		{"--query-repetitions", "2"}, {"--query-family", "ray"}, {"--measured-batches", "2"},
+	})
+	{
+		args: [dynamic]string;
+		append(&args, ..valid);
+		append(&args, ..options);
+		_, status := parse_cli(args[:]);
+		testing.expect(t, status != .Ok);
+		delete(args);
+	}
+
 }
 
 @(test)
@@ -482,8 +513,8 @@ mixed_query_report_normalizes_native_totals_per_batch :: proc(t: ^testing.T)
 	path, status = test_directory("entasis-mixed-query-report")
 	testing.expect_value(t, status, Report_Status.Ok)
 	defer test_directory_remove(path)
-	header :: "worker_count,query_count,measured_batches,case_status,metric_status,physics_elapsed_ms\n"
-	_ = write_lane(path, 1, header+"1,100000,100,ok,ok,200\n1,100000,100,ok,ok,400\n")
+	header :: "worker_count,query_count,warmup_batches,measured_batches,case_status,metric_status,physics_elapsed_ms\n"
+	_ = write_lane(path, 1, header+"1,100000,10,100,ok,ok,200\n1,100000,10,100,ok,ok,400\n")
 	request: Report_Request = test_request(path, {1}, 2)
 	request.package_name = "spatial_query_trace"
 	result: Report_Result = collect_summaries(request)
@@ -498,10 +529,22 @@ mixed_query_report_normalizes_native_totals_per_batch :: proc(t: ^testing.T)
 	}
 	for count in ([]string{"0", "-1", "99", "NaN"})
 	{
-		_ = write_lane(path, 1, fmt.aprintf("%s1,100000,100,ok,ok,200\n1,100000,%s,ok,ok,400\n", header, count))
+		_ = write_lane(path, 1, fmt.aprintf("%s1,100000,10,100,ok,ok,200\n1,100000,10,%s,ok,ok,400\n", header, count))
 		testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
 	}
-	_ = write_lane(path, 1, header+"1,99999,100,ok,ok,200\n1,99999,100,ok,ok,400\n")
+	_ = write_lane(path, 1, header+"1,99999,10,100,ok,ok,200\n1,99999,10,100,ok,ok,400\n")
 	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement)
+
+	_ = write_lane(path, 1, "worker_count,query_count,warmup_batches,measured_batches,case_status,metric_status,physics_elapsed_ms\n1,100000,2,3,ok,ok,6\n1,100000,2,3,ok,ok,12\n");
+	result = collect_summaries(request);
+	testing.expect_value(t, result.status, Report_Status.Ok);
+	if result.status == .Ok
+	{
+		testing.expect_value(t, result.summaries[0].query.warmup_batches, 2);
+		testing.expect(t, strings.contains(render_markdown(request, result.summaries[:]), "| 1 | 2 | 3.000000 | 2.000000 | 4.000000 |"));
+	}
+
+	_ = write_lane(path, 1, "worker_count,query_count,measured_batches,case_status,metric_status,physics_elapsed_ms\n1,100000,100,ok,ok,6\n1,100000,100,ok,ok,12\n");
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Header);
 
 }

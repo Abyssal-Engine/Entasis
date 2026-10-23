@@ -143,19 +143,23 @@ int main(void)
 
 ### World threading
 
-Entasis coordinates its physics workers internally. `entasis_world_step` waits for their work to finish before returning. An application that steps the world and then runs queries on the same thread needs no additional synchronization, even when physics uses multiple workers
+Entasis coordinates its physics workers internally. `entasis_world_step` waits for their work to finish before returning. An application that steps the world and then runs queries on the same thread needs no additional synchronization, even when physics uses multiple workers. See [simulation repeatability limits](https://github.com/Abyssal-Engine/Entasis/blob/main/docs/LIMITS.md#accuracy-and-sampling)
 
 The read-phase and query-context rules below apply when the application launches its own concurrent query jobs. Entasis does not automatically coordinate those jobs. The application must wait for them to finish before stepping or modifying the same world
 
 All lifecycle and mutation calls on one world are serialized owner-thread operations
 
-Use `entasis_world_begin_read` and `entasis_world_end_read` around a caller-controlled job barrier for concurrent queries. Initialize one `entasis_query_context_t` per simultaneous caller while the world is idle. The contexts provide rays, sweeps, geometric overlaps, AABB volumes, heterogeneous batches and direct shape collisions with independent scratch
+Use `entasis_world_begin_read` and `entasis_world_end_read` around a caller-controlled job barrier for concurrent queries. Initialize one `entasis_query_context_t` per simultaneous caller while the world is idle. Context variants provide rays, sweeps, geometric overlaps, AABB volumes, heterogeneous batches and direct shape collisions. They isolate collision and traversal scratch while preserving the corresponding query's result and callback semantics
 
 Join every reader before ending the phase. During the phase, reject world mutation, stepping, capacity changes, registration, destruction and cooked-asset import. Read-only snapshots and views do not change the shared access state. The phase is a synchronization contract, not a lock: begin/end belong to the owner, never to an executing callback
 
 The ordinary `entasis_query_batch` is also allowed during a read phase only when the complete batch is valid, callback-free closest rays and the world has no active custom shapes. This eligibility is checked before output writes. Other ordinary query entry points remain serialized. Use their context variants for parallel work
 
-A context belongs to one world until destroyed and can have only one active caller. Initialize/reserve/destroy it outside a read phase. Its optional borrowed pool must be caller-exclusive and cannot be a simulation or worker pool. Reservation is a capacity hint, not a hard allocation budget: growth uses only that context's private pool. Contexts survive intervening steps, growth and clear/repopulation. Destroy contexts before their world. Query filter user data must support simultaneous read callbacks when shared across contexts
+Keep the world, shapes and registrations immutable throughout each query, including callbacks. Concurrent callers need disjoint output storage. Callbacks from different contexts may run concurrently with no cross-call order, so shared filter state must support those calls. Callback-local data expires when the callback returns, and a callback must not reenter its executing context
+
+A context belongs to one world until destroyed and can have only one active caller. Initialize/reserve/destroy it outside a read phase. Its optional borrowed pool must be caller-exclusive and cannot be a simulation or worker pool. Contexts survive intervening steps, growth and clear/repopulation. Destroy contexts before their world
+
+Reservation is a capacity hint, not a hard allocation budget: growth uses only that context's private pool
 
 `entasis_dispatcher_interface_t` is blocking:
 
@@ -197,6 +201,8 @@ Numeric values may be reused. Clear external mappings and properties when remova
 Batch add, apply, and remove operations preserve input order and stop at the first failure. Earlier successful entries remain applied. The returned count identifies that prefix, so update application mappings for it and retry only the remaining entries
 
 Constraint descriptions are selected by `entasis_constraint_type_id_t`. Description size and stride must match the selected type exactly
+
+The `entasis_static_*_filtered` operations expose caller-selected sleeping-island awakening. The filter receives stable body handles and is borrowed only for that call
 
 ### Structural command buffers
 
@@ -591,7 +597,7 @@ Shape registration alone does not install pair routes. Register each required cu
 
 `entasis_collision_task_registration_default` and `entasis_collision_task_register` install scalar and eight-lane convex-result callbacks for a pair of registered types. `entasis_sweep_task_registration_default` and `entasis_sweep_task_register` install top-level and child sweep callbacks. Register before the first step. Built-in/duplicate routes cannot be replaced. Tables are copied before output writes and application allocation callbacks. The application retains ownership of `user_context`. Bindings survive world clear/reuse and are freed after successful native teardown. A failed registration consumes no route
 
-Wide collision input exposes pointer-based aligned views with one foreign invocation per existing bundle, never one per body. `count` is 1 through 8. Output holds up to four contacts per lane. Each existence mask is exactly -1 or 0, and inactive lanes must have zero masks. Sparse contact slots are allowed. Existing contacts require finite offsets, depths and normals. Callback errors and malformed results are rejected before the native manifold writer. Runtime conversion is field-wise. The C API does not expose native bundle/cache layouts. Built-in triangle payloads, including mesh children, are materialized from the native packed lanes into callback-local read-only scalar storage. Their pointers remain valid for the callback only. This adapter is selected at registration. Native kernels and non-triangle C routes do not pay for its temporary arrays
+Wide collision input exposes pointer-based aligned views with one foreign invocation per existing bundle, never one per body. `count` is 1 through 8. Output holds up to four contacts per lane. Each existence mask is exactly -1 or 0, and inactive lanes must have zero masks. Sparse contact slots are allowed. Existing contacts require finite offsets, depths and normals. Callback errors and malformed results are rejected before the native manifold writer. Built-in triangle payloads, including mesh children, are materialized from the native packed lanes into callback-local read-only scalar storage. Their pointers remain valid for the callback only
 
 Every invocation receives a callback-local `entasis_task_access_t`. `entasis_task_shape_access` provides the existing read-only shape operations. `entasis_task_allow_child` calls the current query filter with its own user data, separate from registration data. Registered route flipping remains the native owner's responsibility. Child callbacks have no additional filter because native traversal already performed child filtering
 
@@ -624,5 +630,3 @@ The `entasis_world_stage_*` functions expose sleeping, bound prediction, collisi
 A custom timestep callback receives an `entasis_step_scope_t` value token. Use only its scope-stage operations while the world is exclusive, and explicitly report completion where required. Nested scope operations, ordinary world mutation and recursive stepping are rejected. A saved token is rejected after callback return while its world remains alive. Using it after world destruction violates handle lifetime. Successful custom callback completion advances the step index once. An error leaves that counter unchanged but does not undo stages already executed
 
 The optional substep scheduler selects positive iteration counts. Nonpositive returns use the configured fixed count. There is no configurable broad-phase scheduler callback
-
-The three `entasis_static_*_filtered` operations expose caller-selected sleeping-island awakening. The filter receives stable body handles and is borrowed only for that call

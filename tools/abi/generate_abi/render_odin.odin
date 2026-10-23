@@ -56,6 +56,7 @@ render_odin_types :: proc(manifest: ^Manifest, package_name: string) -> string
 
 	for callback in field_items(manifest.root, "callback_types")
 	{
+		odin_availability_begin(&builder, callback);
 		params := join_odin_params(callback)
 		result := ""
 		if field_string(callback, "return_odin") != ""
@@ -76,11 +77,13 @@ render_odin_types :: proc(manifest: ^Manifest, package_name: string) -> string
 			}
 			builder_format_line(&builder, ")%s;", result)
 		}
+		odin_availability_end(&builder, callback);
 	}
 	builder_line(&builder)
 
 	for item in field_items(manifest.root, "structs")
 	{
+		odin_availability_begin(&builder, item);
 		alignment := field_integer(item, "explicit_alignment")
 		if alignment > 0
 		{
@@ -97,6 +100,7 @@ render_odin_types :: proc(manifest: ^Manifest, package_name: string) -> string
 		}
 		builder_line(&builder, "}")
 		builder_line(&builder)
+		odin_availability_end(&builder, item);
 	}
 	for alias in field_items(manifest.root, "struct_aliases")
 	{
@@ -106,6 +110,7 @@ render_odin_types :: proc(manifest: ^Manifest, package_name: string) -> string
 
 	for item in field_items(manifest.root, "structs")
 	{
+		odin_availability_begin(&builder, item);
 		name := field_string(item, "odin_name")
 		builder_format_line(&builder, "#assert(size_of(%s) == %d);", name, field_integer(item, "size"))
 		builder_format_line(&builder, "#assert(align_of(%s) == %d);", name, field_integer(item, "align"))
@@ -123,6 +128,7 @@ render_odin_types :: proc(manifest: ^Manifest, package_name: string) -> string
 				builder_line(&builder, ");")
 			}
 		}
+		odin_availability_end(&builder, item);
 	}
 	builder_line(&builder)
 	return builder_result(&builder)
@@ -146,6 +152,7 @@ render_odin_exports :: proc(manifest: ^Manifest, library: string) -> string
 		{
 			continue
 		}
+		odin_availability_begin(&builder, function);
 		name := field_string(function, "name")
 		params := join_odin_params(function)
 		result := ""
@@ -196,6 +203,7 @@ render_odin_exports :: proc(manifest: ^Manifest, library: string) -> string
 		}
 		builder_line(&builder, "}")
 		builder_line(&builder)
+		odin_availability_end(&builder, function);
 	}
 	return builder_result(&builder)
 }
@@ -246,4 +254,21 @@ version_current :: proc "contextless" () -> Version
 		field_integer(product, "version_major"), field_integer(product, "version_minor"),
 		field_integer(product, "version_patch"), field_string(product, "version_prerelease"),
 		field_string(product, "version_string"), field_integer(product, "abi_version"))
+}
+
+odin_availability_begin :: proc(builder: ^strings.Builder, item: ^Node)
+{
+	if field_string(item, "availability") == "mixed64"
+	{
+		builder_line(builder, "when #config(ENTASIS_PRECISION, \"float32\") == \"mixed64\"");
+		builder_line(builder, "{");
+	}
+}
+
+odin_availability_end :: proc(builder: ^strings.Builder, item: ^Node)
+{
+	if field_string(item, "availability") == "mixed64"
+	{
+		builder_line(builder, "}");
+	}
 }

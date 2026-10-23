@@ -245,7 +245,7 @@ result_lane_read :: proc(path: string, worker: int, package_name: string, budget
 		column, status := header_index(records[0], "benchmark_parameters");
 		if status == .Ok && len(records[1]) == len(records[0])
 		{
-			names: [3]string = {"container", "contact_islands", "pyramid"};
+			names: [4]string = {"container", "contact_islands", "pyramid", "large_world_precision"};
 			for name in names
 			{
 				prefix: string = strings.concatenate({"workload=", name, ";"});
@@ -261,6 +261,18 @@ result_lane_read :: proc(path: string, worker: int, package_name: string, budget
 				return {}, report_error(.Invalid_Measurement, "unknown parameterized workload in %s", path);
 			}
 		}
+		else if _, status = header_index(records[0], "query_case"); status == .Ok
+		{
+			effective_package = "query_extensions";
+		}
+		else if _, status = header_index(records[0], "query_count_per_operation"); status == .Ok
+		{
+			effective_package = "query_extensions";
+		}
+		else if _, status = header_index(records[0], "query_count"); status == .Ok
+		{
+			effective_package = "spatial_query_trace";
+		}
 		else if _, status = header_index(records[0], "batch_size"); status == .Ok
 		{
 			effective_package = "spatial_query_batch";
@@ -273,6 +285,11 @@ result_lane_read :: proc(path: string, worker: int, package_name: string, budget
 	}
 	lane.measurement = "ray_elapsed_ms" if effective_package == "spatial_query_batch" else "physics_elapsed_ms";
 	lane.unit = .Milliseconds;
+	if lane.summary.precision.mode == "memory"
+	{
+		lane.measurement = "";
+		lane.unit = .Text;
+	}
 	lane.columns = make([]Result_Column, len(records[0]));
 	lane.values = make([]Result_Value, (len(records)-1)*len(lane.columns));
 	for name, column in records[0]
@@ -372,20 +389,23 @@ result_dataset_open :: proc(dataset: ^Result_Dataset, path, package_name: string
 		if len(dataset.lanes) > 0
 		{
 			first: Result_Lane = dataset.lanes[0];
-			if lane.summary.sample_count != first.summary.sample_count ||
+			if lane.summary.query != first.summary.query || lane.summary.profile != first.summary.profile ||
+				lane.summary.measured_units != first.summary.measured_units || lane.summary.query_count != first.summary.query_count ||
+				lane.summary.sample_count != first.summary.sample_count ||
 				lane.summary.benchmark_parameters != first.summary.benchmark_parameters ||
 				lane.summary.measured_steps != first.summary.measured_steps ||
 				lane.summary.recording_mode != first.summary.recording_mode || lane.summary.timing_method != first.summary.timing_method ||
+				lane.summary.ray_pattern != first.summary.ray_pattern ||
 				lane.summary.ray_checksum != first.summary.ray_checksum || len(lane.columns) != len(first.columns)
 			{
-				return report_error(.Invalid_Measurement, "inconsistent workload or samples in %s", entry.fullpath);
+					return report_error(.Invalid_Measurement, "inconsistent workload or samples in %s", entry.fullpath);
 			}
 			for column, index in lane.columns
 			{
 				if column.name != first.columns[index].name || column.unit != first.columns[index].unit ||
 					(column.name == "benchmark_components" && lane.records[1][index] != first.records[1][index])
 				{
-					return report_error(.Invalid_Header, "inconsistent component columns in %s", entry.fullpath);
+						return report_error(.Invalid_Header, "inconsistent component columns in %s", entry.fullpath);
 				}
 			}
 		}
@@ -421,7 +441,14 @@ result_dataset_open :: proc(dataset: ^Result_Dataset, path, package_name: string
 	baseline: f64 = dataset.lanes[0].summary.median;
 	for &lane in dataset.lanes
 	{
-		lane.summary.speedup = baseline/lane.summary.median;
+		if lane.summary.precision.mode != "memory"
+		{
+			lane.summary.speedup = baseline/lane.summary.median;
+			if (lane.summary.query.case_name == "hierarchy" || lane.summary.query.case_name == "global" || lane.summary.query.case_name == "collision-batch") && dataset.lanes[0].summary.worker_count != 1
+			{
+				lane.summary.speedup = 0;
+			}
+		}
 	}
 	dataset.state = .Ready;
 	return {status=.Ok};
@@ -433,7 +460,7 @@ Result_Recording :: enum
 }
 Result_Timing :: enum
 {
-	Unavailable, Whole_Loop, Native_Step_Sum,
+	Unavailable, Whole_Loop, Native_Step_Sum, Allocator_Instrumented,
 }
 
 result_recording_conditions :: proc(records: [][]string) -> (Result_Recording, Result_Timing, Report_Result)
@@ -477,7 +504,7 @@ result_recording_conditions :: proc(records: [][]string) -> (Result_Recording, R
 			(row_mode == "off" && (len(path) != 0 || len(component) != 0)) ||
 			(row_mode == "on" && (len(path) == 0 || component != "physics_elapsed_ms" || method != "native_step_sum"))
 		{
-			return {}, {}, report_error(.Invalid_Measurement, "invalid recording or timing conditions");
+				return {}, {}, report_error(.Invalid_Measurement, "invalid recording or timing conditions");
 		}
 		if row_mode == "on"
 		{
@@ -619,7 +646,7 @@ physical_result_summary :: proc(records: [][]string, package_name: string) -> (P
 			(fields[3] != "complete" && fields[3] != "incomplete") ||
 			(row > 0 && (summary.mode != mode || summary.criterion != criterion || summary.shape_limit != limit))
 		{
-			return {}, report_error(.Invalid_Measurement, "incompatible physical criterion, limit, mode or coverage")
+				return {}, report_error(.Invalid_Measurement, "incompatible physical criterion, limit, mode or coverage")
 		}
 		summary.mode = mode
 		summary.criterion = criterion
@@ -671,7 +698,7 @@ physical_result_summary :: proc(records: [][]string, package_name: string) -> (P
 		if parameter_mode != fields[0] || !parsed_steps || steps <= 0 || counts[2] > steps || counts[1] > warmup ||
 			counts[0] < counts[1]+counts[2] || counts[0] > counts[1]+counts[2]+2
 		{
-			return {}, report_error(.Invalid_Measurement, "physical counts contradict the measured workload")
+				return {}, report_error(.Invalid_Measurement, "physical counts contradict the measured workload")
 		}
 		// empty observations preserve absence, and each populated observation owns all its identities
 		for group in ([3]int{7, 11, 15})
@@ -699,7 +726,7 @@ physical_result_summary :: proc(records: [][]string, package_name: string) -> (P
 			if (phase != "construction" && phase != "warmup_construction" && phase != "warmup" && phase != "measured") ||
 				!step_parsed || observation_step < 0 || observation_step > max(steps, warmup) || !body_parsed || body < 0
 			{
-				return {}, report_error(.Invalid_Measurement, "invalid physical observation identity")
+					return {}, report_error(.Invalid_Measurement, "invalid physical observation identity")
 			}
 			if fields[4] == "invalid_state" && group == 7 && len(fields[10]) == 0 && filled == 3
 			{
@@ -728,7 +755,7 @@ physical_result_summary :: proc(records: [][]string, package_name: string) -> (P
 				(package_name == "contact_islands" && (hz <= 0 || steps <= hz || counts[3] != hz+1)) ||
 				(package_name != "container" && (len(fields[11]) == 0 || (neighbor_requirement == .Available && len(fields[15]) == 0)))
 			{
-				return {}, report_error(.Invalid_Measurement, "physical Pass lacks complete compatible evidence")
+					return {}, report_error(.Invalid_Measurement, "physical Pass lacks complete compatible evidence")
 			}
 			for index in ([2]int{11, 15})
 			{
@@ -746,14 +773,14 @@ physical_result_summary :: proc(records: [][]string, package_name: string) -> (P
 			if mode != .On || len(fields[7]) == 0 ||
 				(fields[4] != "invalid_state" && fields[4] != "slot_excess" && fields[4] != "neighbor_compression" && fields[4] != "support_plane" && fields[4] != "container_escape")
 			{
-				return {}, report_error(.Invalid_Measurement, "physical Fail lacks breach evidence")
+					return {}, report_error(.Invalid_Measurement, "physical Fail lacks breach evidence")
 			}
 			summary.failed += 1
 			case "unassessed":
 			if (mode == .Off && (fields[4] != "verification_off" || counts[0] != 0)) ||
 				(mode == .On && fields[4] != "unsupported_fixture" && fields[4] != "insufficient_window" && fields[4] != "incomplete_coverage" && fields[4] != "impact_before_assessment")
 			{
-				return {}, report_error(.Invalid_Measurement, "invalid Unassessed reason")
+					return {}, report_error(.Invalid_Measurement, "invalid Unassessed reason")
 			}
 			summary.unassessed += 1
 			case: return {}, report_error(.Invalid_Measurement, "invalid physical status")

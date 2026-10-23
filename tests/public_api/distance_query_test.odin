@@ -9,6 +9,124 @@ import e "entasis:entasis"
 import p "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
 
+@(test)
+nested_query_bounds_reuse_preserves_shrinking_limits :: proc(t: ^testing.T)
+{
+	world: e.World;
+	if !testing.expect_value(t, e.world_init(&world, small_world_description()), e.Status.Ok)
+	{
+		return;
+	}
+	defer e.world_destroy(&world);
+	status: e.Status;
+	sphere, inner, target, source: e.Shape_Handle;
+	sphere, status = e.shape_add(&world, e.sphere(0.5));
+	testing.expect_value(t, status, e.Status.Ok);
+	children: [4]e.Compound_Child;
+	for &child, index in children
+	{
+		child = e.compound_child(sphere, e.pose({f32(index)*8, 0, 0}));
+	}
+	inner, status = e.shape_import_big_compound(&world, children[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	branches: [2]e.Compound_Child = {e.compound_child(inner, e.pose()), e.compound_child(inner, e.pose({0, 0, 16}))};
+	target, status = e.shape_import_compound(&world, branches[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	leaves: [2]e.Compound_Child = {e.compound_child(sphere, e.pose({8, 5, 16})), e.compound_child(sphere, e.pose({24, 1.5, 16}))};
+	source, status = e.shape_import_compound(&world, leaves[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	query_context: e.Query_Context;
+	testing.expect_value(t, e.query_context_init(&query_context, &world), e.Status.Ok);
+	defer e.query_context_destroy(&query_context);
+	for origin in ([3]e.Vector3{{}, {1048576, -524288, 262144}, {-1048576, 524288, -262144}})
+	{
+		// later outer leaves must restart B with their own bounds after a best hit
+		result: e.Shape_Distance_Result;
+		result, status = e.shape_distance_with_context(&query_context, source, e.pose(origin), target, e.pose(origin));
+		testing.expect_value(t, status, e.Status.Ok);
+		testing.expect_value(t, result.geometry.distance, f32(0.5));
+		testing.expect_value(t, result.child_a, i32(1));
+		testing.expect_value(t, result.child_b, i32(1));
+		for point in ([4]e.Vector3{{24, 2, 16}, {8, 3, 0}, {16, 4, 16}, {0, 5, 0}})
+		{
+			result, status = e.shape_closest_point_with_context(&query_context, util.vector3_add(origin, point), target, e.pose(origin));
+			testing.expect_value(t, status, e.Status.Ok);
+			testing.expect_value(t, result.geometry.distance, point.y-0.5);
+			testing.expect_value(t, result.child_b, i32(1) if point.z == 16 else i32(0));
+			testing.expect_value(t, result.geometry.point_b, util.vector3_add(origin, {point.x, 0.5, point.z}));
+		}
+	}
+	for offset in ([2]f32{170141183460469231731687303715884105728.0, -170141183460469231731687303715884105728.0})
+	{
+		point: e.Vector3 = {offset, 0, 0};
+		result: e.Shape_Distance_Result;
+		result, status = e.shape_closest_point_with_context(&query_context, point, target, e.pose(point));
+		testing.expect_value(t, status, e.Status.Ok);
+		testing.expect_value(t, result.geometry.distance, f32(0));
+		testing.expect_value(t, result.geometry.point_b, point);
+		testing.expect_value(t, result.child_b, i32(0));
+	}
+	x_wall, y_wall, box, walls, nested_walls: e.Shape_Handle;
+	x_wall, status = e.shape_add(&world, e.box(4, 8, 8));
+	testing.expect_value(t, status, e.Status.Ok);
+	y_wall, status = e.shape_add(&world, e.box(2, 2, 8));
+	testing.expect_value(t, status, e.Status.Ok);
+	box, status = e.shape_add(&world, e.box(1, 1, 1));
+	testing.expect_value(t, status, e.Status.Ok);
+	wall_children: [2]e.Compound_Child = {e.compound_child(x_wall, e.pose({-0.5, 0, 0})), e.compound_child(y_wall, e.pose({2, -1, 0}))};
+	walls, status = e.shape_import_big_compound(&world, wall_children[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	wrapper: [1]e.Compound_Child = {e.compound_child(walls, e.pose())};
+	nested_walls, status = e.shape_import_compound(&world, wrapper[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	testing.expect_value(t, e.distance_query_reserve_with_context(&query_context, {512, 1024, 512}), e.Status.Ok);
+	correction: e.Shape_Correction_Result;
+	correction, status = e.shape_depenetrate_with_context(&query_context, box, e.pose(), nested_walls, e.pose());
+	testing.expect_value(t, status, e.Status.Ok);
+	testing.expect(t, correction.iterations >= 2);
+	testing.expect(t, correction.translation.x >= 1.9999 && correction.translation.y >= 0.4999);
+	for child in wall_children
+	{
+		result: e.Shape_Distance_Result;
+		result, status = e.shape_penetration_with_context(&query_context, box, e.pose(correction.translation), child.shape_index, e.pose(child.local_position));
+		testing.expect_value(t, status, e.Status.Ok);
+		testing.expect(t, result.geometry.state != .Penetrating);
+	}
+	// a live best distance must prune a later failing contextual leaf
+	state: Distance_Late_Failure_State = {base={scale=1}, fail_after=1};
+	registration: e.Contextual_Custom_Shape_Registration = contextual_sphere_registration(&state.base);
+	registration.user_context = &state;
+	registration.support = distance_late_failure_support;
+	type_id: e.Shape_Type_ID;
+	type_id, status = e.custom_shape_register_contextual(&world, registration);
+	testing.expect_value(t, status, e.Status.Ok);
+	custom, error_tree, error_outer: e.Shape_Handle;
+	custom, status = e.custom_shape_add(&world, type_id, &Custom_Sphere{radius=1});
+	testing.expect_value(t, status, e.Status.Ok);
+	error_children: [2]e.Compound_Child = {e.compound_child(sphere, e.pose()), e.compound_child(custom, e.pose({100, 0, 0}))};
+	error_tree, status = e.shape_import_big_compound(&world, error_children[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	wrapper[0] = e.compound_child(error_tree, e.pose());
+	error_outer, status = e.shape_import_compound(&world, wrapper[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	state.calls = 0;
+	result: e.Shape_Distance_Result;
+	result, status = e.shape_closest_point_with_context(&query_context, {2, 0, 0}, error_outer, e.pose());
+	testing.expect_value(t, status, e.Status.Ok);
+	testing.expect_value(t, result.geometry.distance, f32(1.5));
+	testing.expect_value(t, state.calls, 0);
+	for failure in ([3]e.Status{.Not_Found, .Capacity_Missing, .No_Convergence})
+	{
+		state.calls = 0;
+		state.injected_status = failure;
+		result, status = e.shape_closest_point_with_context(&query_context, {102, 0, 0}, error_outer, e.pose());
+		testing.expect_value(t, status, failure);
+		testing.expect_value(t, result.geometry.state, e.Distance_Query_State.Unresolved);
+		testing.expect_value(t, state.calls, 1);
+	}
+
+}
+
 Distance_Test_Scratch :: struct
 {
 	vertices: [512]p.Distance_Query_Vertex,
@@ -482,6 +600,118 @@ distance_geometry_analytic_primitives_and_spheres :: proc (t: ^testing.T)
 			testing.expect_value(t, status, e.Status.Ok);
 			testing.expect(t, moved.state!=.Penetrating);
 		}
+	}
+}
+
+@(test)
+distance_nested_point_queries_enclose_large_finite_offsets :: proc(t: ^testing.T)
+{
+	world: e.World;
+	if !testing.expect_value(t, e.world_init(&world, small_world_description()), e.Status.Ok)
+	{
+		return;
+	}
+	defer e.world_destroy(&world);
+	status: e.Status;
+	sphere, inner, outer: e.Shape_Handle;
+	sphere, status = e.shape_add(&world, e.sphere(0.5));
+	testing.expect_value(t, status, e.Status.Ok);
+	children: [1]e.Compound_Child = {e.compound_child(sphere, e.pose())};
+	inner, status = e.shape_import_big_compound(&world, children[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	children[0] = e.compound_child(inner, e.pose());
+	outer, status = e.shape_import_compound(&world, children[:]);
+	testing.expect_value(t, status, e.Status.Ok);
+	for offset in ([2]f32{170141183460469231731687303715884105728.0, -170141183460469231731687303715884105728.0})
+	{
+		point: util.Vector3 = {offset, 0, 0};
+		for shape in ([2]e.Shape_Handle{inner, outer})
+		{
+			result: e.Shape_Distance_Result;
+			result, status = e.shape_closest_point(&world, point, shape, e.pose(point));
+			testing.expect_value(t, status, e.Status.Ok);
+			testing.expect_value(t, result.geometry.state, p.Distance_Query_State.Intersecting);
+			testing.expect_value(t, result.geometry.distance, f32(0));
+			testing.expect_value(t, result.geometry.point_a, point);
+			testing.expect_value(t, result.geometry.point_b, point);
+			testing.expect_value(t, result.child_b, i32(0));
+		}
+	}
+	// the oracle transforms corners with an independently expanded f64 matrix
+	bounds: [6]util.Bounding_Box = {
+		{min={170141183460469231731687303715884105728.0, -2, 0}, max={170141183460469231731687303715884105728.0, 3, 0}},
+		{min={-math.F32_MAX, -2, -3}, max={math.F32_MAX, 4, 5}},
+		{min={-7, -5, -3}, max={-7, -5, -3}},
+		{min={1, 2, 3}, max={4, 5, 6}},
+		{min={math.F32_MAX, 0, 0}, max={math.F32_MAX, 0, 0}},
+		{min={-math.F32_MAX, 0, 0}, max={-math.F32_MAX, 0, 0}},
+	};
+	poses: [6]p.Rigid_Pose = {
+		{position={170141183460469231731687303715884105728.0, 0, 0}, orientation={0, 0, 0, 1}},
+		{position={-170141183460469231731687303715884105728.0, 1, -2}, orientation={0.5, 0.5, 0.5, 0.5}},
+		{position={-8, -6, -4}, orientation={0, 0, 1, 0}},
+		{position={-3, 2, -1}, orientation={0, 0, 0.6, 0.8}},
+		{position={-math.F32_MAX, 0, 0}, orientation={0, 0, 0, 1}},
+		{position={math.F32_MAX, 0, 0}, orientation={0, 0, 0, 1}},
+	};
+	for source, index in bounds
+	{
+		pose: p.Rigid_Pose = poses[index];
+		actual: util.Bounding_Box = p.query_hierarchy_local_bounds(source, pose);
+		lower: [3]f64 = {f64(actual.min.x), f64(actual.min.y), f64(actual.min.z)};
+		upper: [3]f64 = {f64(actual.max.x), f64(actual.max.y), f64(actual.max.z)};
+		q: [4]f64 = {-f64(pose.orientation.x), -f64(pose.orientation.y), -f64(pose.orientation.z), f64(pose.orientation.w)};
+		coefficients: [3][3]f64 = {
+			{1-2*(q[1]*q[1]+q[2]*q[2]), 2*(q[0]*q[1]-q[3]*q[2]), 2*(q[0]*q[2]+q[3]*q[1])},
+			{2*(q[0]*q[1]+q[3]*q[2]), 1-2*(q[0]*q[0]+q[2]*q[2]), 2*(q[1]*q[2]-q[3]*q[0])},
+			{2*(q[0]*q[2]-q[3]*q[1]), 2*(q[1]*q[2]+q[3]*q[0]), 1-2*(q[0]*q[0]+q[1]*q[1])},
+		};
+		for corner in 0..<8
+		{
+			v: [3]f64 = {
+				f64(source.min.x if corner&1 == 0 else source.max.x)-f64(pose.position.x),
+				f64(source.min.y if corner&2 == 0 else source.max.y)-f64(pose.position.y),
+				f64(source.min.z if corner&4 == 0 else source.max.z)-f64(pose.position.z),
+			};
+			for axis in 0..<3
+			{
+				expected: f64 = coefficients[axis][0]*v[0]+coefficients[axis][1]*v[1]+coefficients[axis][2]*v[2];
+				testing.expect(t, lower[axis] <= expected && upper[axis] >= expected);
+			}
+		}
+		if index == 4
+		{
+			testing.expect_value(t, actual.min.x, f32(math.F32_MAX));
+			testing.expect_value(t, actual.max.x, math.inf_f32(1));
+		}
+		if index == 5
+		{
+			testing.expect_value(t, actual.min.x, math.inf_f32(-1));
+			testing.expect_value(t, actual.max.x, f32(-math.F32_MAX));
+		}
+	}
+	// pruning producers can already have lost finite endpoints or translation
+	for input in 0..<3
+	{
+		source: util.Bounding_Box = {min={-1, -2, -3}, max={1, 2, 3}};
+		pose: p.Rigid_Pose = e.pose();
+		if input == 0
+		{
+			source.max.x = math.inf_f32(1);
+		}
+		else if input == 1
+		{
+			source.min.x = math.inf_f32(-1);
+		}
+		else
+		{
+			pose.position.x = math.inf_f32(1);
+		}
+		actual: util.Bounding_Box = p.query_hierarchy_local_bounds(source, pose);
+		testing.expect_value(t, actual.min.x, math.inf_f32(-1));
+		testing.expect_value(t, actual.max.x, math.inf_f32(1));
+		testing.expect(t, actual.min.y <= -2 && actual.max.y >= 2);
+		testing.expect(t, actual.min.z <= -3 && actual.max.z >= 3);
 	}
 }
 
@@ -1451,6 +1681,33 @@ distance_overlap_any_composite_filters_and_failure_recovery :: proc (t: ^testing
 	testing.expect_value(t, e.query_context_init(&query_context, &f.world), e.Status.Ok);
 	defer e.query_context_destroy(&query_context);
 	state: e.Overlap_State;
+	primitive: e.Static_Handle;
+	primitive, status = e.static_add(&f.world, e.static_body(f.sphere, e.pose({10, 0, 0})), .None);
+	testing.expect_value(t, status, e.Status.Ok);
+	reference: e.Collidable_Reference;
+	reference, status = e.static_collidable_reference(&f.world, primitive);
+	testing.expect_value(t, status, e.Status.Ok);
+	for accepted in ([2]i32{-1, 0})
+	{
+		for route in 0..<2
+		{
+			filter_state: Query_Primitive_Filter_State = {target=reference, accepted_child=accepted};
+			filter: e.Query_Filter = {allow=query_primitive_target_filter, allow_child=query_primitive_child_filter, user_context=&filter_state};
+			if route == 0
+			{
+				state, status = e.overlap_any(&f.world, f.sphere, e.pose({10, 0, 0}), filter);
+			}
+			else
+			{
+				state, status = e.overlap_any_with_context(&query_context, f.sphere, e.pose({10, 0, 0}), filter);
+			}
+			testing.expect_value(t, status, e.Status.Ok);
+			testing.expect_value(t, state, e.Overlap_State.Intersecting if accepted == 0 else e.Overlap_State.Separated);
+			testing.expect_value(t, filter_state.targets, 1);
+			testing.expect_value(t, filter_state.children, 1);
+			testing.expect_value(t, filter_state.errors, 0);
+		}
+	}
 	state, status = e.overlap_any(&f.world, f.sphere, e.pose(), {allow_child=query_reject_every_child});
 	testing.expect_value(t, status, e.Status.Ok);
 	testing.expect_value(t, state, e.Overlap_State.Separated);

@@ -1,4 +1,5 @@
 package entasis_physics
+import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
 import "core:slice"
@@ -144,7 +145,10 @@ trigger_grow_slice :: proc(s: ^Trigger_System, data: ^[]$T, count: int) -> Physi
 		return .Capacity_Missing;
 	}
 	next: []T = ([^]T)(memory)[:count];
-	copy(next, data^);
+	if len(data^) > 0
+	{
+		intrinsics.mem_copy_non_overlapping(raw_data(next), raw_data(data^), len(data^)*size_of(T));
+	}
 	trigger_free_slice(s, data);
 	data^ = next;
 	return .Ok;
@@ -536,6 +540,14 @@ trigger_system_reserve :: proc(s: ^Trigger_System, requested: Trigger_Configurat
 		s.workers = next;
 		committed = .Present;
 	}
+	if s.mixed != nil
+	{
+		status = mixed_colliders_reserve_events(s.mixed, s.mixed.configuration);
+		if status != .Ok
+		{
+			return status;
+		}
+	}
 	s.configuration = c;
 	return .Ok;
 }
@@ -656,17 +668,26 @@ trigger_step_prepare :: #force_no_inline proc(s: ^Trigger_System) -> Physics_Sta
 	{
 		return s.notification_status;
 	}
-	status: Physics_Status = trigger_system_reserve(s, s.configuration);
-	if status != .Ok
+	if len(s.bodies) < int(s.simulation.bodies.handle_to_location.length) ||
+		len(s.statics) < int(s.simulation.statics.handle_to_index.length) ||
+		len(s.workers) < int(s.simulation.allocation_sizes.workers)
 	{
-		return status;
+		return .Capacity_Missing;
 	}
-	if s.mixed!=nil
+	if s.mixed != nil
 	{
-		status=mixed_colliders_reserve_events(s.mixed, s.mixed.configuration);
-		if status!=.Ok
+		if int(s.mixed.workers.length) < len(s.workers)
 		{
-			return status;
+			return .Capacity_Missing;
+		}
+		for worker, i in s.workers
+		{
+			mixed_worker: ^Mixed_Collider_Worker = &s.mixed.workers.memory[i];
+			if int(mixed_worker.roles.length) < len(worker.candidates) ||
+				(s.mixed.configuration.event_subscription == .Enabled && int(mixed_worker.observations.length) < int(s.mixed.configuration.observations_per_worker))
+			{
+				return .Capacity_Missing;
+			}
 		}
 	}
 	s.sample_valid = .Missing;
@@ -732,9 +753,22 @@ trigger_discover :: proc "contextless" (s: ^Trigger_System, reference: Collidabl
 	{
 		return .Ok;
 	}
-	bounds: util.Bounding_Box;
+	bounds: Tree_Bounds;
 	bs: Physics_Status;
-	bounds, bs = shape_registry_compute_world_bounds(simulation_shape_registry(s.simulation), target.shape, target.pose);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position: Global_Position;
+		target, position, status = simulation_query_global_target(s.simulation, reference);
+		if status != .Ok
+		{
+			return status;
+		}
+		bounds, bs = broad_phase_shape_bounds(simulation_shape_registry(s.simulation), target.shape, position, target.pose.orientation);
+	}
+	else
+	{
+		bounds, bs = shape_registry_compute_world_bounds(simulation_shape_registry(s.simulation), target.shape, target.pose);
+	}
 	if bs != .Ok
 	{
 		return bs;
@@ -855,6 +889,23 @@ trigger_geometry_mode :: proc(w: ^Trigger_Worker, $mixed: Reference_State) -> Ph
 			if status != .Ok
 			{
 				return status;
+			}
+		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_a: Global_Position;
+			position_b: Global_Position;
+			a, position_a, sa = simulation_query_global_target(s.simulation, pair.a);
+			b, position_b, sb = simulation_query_global_target(s.simulation, pair.b);
+			if sa != .Ok || sb != .Ok
+			{
+				return sa if sa != .Ok else sb;
+			}
+			local_status: Physics_Status;
+			b.pose.position, local_status = world_precision_relative_position(position_a, position_b);
+			if local_status != .Ok
+			{
+				return local_status;
 			}
 		}
 		status: Physics_Status = collision_batcher_add(batcher, a.shape, b.shape, a.pose, b.pose, 0, i32(i));

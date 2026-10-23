@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
+import report "../benchmark_report"
 import scene "../physics_scene"
 
 // these fixtures temporarily own cwd because discovery uses workspace roots
@@ -297,4 +298,38 @@ saved_run_catalog_budget :: proc(t: ^testing.T)
 	testing.expect(t, viewer_content_bytes(&v) <= v.budget);
 	recordings_close(&v.ui.recordings);
 	testing.expect_value(t, viewer_content_bytes(&v), u64(0));
+}
+
+@(test)
+focused_results_do_not_restore_unsupported_launch_settings :: proc(t: ^testing.T)
+{
+	for query in ([]report.Query_Measurement{
+		{case_name="hierarchy", operation="ray-direct", cell="mesh-8192"},
+		{group="convex.ray_all", repetitions=2, warmup_repetitions=1},
+		{family="aabb-presence", warmup_batches=10, measured_batches=100},
+		{family="all", warmup_batches=2, measured_batches=100},
+		{family="all", warmup_batches=10, measured_batches=3},
+	})
+	{
+		v: Viewer;
+		v.results.state, v.results.package_name = .Ready, "query_extensions";
+		v.launch.package_index = 7;
+		v.mode, v.count, v.active_pane = .Replay, 2, 1;
+		lane: report.Result_Lane = {summary={query=query}};
+		launch: Benchmark_Launch = v.launch;
+		request: Launch_Request = v.request;
+		benchmark: Benchmark_Run = v.benchmark;
+		panes: [2]Pane = v.panes;
+		result_run_again(&v, &lane);
+		testing.expect_value(t, v.ui.status, scene.Status.Unsupported);
+		testing.expect(t, strings.contains(string(v.ui.recording_message[:]), "CLI command in the report"));
+		testing.expect_value(t, v.results.state, report.Result_State.Ready);
+		testing.expect_value(t, v.launch, launch);
+		testing.expect_value(t, mem.compare_ptrs(&v.request, &request, size_of(Launch_Request)), 0);
+		testing.expect_value(t, mem.compare_ptrs(&v.benchmark, &benchmark, size_of(Benchmark_Run)), 0);
+		testing.expect_value(t, mem.compare_ptrs(&v.panes, &panes, size_of([2]Pane)), 0);
+		testing.expect_value(t, v.mode, Mode.Replay);
+		testing.expect_value(t, v.count, 2);
+		testing.expect_value(t, v.active_pane, 1);
+	}
 }

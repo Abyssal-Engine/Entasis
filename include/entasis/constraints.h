@@ -227,6 +227,76 @@ struct entasis_joint_break_limits_t {
     uint64_t user_id;
 };
 
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * caller-owned live handles for four ordered state streams
+ *
+ * buffers remain valid until export or apply returns. nonzero counts require non-NULL pointers. duplicates are processed in selection order and identities are not remapped across worlds
+ */
+struct entasis_global_state_selection_t {
+    /* live handles in selection order */
+    const entasis_body_handle_t * bodies;
+    /* selected handle count */
+    uint64_t bodies_count;
+    /* live handles in selection order */
+    const entasis_static_handle_t * statics;
+    /* selected handle count */
+    uint64_t statics_count;
+    /* live handles in selection order */
+    const entasis_constraint_handle_t * constraint_targets;
+    /* selected handle count */
+    uint64_t constraint_targets_count;
+    /* live handles in selection order */
+    const entasis_body_handle_t * kinematic_targets;
+    /* selected handle count */
+    uint64_t kinematic_targets_count;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * caller-owned body, static and target authoring-state buffers
+ *
+ * each capacity must cover the corresponding selection count. streams and selections must be disjoint. exported positions use the current simulation frame and require caller translation after an origin shift. snapshots do not restore topology, sleep counters, solver/contact history, optional systems or hidden execution state
+ */
+struct entasis_global_state_snapshot_t {
+    /* caller-owned disjoint state buffer */
+    entasis_global_body_state_t * bodies;
+    /* state buffer capacity */
+    uint64_t bodies_capacity;
+    /* caller-owned disjoint state buffer */
+    entasis_global_static_state_t * statics;
+    /* state buffer capacity */
+    uint64_t statics_capacity;
+    /* caller-owned disjoint state buffer */
+    entasis_global_constraint_target_state_t * constraint_targets;
+    /* state buffer capacity */
+    uint64_t constraint_targets_capacity;
+    /* caller-owned disjoint state buffer */
+    entasis_global_kinematic_target_state_t * kinematic_targets;
+    /* state buffer capacity */
+    uint64_t kinematic_targets_capacity;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * completed prefixes for the four authoring-state streams
+ *
+ * counts follow the fixed processing order bodies, statics, constraint targets, then kinematic targets. a failure leaves later streams unprocessed
+ */
+struct entasis_global_state_counts_t {
+    /* completed state count */
+    uint64_t bodies;
+    /* completed state count */
+    uint64_t statics;
+    /* completed state count */
+    uint64_t constraint_targets;
+    /* completed state count */
+    uint64_t kinematic_targets;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
 /**
  * built-in angular axis gear motor constraint description
  */
@@ -682,6 +752,18 @@ struct entasis_joint_force_wrench_t {
     /* world-space torque about the body center of mass */
     entasis_vector3_t angular;
 };
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * absolute position target for a linear servo or axis lock
+ */
+struct entasis_global_constraint_target_state_t {
+    /* authoritative current-frame target */
+    entasis_global_position_t position;
+    /* linear-servo or axis-lock kind, which must match the existing constraint */
+    entasis_global_constraint_target_kind_t kind;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 /**
  * pointer-free snapshot of one built-in contact constraint
@@ -1710,6 +1792,125 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_break_events_drain(
  * @return returns ENTASIS_STATUS_OK or the original failure status
  */
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_break_events_discard(entasis_world_t * world, entasis_diagnostic_t * diagnostic);
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * executes an ordered command buffer with one f64 position per command
+ *
+ * requires the owner thread and exclusive access to an idle world. position_count must equal buffer.command_count. add and apply commands use their ordinal position instead of the embedded float position. remove commands ignore the paired position, including nonfinite values. capacity for additions is admitted before execution. stops on the first failed command and preserves earlier mutations and results. buffers remain caller-owned and must not overlap
+ *
+ * @param world target world
+ * @param buffer required command buffer and caller-owned result storage
+ * @param positions one current-frame f64 position per command ordinal, required for a nonempty buffer
+ * @param position_count must equal buffer.command_count, including remove commands
+ * @param out_processed required completed-command count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all commands succeed or the first failure, with out_processed reporting the successful prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_apply_commands_global(entasis_world_t * world, const entasis_command_buffer_t * buffer, const entasis_global_position_t * positions, uint64_t position_count, uint64_t * out_processed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies the f64 absolute target of a linear servo or axis lock
+ *
+ * requires an idle world or an active read phase. does not wake objects or allocate. other constraint types are rejected. output is unchanged on failure
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param output required caller-owned target state, unchanged on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_get_global_target_state(entasis_world_t * world, entasis_constraint_handle_t handle, entasis_global_constraint_target_state_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces the f64 absolute target of a linear servo or axis lock
+ *
+ * requires the owner thread and exclusive access to an idle world. state.kind must match the existing constraint type and state.position uses the current simulation frame. retains the other constraint settings
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param state required target state for the existing linear-servo or axis-lock kind
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_apply_global_target_state(entasis_world_t * world, entasis_constraint_handle_t handle, const entasis_global_constraint_target_state_t * state, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies selected body, static and target authoring states into caller-owned streams
+ *
+ * requires an idle world or an active read phase. does not wake objects or allocate. streams execute in the fixed order bodies, statics, constraint targets, then kinematic targets. all capacities are checked before processing any record. repeated handles execute in selection order. a later failure preserves completed prefixes and stops later records. unwritten output remains unchanged. snapshots contain current-frame positions and borrowed shape identities, without solver/contact history, sleep counters or execution phase state
+ *
+ * @param world target world
+ * @param selection required live-handle arrays with a non-NULL pointer for each nonzero count
+ * @param snapshot required disjoint output streams, each capacity covering its selected count
+ * @param out_counts required per-stream written counts, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all selected records succeed or the first failure, with per-stream completed counts
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_export_global_states(entasis_world_t * world, const entasis_global_state_selection_t * selection, entasis_global_state_snapshot_t * snapshot, entasis_global_state_counts_t * out_counts, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * applies selected body, static and target authoring states in stream order
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. streams execute in the fixed order bodies, statics, constraint targets, then kinematic targets. all capacities are checked before processing any record. repeated handles execute in selection order. a later failure preserves completed prefixes and stops later records. mutations are not rolled back as a group, and awakening side effects may remain on a failed record. input streams and selections must be disjoint and remain valid until return. identities must already exist in this world. translate saved positions after an origin shift before applying them
+ *
+ * @param world target world
+ * @param selection required destination live-handle arrays, without cross-world remapping
+ * @param snapshot required caller-owned input streams, each capacity covering its selected count
+ * @param awakening awakening policy for static state applications
+ * @param target_wake wake policy for present kinematic target applications
+ * @param out_counts required per-stream applied counts, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all selected records succeed or the first failure, with per-stream completed counts
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_apply_global_states(entasis_world_t * world, const entasis_global_state_selection_t * selection, const entasis_global_state_snapshot_t * snapshot, entasis_awakening_policy_t awakening, entasis_body_control_wake_t target_wake, entasis_global_state_counts_t * out_counts, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * registers a custom constraint type with an explicit solver position frame
+ *
+ * requires the owner thread and exclusive access to an idle world before its first step and before adding constraints. the descriptor is copied, while callback code and user state remain caller-owned through world destruction. world clear retains registrations. body-A-relative positions subtract in f64 before local f32 kernel access
+ *
+ * @param world initialized world
+ * @param registration complete registration descriptor
+ * @param position_space absolute-float or body-A-relative solver input frame. a registered reaction provider must use the same frame
+ * @param diagnostic optional diagnostic output
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_register_position_space(entasis_world_t * world, const entasis_custom_constraint_registration_t * registration, entasis_constraint_position_space_t position_space, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * sets or clears a custom constraint type's reaction reader and position frame
+ *
+ * requires the owner thread and exclusive access to an idle world with joint breaks enabled. the type must already be registered and have no watches. a non-NULL provider must match the registered type's position frame. copies the descriptor on success and borrows its user state until replacement, clearing or world disposal. rejection preserves the previous provider
+ *
+ * @param world idle world with joint breaks enabled
+ * @param type_id custom type registered in this world
+ * @param provider descriptor to copy, with caller-owned callback code and state. NULL clears the provider
+ * @param position_space valid position frame, which must match the registered type when installing a provider
+ * @param diagnostic optional diagnostic output
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_set_reaction_provider_position_space(entasis_world_t * world, entasis_constraint_type_id_t type_id, const entasis_joint_reaction_provider_t * provider, entasis_constraint_position_space_t position_space, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 #ifdef __cplusplus
 } /* extern "C" */

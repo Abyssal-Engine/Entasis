@@ -9,33 +9,28 @@ import "base:runtime"
 
 Tree_Bin :: struct
 {
-	bounds:            util.Bounding_Box,
-	centroid_bounds:   util.Bounding_Box,
+	bounds:            Tree_Bounds,
+	centroid_bounds:   Tree_Bounds,
 	count:             i32,
 	leaf_count:        i32,
 }
 
-tree_empty_bounds :: proc "contextless" () -> util.Bounding_Box
+tree_empty_bounds :: proc "contextless" () -> Tree_Bounds
 {
 	return {
-		min={f32(math.F32_MAX), f32(math.F32_MAX), f32(math.F32_MAX)},
-		max={-f32(math.F32_MAX), -f32(math.F32_MAX), -f32(math.F32_MAX)},
+		min={Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX)},
+		max={-Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX)},
 	};
 }
 
-tree_bounds_centroid :: proc "contextless" (bounds: util.Bounding_Box) -> util.Vector3
+tree_bounds_centroid_sum :: proc "contextless" (bounds: Tree_Bounds) -> Tree_Position
 {
-	return util.vector3_scale(util.vector3_add(bounds.min, bounds.max), 0.5);
-}
-
-tree_bounds_centroid_sum :: proc "contextless" (bounds: util.Bounding_Box) -> util.Vector3
-{
-	return util.vector3_add(bounds.min, bounds.max);
+	return tree_position_add(bounds.min, bounds.max);
 }
 
 tree_reference_bounds :: proc "contextless" (
 	references: util.Buffer(Tree_Build_Reference), start, count: int,
-) -> util.Bounding_Box
+) -> Tree_Bounds
 {
 	bounds := references.memory[start].bounds;
 	for index in start + 1 ..< start + count
@@ -45,7 +40,7 @@ tree_reference_bounds :: proc "contextless" (
 	return bounds;
 }
 
-tree_reference_axis_value :: proc "contextless" (reference: Tree_Build_Reference, axis: int) -> f32
+tree_reference_axis_value :: proc "contextless" (reference: Tree_Build_Reference, axis: int) -> Tree_Scalar
 {
 	centroid := tree_bounds_centroid_sum(reference.bounds);
 	if axis == 0
@@ -61,15 +56,15 @@ tree_reference_axis_value :: proc "contextless" (reference: Tree_Build_Reference
 
 tree_binned_bin_count :: proc "contextless" (subtree_count: int) -> int
 {
-	return min(TREE_BIN_MAX_COUNT, max(int(f32(subtree_count) * TREE_BIN_LEAF_MULTIPLIER), TREE_BIN_MIN_COUNT));
+	return min(TREE_BIN_MAX_COUNT, max(int(Tree_Scalar(subtree_count) * TREE_BIN_LEAF_MULTIPLIER), TREE_BIN_MIN_COUNT));
 }
 
 tree_binned_axis :: proc "contextless" (
 	centroid_min,
-	centroid_max: util.Vector3
-) -> (axis: int, axis_min, axis_span: f32)
+	centroid_max: Tree_Position
+) -> (axis: int, axis_min, axis_span: Tree_Scalar)
 {
-	span := util.vector3_subtract(centroid_max, centroid_min);
+	span := tree_position_subtract(centroid_max, centroid_min);
 	if span.x > span.y && span.x > span.z
 	{
 		return 0, centroid_min.x, span.x;
@@ -85,15 +80,15 @@ tree_binned_partition_references :: proc "contextless" (
 	references, scratch: util.Buffer(Tree_Build_Reference), start, count: int,
 ) -> int
 {
-	centroid_min := util.Vector3{f32(math.F32_MAX), f32(math.F32_MAX), f32(math.F32_MAX)};
-	centroid_max := util.Vector3{-f32(math.F32_MAX), -f32(math.F32_MAX), -f32(math.F32_MAX)};
+	centroid_min := Tree_Position{Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX)};
+	centroid_max := Tree_Position{-Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX)};
 	for index in start ..< start + count
 	{
 		centroid := tree_bounds_centroid_sum(references.memory[index].bounds);
-		centroid_min = util.vector3_min(centroid_min, centroid);
-		centroid_max = util.vector3_max(centroid_max, centroid);
+		centroid_min = tree_position_min(centroid_min, centroid);
+		centroid_max = tree_position_max(centroid_max, centroid);
 	}
-	span := util.vector3_subtract(centroid_max, centroid_min);
+	span := tree_position_subtract(centroid_max, centroid_min);
 	if span.x <= 1e-12 && span.y <= 1e-12 && span.z <= 1e-12
 	{
 		return count / 2;
@@ -113,21 +108,21 @@ tree_binned_partition_references :: proc "contextless" (
 			}
 			references.memory[target] = reference;
 		}
-		prefix_bounds: [TREE_MICROSWEEP_THRESHOLD]util.Bounding_Box;
+		prefix_bounds: [TREE_MICROSWEEP_THRESHOLD]Tree_Bounds;
 		prefix_bounds[0] = references.memory[start].bounds;
 		for index in 1 ..< count
 		{
 			prefix_bounds[index] = tree_bounds_merge(prefix_bounds[index - 1], references.memory[start + index].bounds);
 		}
-		best_cost := f32(math.F32_MAX);
+		best_cost := Tree_Scalar(math.F64_MAX);
 		best_split := 1;
 		best_right_count := 0;
 		right_bounds := references.memory[start + count - 1].bounds;
 		right_count := 1;
 		for candidate := count - 1; candidate >= 1; candidate -= 1
 		{
-			cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * f32(count - right_count) +
-			tree_bounds_metric(right_bounds) * f32(right_count);
+			cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * Tree_Scalar(count - right_count) +
+			tree_bounds_metric(right_bounds) * Tree_Scalar(right_count);
 			if cost < best_cost
 			{
 				best_cost = cost;
@@ -137,7 +132,7 @@ tree_binned_partition_references :: proc "contextless" (
 			right_bounds = tree_bounds_merge(references.memory[start + candidate - 1].bounds, right_bounds);
 			right_count += 1;
 		}
-		if best_right_count == 0 || best_right_count == count || best_cost == f32(math.F32_MAX) ||
+		if best_right_count == 0 || best_right_count == count || best_cost == Tree_Scalar(math.F64_MAX) ||
 		math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 		{
 			return count / 2;
@@ -150,7 +145,7 @@ tree_binned_partition_references :: proc "contextless" (
 	{
 		bins[bin_index].bounds = tree_empty_bounds();
 	}
-	scale := f32(bin_count) / axis_span;
+	scale := Tree_Scalar(bin_count) / axis_span;
 	for index in start ..< start + count
 	{
 		reference := references.memory[index];
@@ -166,7 +161,7 @@ tree_binned_partition_references :: proc "contextless" (
 		}
 		bin.count += 1;
 	}
-	prefix_bounds: [TREE_BIN_MAX_COUNT]util.Bounding_Box;
+	prefix_bounds: [TREE_BIN_MAX_COUNT]Tree_Bounds;
 	prefix_counts: [TREE_BIN_MAX_COUNT]i32;
 	accumulated_bounds := tree_empty_bounds();
 	accumulated_count: i32;
@@ -187,15 +182,15 @@ tree_binned_partition_references :: proc "contextless" (
 		prefix_bounds[bin_index] = accumulated_bounds;
 		prefix_counts[bin_index] = accumulated_count;
 	}
-	best_cost := f32(math.F32_MAX);
+	best_cost := Tree_Scalar(math.F64_MAX);
 	best_split := 1;
 	best_right_count := 0;
 	right_bounds := bins[bin_count - 1].bounds;
 	right_count := bins[bin_count - 1].count;
 	for candidate := bin_count - 1; candidate >= 1; candidate -= 1
 	{
-		cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * f32(count - int(right_count)) +
-		tree_bounds_metric(right_bounds) * f32(right_count);
+		cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * Tree_Scalar(count - int(right_count)) +
+		tree_bounds_metric(right_bounds) * Tree_Scalar(right_count);
 		if cost < best_cost
 		{
 			best_cost = cost;
@@ -209,7 +204,7 @@ tree_binned_partition_references :: proc "contextless" (
 		}
 		right_count += bins[previous].count;
 	}
-	if best_right_count == 0 || best_right_count == count || best_cost == f32(math.F32_MAX) ||
+	if best_right_count == 0 || best_right_count == count || best_cost == Tree_Scalar(math.F64_MAX) ||
 	math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 	{
 		return count / 2;
@@ -290,7 +285,20 @@ tree_build_from_references :: proc "contextless" (tree: ^Tree, count: int) -> Ph
 	return .Ok;
 }
 
-tree_build :: proc (tree: ^Tree, bounds: [^]util.Bounding_Box, count: int) -> Physics_Status
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	tree_build :: proc
+	{
+		tree_build_global,
+		tree_build_local,
+	}
+}
+else
+{
+	tree_build :: tree_build_global;
+}
+
+tree_build_global :: proc (tree: ^Tree, bounds: [^]Tree_Bounds, count: int) -> Physics_Status
 {
 	if tree == nil || tree.state != .Ready || bounds == nil || count < 0
 	{
@@ -319,6 +327,35 @@ tree_build :: proc (tree: ^Tree, bounds: [^]util.Bounding_Box, count: int) -> Ph
 	return tree_build_from_references(tree, count);
 }
 
+tree_build_local :: proc (tree: ^Tree, bounds: [^]util.Bounding_Box, count: int) -> Physics_Status
+{
+	if tree == nil || tree.state != .Ready || bounds == nil || count < 0
+	{
+		return .Invalid_Argument;
+	}
+	if count > int(tree.leaves.length) || count > int(tree.build_references.length) ||
+	count > int(tree.build_scratch.length) || max(count-1, 1) > int(tree.nodes.length) ||
+	max(count-1, 1) > int(tree.metanodes.length)
+	{
+		capacity_status: Physics_Status = tree_ensure_capacity(tree, max(count, 1));
+		if capacity_status != .Ok
+		{
+			return capacity_status;
+		}
+	}
+	for index in 0 ..< count
+	{
+		if bounds[index].min.x > bounds[index].max.x ||
+		bounds[index].min.y > bounds[index].max.y ||
+		bounds[index].min.z > bounds[index].max.z
+		{
+			return .Invalid_Argument;
+		}
+		tree.build_references.memory[index] = {bounds=tree_bounds_from_local(bounds[index]), leaf_index=i32(index)};
+	}
+	return tree_build_from_references(tree, count);
+}
+
 tree_rebuild_binned :: proc "contextless" (tree: ^Tree) -> Physics_Status
 {
 	if tree == nil || tree.state != .Ready
@@ -342,7 +379,7 @@ TREE_DEFAULT_TREELET_SIZE :: 16;
 TREE_REFINEMENT_SUBTREE_FLAG :: i32(1 << 30);
 tree_node_child_reference_bounds :: proc "contextless" (
 	references: util.Buffer(Tree_Node_Child), start, count: int,
-) -> util.Bounding_Box
+) -> Tree_Bounds
 {
 	bounds := tree_child_bounds(references.memory[start]);
 	for index in start + 1 ..< start + count
@@ -364,7 +401,7 @@ tree_node_child_reference_leaf_count :: proc "contextless" (
 	return leaf_count;
 }
 
-tree_node_child_axis_value :: proc "contextless" (reference: Tree_Node_Child, axis: int) -> f32
+tree_node_child_axis_value :: proc "contextless" (reference: Tree_Node_Child, axis: int) -> Tree_Scalar
 {
 	centroid := tree_bounds_centroid_sum(tree_child_bounds(reference));
 	if axis == 0
@@ -380,15 +417,15 @@ tree_node_child_axis_value :: proc "contextless" (reference: Tree_Node_Child, ax
 
 tree_node_child_centroid_bounds :: proc "contextless" (
 	references: util.Buffer(Tree_Node_Child), start, count: int,
-) -> util.Bounding_Box
+) -> Tree_Bounds
 {
 	centroid := tree_bounds_centroid_sum(tree_child_bounds(references.memory[start]));
-	bounds := util.Bounding_Box{min=centroid, max=centroid};
+	bounds := Tree_Bounds{min=centroid, max=centroid};
 	for index in start + 1 ..< start + count
 	{
 		centroid = tree_bounds_centroid_sum(tree_child_bounds(references.memory[index]));
-		bounds.min = util.vector3_min(bounds.min, centroid);
-		bounds.max = util.vector3_max(bounds.max, centroid);
+		bounds.min = tree_position_min(bounds.min, centroid);
+		bounds.max = tree_position_max(bounds.max, centroid);
 	}
 	return bounds;
 }
@@ -397,12 +434,12 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 	bins: ^[TREE_BIN_MAX_COUNT]Tree_Bin, bin_count, total_leaf_count: int,
 ) -> (
 	split_index, right_leaf_count: int,
-	left_centroid_bounds, right_centroid_bounds: util.Bounding_Box,
+	left_centroid_bounds, right_centroid_bounds: Tree_Bounds,
 	status: Physics_Status,
 )
 {
-	prefix_bounds: [TREE_BIN_MAX_COUNT]util.Bounding_Box;
-	prefix_centroid_bounds: [TREE_BIN_MAX_COUNT]util.Bounding_Box;
+	prefix_bounds: [TREE_BIN_MAX_COUNT]Tree_Bounds;
+	prefix_centroid_bounds: [TREE_BIN_MAX_COUNT]Tree_Bounds;
 	accumulated_bounds := tree_empty_bounds();
 	accumulated_centroid_bounds := tree_empty_bounds();
 	accumulated_leaf_count: i32;
@@ -426,15 +463,15 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 		prefix_bounds[bin_index] = accumulated_bounds;
 		prefix_centroid_bounds[bin_index] = accumulated_centroid_bounds;
 	}
-	best_cost := f32(math.F32_MAX);
+	best_cost := Tree_Scalar(math.F64_MAX);
 	split_index = 1;
 	right_bounds := bins[bin_count - 1].bounds;
 	accumulated_right_centroid_bounds := bins[bin_count - 1].centroid_bounds;
 	accumulated_right_leaf_count := bins[bin_count - 1].leaf_count;
 	for candidate := bin_count - 1; candidate >= 1; candidate -= 1
 	{
-		cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * f32(total_leaf_count - int(accumulated_right_leaf_count)) +
-		tree_bounds_metric(right_bounds) * f32(accumulated_right_leaf_count);
+		cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * Tree_Scalar(total_leaf_count - int(accumulated_right_leaf_count)) +
+		tree_bounds_metric(right_bounds) * Tree_Scalar(accumulated_right_leaf_count);
 		if cost < best_cost
 		{
 			best_cost = cost;
@@ -452,7 +489,7 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 		}
 		accumulated_right_leaf_count += bins[previous].leaf_count;
 	}
-	if right_leaf_count == 0 || right_leaf_count == total_leaf_count || best_cost == f32(math.F32_MAX) ||
+	if right_leaf_count == 0 || right_leaf_count == total_leaf_count || best_cost == Tree_Scalar(math.F64_MAX) ||
 	math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 	{
 		return 0, 0, {}, {}, .Invalid_Description;
@@ -464,10 +501,10 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 
 tree_binned_partition_node_children_by_split :: proc "contextless" (
 	references, scratch: util.Buffer(Tree_Node_Child), start, count, axis: int,
-	axis_min, axis_span: f32, bin_count, split_index: int,
+	axis_min, axis_span: Tree_Scalar, bin_count, split_index: int,
 ) -> int
 {
-	scale := f32(bin_count) / axis_span;
+	scale := Tree_Scalar(bin_count) / axis_span;
 	left_count, right_count := 0, 0;
 	for index in start ..< start + count
 	{
@@ -496,7 +533,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 ) -> int
 {
 	centroid_bounds := tree_node_child_centroid_bounds(references, start, count);
-	span := util.vector3_subtract(centroid_bounds.max, centroid_bounds.min);
+	span := tree_position_subtract(centroid_bounds.max, centroid_bounds.min);
 	if span.x <= 1e-12 && span.y <= 1e-12 && span.z <= 1e-12
 	{
 		return count / 2;
@@ -517,7 +554,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 			}
 			references.memory[target] = reference;
 		}
-		prefix_bounds: [TREE_MICROSWEEP_THRESHOLD]util.Bounding_Box;
+		prefix_bounds: [TREE_MICROSWEEP_THRESHOLD]Tree_Bounds;
 		prefix_leaf_counts: [TREE_MICROSWEEP_THRESHOLD]i32;
 		prefix_bounds[0] = tree_child_bounds(references.memory[start]);
 		prefix_leaf_counts[0] = references.memory[start].leaf_count;
@@ -529,15 +566,15 @@ tree_binned_partition_node_children :: proc "contextless" (
 			);
 			prefix_leaf_counts[index] = prefix_leaf_counts[index - 1] + references.memory[start + index].leaf_count;
 		}
-		best_cost := f32(math.F32_MAX);
+		best_cost := Tree_Scalar(math.F64_MAX);
 		best_split := 1;
 		best_right_leaf_count := 0;
 		right_bounds := tree_child_bounds(references.memory[start + count - 1]);
 		right_leaf_count := references.memory[start + count - 1].leaf_count;
 		for candidate := count - 1; candidate >= 1; candidate -= 1
 		{
-			cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * f32(total_leaf_count - int(right_leaf_count)) +
-			tree_bounds_metric(right_bounds) * f32(right_leaf_count);
+			cost := tree_bounds_metric(prefix_bounds[candidate - 1]) * Tree_Scalar(total_leaf_count - int(right_leaf_count)) +
+			tree_bounds_metric(right_bounds) * Tree_Scalar(right_leaf_count);
 			if cost < best_cost
 			{
 				best_cost = cost;
@@ -547,7 +584,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 			right_bounds = tree_bounds_merge(tree_child_bounds(references.memory[start + candidate - 1]), right_bounds);
 			right_leaf_count += references.memory[start + candidate - 1].leaf_count;
 		}
-		if best_right_leaf_count == 0 || best_right_leaf_count == total_leaf_count || best_cost == f32(math.F32_MAX) ||
+		if best_right_leaf_count == 0 || best_right_leaf_count == total_leaf_count || best_cost == Tree_Scalar(math.F64_MAX) ||
 		math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 		{
 			return count / 2;
@@ -561,7 +598,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 		bins[bin_index].bounds = tree_empty_bounds();
 		bins[bin_index].centroid_bounds = tree_empty_bounds();
 	}
-	scale := f32(bin_count) / axis_span;
+	scale := Tree_Scalar(bin_count) / axis_span;
 	for index in start ..< start + count
 	{
 		reference := references.memory[index];
@@ -577,8 +614,8 @@ tree_binned_partition_node_children :: proc "contextless" (
 		else
 		{
 			bin.bounds = tree_bounds_merge(bin.bounds, bounds);
-			bin.centroid_bounds.min = util.vector3_min(bin.centroid_bounds.min, centroid);
-			bin.centroid_bounds.max = util.vector3_max(bin.centroid_bounds.max, centroid);
+			bin.centroid_bounds.min = tree_position_min(bin.centroid_bounds.min, centroid);
+			bin.centroid_bounds.max = tree_position_max(bin.centroid_bounds.max, centroid);
 		}
 		bin.count += 1;
 		bin.leaf_count += reference.leaf_count;

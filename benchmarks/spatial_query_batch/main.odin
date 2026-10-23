@@ -10,8 +10,7 @@ main :: proc()
 {
 	args: trace.Arguments;
 	status: trace.Argument_Status;
-	measured_batches := trace.MEASURED_BATCH_COUNT;
-	args, status = trace.parse_arguments(os.args);
+	args, status = trace.parse_arguments(os.args, .Reject);
 	if status != .Ok
 	{
 		fmt.eprintfln("invalid ray benchmark arguments: %v", os.args);
@@ -26,7 +25,7 @@ main :: proc()
 	}
 	defer entasis.buffer_pool_destroy(&pool);
 	owner: trace.Benchmark_Owner;
-	owner_status := trace.benchmark_owner_create(&owner, &pool, args.worker_count);
+	owner_status := trace.benchmark_owner_create(&owner, &pool, args.worker_count, args.ray_pattern);
 	if owner_status != .Ok
 	{
 		fmt.eprintfln("ray benchmark world creation failed: %v", owner_status);
@@ -43,7 +42,7 @@ main :: proc()
 		os.exit(2);
 	}
 	job.mode = .Timed;
-	for _ in 0 ..< trace.WARMUP_BATCH_COUNT
+	for _ in 0 ..< args.warmup_batches
 	{
 		_, _, frame_status := execute(&job);
 		if frame_status != .Ok
@@ -52,7 +51,7 @@ main :: proc()
 		}
 	}
 	elapsed := time.Duration(0);
-	for _ in 0 ..< measured_batches
+	for _ in 0 ..< args.measured_batches
 	{
 		start := time.tick_now();
 		_, _, frame_status := execute(&job);
@@ -77,8 +76,8 @@ main :: proc()
 	defer os.close(file);
 	if err != nil
 	{
-		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status");
+		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status,precision,ray_pattern");
 	}
-	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok", args.worker_count, BATCH_SIZE,
-		trace.RAY_QUERY_COUNT, trace.WARMUP_BATCH_COUNT, measured_batches, hits, checksum, f64(elapsed) / 1e6);
+	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok,%s,%s", args.worker_count, BATCH_SIZE,
+		trace.RAY_QUERY_COUNT, args.warmup_batches, args.measured_batches, hits, checksum, f64(elapsed) / 1e6, entasis.PRECISION_NAME, trace.ray_pattern_name(args.ray_pattern));
 }

@@ -674,19 +674,20 @@ Mixed_Static_Awakening :: struct
 	storage: ^Mixed_Collider_Storage,
 	reference: Collidable_Reference,
 	old, next: Static_Description,
+	old_position, next_position: Tree_Position,
 	filter: Static_Awakening_Filter_Proc,
 	user: rawptr,
 	status: Physics_Status,
 }
 
 mixed_collider_part_bounds :: proc "contextless" (
-	registry: ^Shape_Registry, shape: Typed_Index, pose: Rigid_Pose, index: i32,
-) -> (util.Bounding_Box, Physics_Status)
+	registry: ^Shape_Registry, shape: Typed_Index, pose: Rigid_Pose, position: Tree_Position, index: i32,
+) -> (Tree_Bounds, Physics_Status)
 {
 	type_id: i32 = typed_index_type(shape);
 	if index < 0 || (type_id != COMPOUND_TYPE_ID && type_id != BIG_COMPOUND_TYPE_ID)
 	{
-		return shape_registry_compute_world_bounds(registry, shape, pose);
+		return broad_phase_shape_bounds(registry, shape, position, pose.orientation);
 	}
 	data: rawptr;
 	status: Physics_Status;
@@ -709,27 +710,53 @@ mixed_collider_part_bounds :: proc "contextless" (
 		return {}, .Invalid_Argument;
 	}
 	child: ^Compound_Child = &children.memory[index];
-	child_pose: Rigid_Pose = rigid_pose_concatenate({position=child.local_position, orientation=child.local_orientation}, pose);
-	return shape_registry_compute_world_bounds(registry, child.shape_index, child_pose);
+	// compose the child in the parent's local frame. adding its offset to the
+	// rounded absolute cache first would erase small compound parts at 1 Gm
+	child_pose: Rigid_Pose;
+	when util.PRECISION_MODE == .Float_Coordinates
+	{
+		child_pose = rigid_pose_concatenate({position=child.local_position, orientation=child.local_orientation}, pose);
+		return shape_registry_compute_world_bounds(registry, child.shape_index, child_pose);
+	}
+	child_pose = rigid_pose_concatenate(
+		{position=child.local_position, orientation=child.local_orientation}, {orientation=pose.orientation},
+	);
+	local: util.Bounding_Box;
+	local, status = shape_registry_compute_world_bounds(registry, child.shape_index, child_pose);
+	if status != .Ok
+	{
+		return {}, status;
+	}
+	return broad_phase_bounds_from_local(position, local);
 }
 
-mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handle) -> bool
+mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handle) -> Collision_Testing_State
 {
 	context = runtime.default_context();
 	state: ^Mixed_Static_Awakening = (^Mixed_Static_Awakening)(user);
 	if state.status != .Ok
 	{
-		return false;
+		return .Reject;
 	}
 	simulation: ^Simulation = state.storage.owner.simulation;
 	registry: ^Shape_Registry = simulation_shape_registry(simulation);
 	description: Body_Description;
 	status: Physics_Status;
 	description, status = bodies_get_description(&simulation.bodies, body);
+	body_position: Tree_Position;
+	if status == .Ok
+	{
+		location: Body_Memory_Location;
+		location, status = bodies_resolve(&simulation.bodies, body);
+		if status == .Ok
+		{
+			body_position = broad_phase_body_position(&simulation.bodies.sets.memory[location.set_index], int(location.index));
+		}
+	}
 	if status != .Ok
 	{
 		state.status = status;
-		return false;
+		return .Reject;
 	}
 	body_reference: Collidable_Reference;
 	body_reference, _ = collidable_reference_body(.Dynamic, body);
@@ -743,7 +770,7 @@ mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handl
 		if status != .Ok
 		{
 			state.status = status;
-			return false;
+			return .Reject;
 		}
 	}
 	if static_parts == .Present
@@ -752,7 +779,7 @@ mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handl
 		if status != .Ok
 		{
 			state.status = status;
-			return false;
+			return .Reject;
 		}
 	}
 	for body_index: i32 = 0; body_index < body_count; body_index += 1
@@ -762,12 +789,12 @@ mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handl
 		{
 			continue;
 		}
-		body_bounds: util.Bounding_Box;
-		body_bounds, status = mixed_collider_part_bounds(registry, description.collidable.shape, description.pose, body_part);
+		body_bounds: Tree_Bounds;
+		body_bounds, status = mixed_collider_part_bounds(registry, description.collidable.shape, description.pose, body_position, body_part);
 		if status != .Ok
 		{
 			state.status = status;
-			return false;
+			return .Reject;
 		}
 		for static_index: i32 = 0; static_index < static_count; static_index += 1
 		{
@@ -776,51 +803,52 @@ mixed_static_awaken_filter :: proc "contextless" (user: rawptr, body: Body_Handl
 			{
 				continue;
 			}
-			old_bounds: util.Bounding_Box;
-			old_bounds, status = mixed_collider_part_bounds(registry, state.old.shape, state.old.pose, static_part);
+			old_bounds: Tree_Bounds;
+			old_bounds, status = mixed_collider_part_bounds(registry, state.old.shape, state.old.pose, state.old_position, static_part);
 			if status != .Ok
 			{
 				state.status = status;
-				return false;
+				return .Reject;
 			}
 			if state.old.shape == state.next.shape
 			{
-				next_bounds: util.Bounding_Box;
-				next_bounds, status = mixed_collider_part_bounds(registry, state.next.shape, state.next.pose, static_part);
+				next_bounds: Tree_Bounds;
+				next_bounds, status = mixed_collider_part_bounds(registry, state.next.shape, state.next.pose, state.next_position, static_part);
 				if status != .Ok
 				{
 					state.status = status;
-					return false;
+					return .Reject;
 				}
-				old_bounds = util.bounding_box_merge(old_bounds, next_bounds);
+				old_bounds = tree_bounds_merge(old_bounds, next_bounds);
 			}
-			if util.bounding_box_intersection_state(body_bounds, old_bounds) == .Intersecting
+			if tree_bounds_intersection_state(body_bounds, old_bounds) == .Intersecting
 			{
-				return state.filter == nil || state.filter(state.user, body);
+				return .Allow if state.filter == nil else state.filter(state.user, body);
 			}
 		}
 		if state.old.shape != state.next.shape
 		{
 			// replacement geometry has no inherited overrides and therefore is solid
-			next_bounds: util.Bounding_Box;
-			next_bounds, status = shape_registry_compute_world_bounds(registry, state.next.shape, state.next.pose);
+			next_bounds: Tree_Bounds;
+			next_bounds, status = broad_phase_shape_bounds(registry, state.next.shape, state.next_position, state.next.pose.orientation);
 			if status != .Ok
 			{
 				state.status = status;
-				return false;
+				return .Reject;
 			}
-			if util.bounding_box_intersection_state(body_bounds, next_bounds) == .Intersecting
+			if tree_bounds_intersection_state(body_bounds, next_bounds) == .Intersecting
 			{
-				return state.filter == nil || state.filter(state.user, body);
+				return .Allow if state.filter == nil else state.filter(state.user, body);
 			}
 		}
 	}
-	return false;
+	return .Reject;
 }
 
 mixed_colliders_awaken_static :: proc(
-	simulation:^Simulation, handle:Static_Handle, old, next:^Static_Description,
-	bounds:util.Bounding_Box, filter:Static_Awakening_Filter_Proc, user:rawptr,
+	simulation: ^Simulation, handle: Static_Handle, old, next: ^Static_Description,
+	old_position, next_position: Tree_Position,
+	bounds: Tree_Bounds, filter: Static_Awakening_Filter_Proc, user: rawptr,
 ) -> Physics_Status
 {
 	reference: Collidable_Reference;
@@ -829,7 +857,10 @@ mixed_colliders_awaken_static :: proc(
 	{
 		return simulation_awaken_inactive_bodies_in_bounds_filtered(simulation, bounds, filter, user);
 	}
-	state:Mixed_Static_Awakening={storage=simulation.triggers.mixed, reference=reference, old=old^, next=next^, filter=filter, user=user};
+	state: Mixed_Static_Awakening = {
+		storage=simulation.triggers.mixed, reference=reference, old=old^, next=next^,
+		old_position=old_position, next_position=next_position, filter=filter, user=user,
+	};
 	status:Physics_Status=simulation_awaken_inactive_bodies_in_bounds_filtered(simulation, bounds, mixed_static_awaken_filter, &state);
 	if status!=.Ok
 	{

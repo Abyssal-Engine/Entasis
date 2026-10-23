@@ -54,3 +54,9 @@ Windows scripts discover Visual Studio through `vswhere.exe`. Use `windows-amd64
 Supplied builds target `linux_amd64` or `windows_amd64` with `-microarch:x86-64-v3`. Examples default to Development. Follow the [Linux](odin/BUILDING-LINUX.md) or [Windows](odin/BUILDING-WINDOWS.md) guide for native build and run commands
 
 Builds replace previous outputs in `build/examples/<configuration>/`. `BUILD_EXAMPLES_OK` reports compilation success. The example runner also executes the scene and prints `RUN_EXAMPLES_OK` on success
+
+## Precision selection
+
+Example Build and Run accept `--precision float32` or `--precision mixed64`, defaulting to float32. PowerShell uses `-Precision Float32` or `-Precision Mixed64`. For direct Odin compilation, add `-define:ENTASIS_PRECISION=mixed64` to your application's compile arguments
+
+The source package contains one engine tree. Every linked Entasis package uses the same compile-time selection. Mixed64 examples are written under `build/examples/<configuration>/mixed64/`, while float32 uses the configuration directory directly. See [world precision](odin/reference/WORLD.md#precision-profiles-and-origin-frames) for coordinate behavior and the [large-world example](../examples/headless/large_world_precision/README.md) for commands

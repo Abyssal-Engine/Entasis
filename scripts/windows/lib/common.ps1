@@ -28,11 +28,25 @@ $script:CodegenPackages = @(
     "bodies/codegen", "simulation/codegen", "solver_kernels/codegen"
 )
 $script:TestScopeToPackage = @{
+    "precision-bounds" = "precision_bounds"
+    "precision-broadphase" = "precision_broadphase"
+    "precision-storage" = "precision_storage"
+    "precision-collisions" = "precision_collisions"
+    "precision-constraints" = "precision_constraints"
+    "precision-targets" = "precision_targets"
+    "precision-mutations" = "precision_mutations"
+    "precision-callbacks" = "precision_callbacks"
+    "precision-queries" = "precision_queries"
+    "precision-snapshots" = "precision_snapshots"
+    "benchmark-precision" = "benchmark_precision"
+
     "root" = "root"
     "scene-stability" = "scene_stability"
     "benchmark-support" = "benchmark_support"
     "benchmark-report" = "benchmark_report"
+    "benchmark-query" = "benchmark_query"
     "physics-visuals" = "physics_visuals"
+    "physics-viewer" = "physics_viewer"
     "cooking" = "cooking"
     "bodies" = "bodies"
     "broadphase" = "broadphase"
@@ -254,9 +268,17 @@ function Get-TestPackagePath([string]$Package)
     {
         return (Join-Path $script:Root "tests")
     }
-    if ($Package -eq "benchmark_report")
+    if ($Package -eq "benchmark_query")
     {
-        return (Join-Path $script:Root "tools\benchmark_report")
+        return (Join-Path $script:Root "benchmarks/query_extensions")
+    }
+    if ($Package.StartsWith("benchmark_precision"))
+    {
+        return (Join-Path $script:Root "benchmarks/large_world_precision")
+    }
+    if ($Package -in @("benchmark_report", "physics_viewer"))
+    {
+        return (Join-Path $script:Root "tools\$Package")
     }
     if ($Package -in @("benchmark_support", "scene_stability"))
     {
@@ -281,7 +303,7 @@ function Get-SafeName([string]$Value)
 
 function Assert-BenchmarkPackage([string]$Package)
 {
-    if ($script:BenchmarkPackages -notcontains $Package -and $Package -notin @("pyramid_wall", "scene_stability"))
+    if ($script:BenchmarkPackages -notcontains $Package -and $Package -notin @("pyramid_wall", "scene_stability", "large_world_precision"))
     {
         throw "Unknown benchmark package: $Package"
     }
@@ -388,29 +410,30 @@ function Resolve-TestThreadCount([string]$Threads)
     return $threadCount
 }
 
-function Get-ExampleBinary([string]$Package, [string]$Configuration)
+function Get-ExampleBinary([string]$Package, [string]$Configuration, [string]$Precision = "Float32")
 {
-    switch ($Configuration)
+    $profilePath = $Configuration.ToLowerInvariant()
+    if ($Precision -eq "Mixed64")
     {
-        "Development"
-        {
-            return (Join-Path $script:Root "build\examples\development\$Package.exe")
-        }
-        "Release"
-        {
-            return (Join-Path $script:Root "build\examples\release\$Package.exe")
-        }
-        default
-        {
-            throw "Unknown build configuration: $Configuration"
-        }
+        $profilePath = Join-Path $profilePath "mixed64"
     }
+    return (Join-Path $script:Root "build/examples/$profilePath/$Package.exe")
 }
 
-function Initialize-OdinProfile([string]$ArtifactGroup, [string]$Package, [string]$Configuration)
+function Initialize-OdinProfile(
+    [string]$ArtifactGroup, [string]$Package, [string]$Configuration,
+    [string]$Precision = "Float32", [string]$MathChecks = "Off")
 {
     $configurationName = $Configuration.ToLowerInvariant()
     $profileBuild = Join-Path $script:Root "build\$ArtifactGroup\$configurationName"
+    if ($Precision -eq "Mixed64")
+    {
+        $profileBuild = Join-Path $profileBuild "mixed64"
+    }
+    if ($MathChecks -eq "On")
+    {
+        $profileBuild = Join-Path $profileBuild "math-checks"
+    }
     New-Item -ItemType Directory -Force -Path $profileBuild | Out-Null
     $script:OdinProfileOutput = Join-Path $profileBuild "$(Get-SafeName $Package).exe"
     $script:OdinProfilePdb = [System.IO.Path]::ChangeExtension($script:OdinProfileOutput, ".pdb")
@@ -438,7 +461,15 @@ function Initialize-OdinProfile([string]$ArtifactGroup, [string]$Package, [strin
             throw "Unknown build configuration: $Configuration"
         }
     }
-    Write-Host "BUILD_PROFILE package=$Package configuration=$configurationName executable=$script:OdinProfileOutput symbols=$symbols"
+    if ($Package -ne "benchmark_report")
+    {
+        $script:OdinProfileArguments += "-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())"
+    }
+    if ($MathChecks -eq "On")
+    {
+        $script:OdinProfileArguments += "-define:CHECKMATH=1"
+    }
+    Write-Host "BUILD_PROFILE package=$Package configuration=$configurationName precision=$Precision math_checks=$MathChecks executable=$script:OdinProfileOutput symbols=$symbols"
 }
 
 function Invoke-TestPackage(
@@ -446,16 +477,27 @@ function Invoke-TestPackage(
     [string]$Package,
     [string]$Configuration,
     [string]$Tests = "",
-    [int]$Threads = $script:TestThreads
+    [int]$Threads = $script:TestThreads,
+    [string]$Precision = "Float32",
+    [string]$MathChecks = "Off",
+    [string]$PrecisionCandidate = ""
 )
 {
-    Initialize-OdinProfile "tests" $Package $Configuration
+    if ($Package -eq "benchmark_precision")
+    {
+        $Package = "benchmark_precision/$PrecisionCandidate"
+    }
+    Initialize-OdinProfile "tests" $Package $Configuration $Precision $MathChecks
     Write-Host "[test] $Package"
     $arguments = @(
         "test", (Get-TestPackagePath $Package), "-out:$script:OdinProfileOutput", "-keep-executable",
         "-collection:entasis=$(Join-Path $script:Root 'src')", "-target:$script:OdinTarget",
         "-microarch:$script:OdinMicroarch"
     )
+    if ($PrecisionCandidate.Length -gt 0)
+    {
+        $arguments += "-define:ENTASIS_PRECISION_CANDIDATE=$PrecisionCandidate"
+    }
     if ($Package -eq "scene_stability")
     {
         $arguments += "-define:ENTASIS_BENCHMARK_COMPONENTS=common"

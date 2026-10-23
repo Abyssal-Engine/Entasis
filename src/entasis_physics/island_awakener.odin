@@ -57,6 +57,10 @@ island_awakener_phase_one_worker :: proc "contextless" (
 		target_index := job.target_start + source_index;
 		handle := source.index_to_handle.memory[source_index];
 		target.dynamics_state.memory[target_index] = source.dynamics_state.memory[source_index];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			target.global_positions.memory[target_index] = source.global_positions.memory[source_index];
+		}
 		target.index_to_handle.memory[target_index] = handle;
 		target.collidables.memory[target_index] = source.collidables.memory[source_index];
 		target.activity.memory[target_index] = source.activity.memory[source_index];
@@ -243,6 +247,17 @@ island_awakener_prepare_transaction :: proc (
 		if validation_status != .Ok
 		{
 			return {}, validation_status;
+		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if constraint_global_target_prefix_size(record.type_id) != 0
+			{
+				validation_status = world_precision_position_validate(constraint_global_target_inactive_read(record));
+				if validation_status != .Ok
+				{
+					return {}, validation_status;
+				}
+			}
 		}
 		reference := Constraint_Reference{
 			handle=record.handle, body_handles=record.body_handles, body_count=record.body_count,

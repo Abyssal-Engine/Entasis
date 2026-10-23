@@ -4,7 +4,7 @@ import "core:testing"
 import physics "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
 
-rotation_check_leaves :: proc(t: ^testing.T, tree: ^physics.Tree, expected: []util.Bounding_Box)
+rotation_check_leaves :: proc(t: ^testing.T, tree: ^physics.Tree, expected: []physics.Tree_Bounds)
 {
 	testing.expect_value(t, physics.tree_validate(tree), physics.Physics_Status.Ok);
 	testing.expect_value(t, tree.leaf_count, len(expected));
@@ -26,7 +26,7 @@ rotation_add_remove_move_rebuild_preserves_bounds_and_query_sets :: proc(t: ^tes
 	tree: physics.Tree;
 	testing.expect_value(t, physics.tree_initialize(&tree, COUNT, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree);
-	bounds: [COUNT]util.Bounding_Box;
+	bounds: [COUNT]physics.Tree_Bounds;
 	state := u32(0xa03bb469);
 	for index in 0 ..< COUNT
 	{
@@ -65,15 +65,15 @@ rotation_add_remove_move_rebuild_preserves_bounds_and_query_sets :: proc(t: ^tes
 		output := util.Buffer(i32){memory=&storage[0], length=COUNT, id=util.BUFFER_CALLER_OWNED_ID};
 		count, query_status := physics.tree_query_overlaps(&tree, query, output);
 		testing.expect_value(t, query_status, physics.Physics_Status.Ok);
-		seen: [COUNT]bool;
+		seen: [COUNT]physics.Reference_State;
 		for result in storage[:count]
 		{
-			testing.expect(t, !seen[result]);
-			seen[result] = true;
+			testing.expect(t, seen[result] == .Missing);
+			seen[result] = .Present;
 		}
 		for value, model_index in bounds
 		{
-			testing.expect_value(t, seen[model_index], physics.tree_bounds_intersect(value, query) == .Present);
+			testing.expect_value(t, seen[model_index], physics.tree_bounds_intersect(value, query));
 		}
 	}
 }
@@ -91,11 +91,11 @@ rotation_coincident_and_sorted_insertions_do_not_form_chains :: proc(t: ^testing
 		testing.expect_value(t, physics.tree_initialize(&tree, COUNT, &pool), physics.Physics_Status.Ok);
 		for index in 0 ..< COUNT
 		{
-			bounds := util.Bounding_Box{min={-1, -1, -1}, max={1, 1, 1}};
+			bounds := physics.Tree_Bounds{min={-1, -1, -1}, max={1, 1, 1}};
 			if layout == 1
 			{
-				bounds.min.x += f32(index) * 3;
-				bounds.max.x += f32(index) * 3;
+				bounds.min.x += physics.Tree_Scalar(index) * 3;
+				bounds.max.x += physics.Tree_Scalar(index) * 3;
 			}
 			else if layout == 2
 			{

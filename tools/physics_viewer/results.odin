@@ -836,6 +836,17 @@ result_open_recording :: proc(v: ^Viewer, sample: Result_Sample, action: Selecti
 
 result_run_again :: proc(v: ^Viewer, lane: ^report.Result_Lane)
 {
+	if (lane.summary.query.case_name != "" && lane.summary.query.case_name != "control") ||
+		lane.summary.query.group != "" ||
+		(lane.summary.query.family != "" && lane.summary.query.family != "all") ||
+		(lane.summary.query.measured_batches > 0 && (lane.summary.query.measured_batches != 100 || lane.summary.query.warmup_batches != 10))
+	{
+		v.ui.status = .Unsupported;
+		v.ui.recording_message = {};
+		copy(v.ui.recording_message[:], "These query settings require the CLI command in the report");
+		return;
+	}
+
 	package_name: string = result_package(v);
 	found: scene.Availability;
 	for definition, index in BENCHMARKS

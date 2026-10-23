@@ -8,6 +8,16 @@ Header: `<entasis/world.h>`
 
 Use the [C API guide](../API.md) for setup and examples. The declarations below describe each type and operation. Structure sizes and alignments are in bytes
 
+Function families:
+
+- [Descriptions and configuration](#descriptions-and-configuration)
+- [Gravity and integration policies](#gravity-and-integration-policies)
+- [Pools and dispatchers](#pools-and-dispatchers)
+- [Lifecycle and capacity](#lifecycle-and-capacity)
+- [Stepping and stages](#stepping-and-stages)
+- [Read scopes](#read-scopes)
+- [Origin frames and coordinates](#origin-frames-and-coordinates)
+
 ## Callback types
 
 ### `entasis_allocate_fn`
@@ -338,6 +348,23 @@ typedef int32_t (ENTASIS_CALL *entasis_substep_iterations_fn)(void * user_contex
 | `substep_index` | `int32_t` | zero-based current solver substep                                 |
 
 positive values select the iteration count. nonpositive values retain the configured fixed iteration count, matching Odin
+
+### `entasis_global_velocity_integrate_fn`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+integrates one borrowed eight-lane velocity bundle with f64 position inputs
+
+```c
+typedef void (ENTASIS_CALL *entasis_global_velocity_integrate_fn)(void * user_context, const entasis_global_pose_integration_view_t * view);
+```
+
+| Parameter      | C type                                           | Meaning                                                                                      |
+| -------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `user_context` | `void *`                                         | caller-owned state valid through world disposal, with synchronization for concurrent workers |
+| `view`         | `const entasis_global_pose_integration_view_t *` | borrowed callback-local view. only active lanes of view->velocity are writable               |
+
+returns normally without retaining borrowed pointers or unwinding an exception through Entasis
 
 ## Structures
 
@@ -703,9 +730,98 @@ Size `56`, alignment `8`
 | `timestepper`        | `const entasis_timestepper_t *`        | optional descriptor copied into stable world-owned storage                                                                            |
 | `substep_scheduler`  | `const entasis_substep_scheduler_t *`  | optional descriptor copied into stable world-owned storage                                                                            |
 
+### `entasis_global_position_t`
+
+f64 position in the current simulation frame, or application coordinates in a frame conversion
+
+ordinary global APIs use the current simulation frame. application coordinates require an explicit origin-frame conversion
+
+Size `24`, alignment `8`
+
+| Field | C type   | Meaning                |
+| ----- | -------- | ---------------------- |
+| `x`   | `double` | x coordinate in metres |
+| `y`   | `double` | y coordinate in metres |
+| `z`   | `double` | z coordinate in metres |
+
+### `entasis_origin_frame_t`
+
+caller-owned application origin, application position equals origin plus simulation position
+
+changing this value alone does not move the world. entasis_world_shift_origin commits the matching world and frame translation
+
+Size `24`, alignment `8`
+
+| Field    | C type                      | Meaning                                       |
+| -------- | --------------------------- | --------------------------------------------- |
+| `origin` | `entasis_global_position_t` | application position of the simulation origin |
+
+### `entasis_global_pose_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+rigid pose with an f64 current-frame position and f32 orientation
+
+Size `40`, alignment `8`
+
+| Field         | C type                      | Meaning                                  |
+| ------------- | --------------------------- | ---------------------------------------- |
+| `position`    | `entasis_global_position_t` | position in the current simulation frame |
+| `orientation` | `entasis_quaternion_t`      | world-oriented unit quaternion           |
+
+### `entasis_global_pose_integration_view_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+borrowed eight-lane f64 positions and writable f32 velocities
+
+all pointers expire on callback return. one invocation handles eight lanes, not one invocation per body. do not call ordinary world/body getters during stepping. do not retain any view pointer or unwind a foreign exception through Entasis
+
+Size `64`, alignment `8`
+
+| Field          | C type                                | Meaning                                                                           |
+| -------------- | ------------------------------------- | --------------------------------------------------------------------------------- |
+| `body_handles` | `const entasis_body_handle_t *`       | eight stable body handles. inactive lanes contain invalid handles                 |
+| `active_mask`  | `const entasis_i32x8_t *`             | eight active-lane masks. never access inactive bodies                             |
+| `position`     | `const entasis_global_position_t *`   | eight authoritative simulation-frame double positions, read only for active lanes |
+| `orientation`  | `const entasis_quaternion_wide_t *`   | read-only orientations                                                            |
+| `inertia`      | `const entasis_body_inertia_wide_t *` | read-only world-space inertia                                                     |
+| `dt`           | `const entasis_f32x8_t *`             | read-only per-lane timestep durations in seconds                                  |
+| `velocity`     | `entasis_body_velocity_wide_t *`      | only active velocity lanes are writable. inactive lanes are restored after return |
+| `worker_index` | `int32_t`                             | calling worker index. callback state must support concurrent workers              |
+| `_reserved0`   | `uint32_t`                            | reserved output padding. do not modify                                            |
+
+### `entasis_global_velocity_callbacks_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copied velocity-integration descriptor with f64 position inputs
+
+all four function pointers are required. user_context and callback code remain valid through disposal. integrate calls may run concurrently on different workers. conflicts with a legacy pose policy or velocity descriptor are rejected. a failed initialize callback must clean up its own partial resources. dispose runs only after successful initialization
+
+Size `56`, alignment `8`
+
+| Field                              | C type                                 | Meaning                                                           |
+| ---------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
+| `struct_size`                      | `uint32_t`                             | initialize to sizeof this structure                               |
+| `struct_version`                   | `uint32_t`                             | initialize to 1                                                   |
+| `angular_mode`                     | `entasis_angular_integration_mode_t`   | angular integration policy for velocity and orientation updates   |
+| `allow_substeps_for_unconstrained` | `entasis_bool_t`                       | whether unconstrained bodies use substeps                         |
+| `integrate_kinematic_velocity`     | `entasis_bool_t`                       | whether kinematic velocity is passed through integration          |
+| `_reserved0`                       | `uint8_t`                              | initialize reserved storage to zero                               |
+| `user_context`                     | `void *`                               | caller-owned callback state, borrowed for the registered lifetime |
+| `initialize`                       | `entasis_velocity_initialize_fn`       | required initialization callback                                  |
+| `prepare`                          | `entasis_velocity_prepare_fn`          | required preparation callback                                     |
+| `integrate`                        | `entasis_global_velocity_integrate_fn` | required eight-lane callback                                      |
+| `dispose`                          | `entasis_velocity_dispose_fn`          | required callback resource disposal                               |
+
 ## Functions
 
-### `entasis_capacity_hints_default`
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
+### Descriptions and configuration
+
+#### `entasis_capacity_hints_default`
 
 returns the default capacity hints
 
@@ -713,9 +829,7 @@ returns the default capacity hints
 ENTASIS_API entasis_capacity_hints_t ENTASIS_CALL entasis_capacity_hints_default(void);
 ```
 
-returns the default capacity hints
-
-### `entasis_solve_description_default`
+#### `entasis_solve_description_default`
 
 returns the built-in solver defaults
 
@@ -725,7 +839,7 @@ ENTASIS_API entasis_solve_description_t ENTASIS_CALL entasis_solve_description_d
 
 returns the default solve description
 
-### `entasis_threading_description_default`
+#### `entasis_threading_description_default`
 
 returns a caller-thread-only threading descriptor
 
@@ -735,7 +849,7 @@ ENTASIS_API entasis_threading_description_t ENTASIS_CALL entasis_threading_descr
 
 returns the default threading description
 
-### `entasis_world_description_default`
+#### `entasis_world_description_default`
 
 returns a complete versioned default world descriptor
 
@@ -745,7 +859,48 @@ ENTASIS_API entasis_world_description_t ENTASIS_CALL entasis_world_description_d
 
 returns the default world description
 
-### `entasis_uniform_gravity_policy`
+#### `entasis_world_description_set_callbacks`
+
+copies optional built-in policies into a world descriptor
+
+copies built-in policy descriptors into the world description. this operation does not register foreign disposal callbacks. use the additive world extensions descriptor for custom velocity/contact callback tables
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_description_set_callbacks(entasis_world_description_t * description, const entasis_default_narrow_policy_t * narrow, const entasis_pose_policy_t * pose);
+```
+
+| Parameter     | C type                                    | Meaning                                                                 |
+| ------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
+| `description` | `entasis_world_description_t *`           | world description to copy                                               |
+| `narrow`      | `const entasis_default_narrow_policy_t *` | borrowed default narrow policy                                          |
+| `pose`        | `const entasis_pose_policy_t *`           | optional pose integration policy, or NULL to use the description fields |
+
+#### `entasis_world_description_set_narrow_policy`
+
+installs one built-in narrow-phase policy in a world description
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_description_set_narrow_policy(entasis_world_description_t * description, const entasis_narrow_policy_t * narrow);
+```
+
+| Parameter     | C type                            | Meaning                   |
+| ------------- | --------------------------------- | ------------------------- |
+| `description` | `entasis_world_description_t *`   | world description to copy |
+| `narrow`      | `const entasis_narrow_policy_t *` | borrowed narrow policy    |
+
+#### `entasis_world_extensions_default`
+
+constructs empty optional tables with Legacy allocation scope
+
+```c
+ENTASIS_API entasis_world_extensions_t ENTASIS_CALL entasis_world_extensions_default(void);
+```
+
+returns an initialized descriptor using the current structure version
+
+### Gravity and integration policies
+
+#### `entasis_uniform_gravity_policy`
 
 builds a uniform gravity policy
 
@@ -763,7 +918,7 @@ ENTASIS_API entasis_uniform_gravity_policy_t ENTASIS_CALL entasis_uniform_gravit
 
 returns the uniform gravity policy
 
-### `entasis_planetary_gravity_policy`
+#### `entasis_planetary_gravity_policy`
 
 builds an inverse-square planetary gravity policy
 
@@ -782,7 +937,7 @@ ENTASIS_API entasis_planetary_gravity_policy_t ENTASIS_CALL entasis_planetary_gr
 
 returns the planetary gravity policy
 
-### `entasis_per_body_gravity_policy`
+#### `entasis_per_body_gravity_policy`
 
 builds a dense handle-indexed per-body gravity policy
 
@@ -801,7 +956,7 @@ ENTASIS_API entasis_per_body_gravity_policy_t ENTASIS_CALL entasis_per_body_grav
 
 returns the per body gravity policy
 
-### `entasis_pose_policy_uniform`
+#### `entasis_pose_policy_uniform`
 
 builds the uniform-gravity pose policy
 
@@ -817,7 +972,7 @@ ENTASIS_API entasis_pose_policy_t ENTASIS_CALL entasis_pose_policy_uniform(const
 
 returns the pose policy
 
-### `entasis_pose_policy_uniform_mode`
+#### `entasis_pose_policy_uniform_mode`
 
 builds a uniform policy with explicit angular integration
 
@@ -834,7 +989,7 @@ ENTASIS_API entasis_pose_policy_t ENTASIS_CALL entasis_pose_policy_uniform_mode(
 
 returns the pose policy
 
-### `entasis_pose_policy_planetary`
+#### `entasis_pose_policy_planetary`
 
 builds the planetary-gravity pose policy
 
@@ -850,7 +1005,7 @@ ENTASIS_API entasis_pose_policy_t ENTASIS_CALL entasis_pose_policy_planetary(con
 
 returns the pose policy
 
-### `entasis_pose_policy_per_body`
+#### `entasis_pose_policy_per_body`
 
 builds the dense per-body gravity pose policy
 
@@ -866,25 +1021,9 @@ ENTASIS_API entasis_pose_policy_t ENTASIS_CALL entasis_pose_policy_per_body(cons
 
 returns the pose policy
 
-### `entasis_world_description_set_callbacks`
+### Pools and dispatchers
 
-copies optional built-in policies into a world descriptor
-
-copies built-in policy descriptors into the world description. this operation does not register foreign disposal callbacks. use the additive world extensions descriptor for custom velocity/contact callback tables
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_description_set_callbacks(entasis_world_description_t * description, const entasis_default_narrow_policy_t * narrow, const entasis_pose_policy_t * pose);
-```
-
-| Parameter     | C type                                    | Meaning                                                                 |
-| ------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
-| `description` | `entasis_world_description_t *`           | world description to copy                                               |
-| `narrow`      | `const entasis_default_narrow_policy_t *` | borrowed default narrow policy                                          |
-| `pose`        | `const entasis_pose_policy_t *`           | optional pose integration policy, or NULL to use the description fields |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_buffer_pool_init`
+#### `entasis_buffer_pool_init`
 
 initializes an opaque caller-owned buffer pool
 
@@ -900,9 +1039,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_buffer_pool_init(entasis_buffe
 | `allocator`               | `const entasis_allocator_t *` | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`              | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_buffer_pool_init_extended`
+#### `entasis_buffer_pool_init_extended`
 
 initializes an opaque caller-owned buffer pool with explicit Legacy/All_Owned allocation scope. allocator callbacks and user data remain alive through resource destruction
 
@@ -919,9 +1056,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_buffer_pool_init_extended(enta
 | `allocation_scope`        | `entasis_allocation_scope_t`  | Legacy preserves existing behavior. All_Owned includes pool metadata, native blocks and included thread records                  |
 | `diagnostic`              | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_buffer_pool_clear`
+#### `entasis_buffer_pool_clear`
 
 clears an unattached buffer pool while retaining ready metadata
 
@@ -934,9 +1069,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_buffer_pool_clear(entasis_buff
 | `pool`       | `entasis_buffer_pool_t *` | target buffer pool                                                           |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_buffer_pool_destroy`
+#### `entasis_buffer_pool_destroy`
 
 destroys an unattached caller-owned buffer pool
 
@@ -949,9 +1082,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_buffer_pool_destroy(entasis_bu
 | `pool`       | `entasis_buffer_pool_t *` | target buffer pool                                                           |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_thread_pool_init`
+#### `entasis_thread_pool_init`
 
 initializes the included blocking thread pool
 
@@ -969,7 +1100,7 @@ ENTASIS_API entasis_dispatcher_status_t ENTASIS_CALL entasis_thread_pool_init(en
 
 returns ENTASIS_DISPATCHER_STATUS_OK on success or a dispatcher failure status
 
-### `entasis_thread_pool_init_extended`
+#### `entasis_thread_pool_init_extended`
 
 initializes the included blocking thread pool with explicit Legacy/All_Owned allocation scope. allocator callbacks and user data remain alive through resource destruction
 
@@ -988,7 +1119,7 @@ ENTASIS_API entasis_dispatcher_status_t ENTASIS_CALL entasis_thread_pool_init_ex
 
 returns ENTASIS_DISPATCHER_STATUS_OK on success or a dispatcher failure status
 
-### `entasis_thread_pool_destroy`
+#### `entasis_thread_pool_destroy`
 
 stops and destroys an unattached included thread pool
 
@@ -1003,7 +1134,7 @@ ENTASIS_API entasis_dispatcher_status_t ENTASIS_CALL entasis_thread_pool_destroy
 
 returns ENTASIS_DISPATCHER_STATUS_OK on success or a dispatcher failure status
 
-### `entasis_dispatcher_from_thread_pool`
+#### `entasis_dispatcher_from_thread_pool`
 
 builds a dispatcher interface over an included thread pool
 
@@ -1018,7 +1149,7 @@ ENTASIS_API entasis_dispatcher_status_t ENTASIS_CALL entasis_dispatcher_from_thr
 
 returns ENTASIS_DISPATCHER_STATUS_OK on success or a dispatcher failure status
 
-### `entasis_dispatcher_interface_validate`
+#### `entasis_dispatcher_interface_validate`
 
 validates the blocking external dispatcher contract
 
@@ -1032,7 +1163,9 @@ ENTASIS_API entasis_dispatcher_status_t ENTASIS_CALL entasis_dispatcher_interfac
 
 returns ENTASIS_DISPATCHER_STATUS_OK on success or a dispatcher failure status
 
-### `entasis_world_init`
+### Lifecycle and capacity
+
+#### `entasis_world_init`
 
 initializes one world and its owned resources
 
@@ -1048,9 +1181,30 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init(entasis_world_t * w
 | `description` | `const entasis_world_description_t *` | world description to copy                                                    |
 | `diagnostic`  | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_world_init_global`
 
-### `entasis_world_init_with_pool`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+initializes a mixed64 world with f64-position velocity callbacks
+
+snapshots the input descriptors before allocator callbacks and copies the callback descriptor into world ownership. callback code and user_context must remain valid through disposal. description.use_pose_policy must be false and extensions.velocity_callbacks must be NULL. all four global callbacks are required. callback workers may run concurrently, so shared user state needs caller synchronization
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init_global(entasis_world_t * world, const entasis_world_description_t * description, const entasis_world_extensions_t * extensions, entasis_buffer_pool_t * pool, const entasis_global_velocity_callbacks_t * callbacks, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                                        | Meaning                                                                                             |
+| ------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `world`       | `entasis_world_t *`                           | target world                                                                                        |
+| `description` | `const entasis_world_description_t *`         | required world description without an explicitly selected legacy pose policy                        |
+| `extensions`  | `const entasis_world_extensions_t *`          | optional world extensions, with velocity_callbacks set to NULL                                      |
+| `pool`        | `entasis_buffer_pool_t *`                     | optional borrowed pool, or NULL for world-owned storage                                             |
+| `callbacks`   | `const entasis_global_velocity_callbacks_t *` | required version-1 descriptor with struct_size at least sizeof(entasis_global_velocity_callbacks_t) |
+| `diagnostic`  | `entasis_diagnostic_t *`                      | optional diagnostic output, or NULL when detailed failure data is not needed                        |
+
+returns ENTASIS_STATUS_OK on success or the initialization failure, including allocator or callback failure
+
+#### `entasis_world_init_with_pool`
 
 initializes one world with a caller-owned buffer pool
 
@@ -1067,9 +1221,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init_with_pool(entasis_w
 | `pool`        | `entasis_buffer_pool_t *`             | target buffer pool                                                           |
 | `diagnostic`  | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_clear`
+#### `entasis_world_clear`
 
 clears one world while retaining capacity
 
@@ -1082,9 +1234,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_clear(entasis_world_t * 
 | `world`      | `entasis_world_t *`      | target world                                                                 |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_ensure_capacity`
+#### `entasis_world_ensure_capacity`
 
 grows world storage to satisfy capacity hints
 
@@ -1100,9 +1250,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_ensure_capacity(entasis_
 | `hints`      | `const entasis_capacity_hints_t *` | requested world storage capacity hints                                       |
 | `diagnostic` | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_resize`
+#### `entasis_world_resize`
 
 resizes retained world storage while preserving live occupancy
 
@@ -1118,44 +1266,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_resize(entasis_world_t *
 | `hints`      | `const entasis_capacity_hints_t *` | requested world storage capacity hints                                       |
 | `diagnostic` | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_step`
-
-advances one timestep without wrapper allocation
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_step(entasis_world_t * world, float dt, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                                      |
-| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | target world                                                                 |
-| `dt`         | `float`                  | positive timestep duration in seconds                                        |
-| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_step_external`
-
-advances one timestep through a caller-owned blocking dispatcher
-
-the interface and all worker pools remain caller owned. the interface is used only for this call and may be stack allocated
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_step_external(entasis_world_t * world, float dt, const entasis_dispatcher_interface_t * interface, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                                   | Meaning                                                                      |
-| ------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`                      | target world                                                                 |
-| `dt`         | `float`                                  | positive timestep duration in seconds                                        |
-| `interface`  | `const entasis_dispatcher_interface_t *` | external dispatcher interface                                                |
-| `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_stats`
+#### `entasis_world_stats`
 
 copies allocation-free world counts and the step index
 
@@ -1171,9 +1282,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stats(const entasis_worl
 | `out_stats`  | `entasis_world_stats_t *` | receives the world stats                                                     |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_destroy`
+#### `entasis_world_destroy`
 
 destroys one world and every C-ABI-owned adapter resource
 
@@ -1188,68 +1297,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_destroy(entasis_world_t 
 | `world`      | `entasis_world_t *`      | target world                                                                 |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_description_set_narrow_policy`
-
-installs one built-in narrow-phase policy in a world description
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_description_set_narrow_policy(entasis_world_description_t * description, const entasis_narrow_policy_t * narrow);
-```
-
-| Parameter     | C type                            | Meaning                   |
-| ------------- | --------------------------------- | ------------------------- |
-| `description` | `entasis_world_description_t *`   | world description to copy |
-| `narrow`      | `const entasis_narrow_policy_t *` | borrowed narrow policy    |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_begin_read`
-
-begins an immutable-world read phase
-
-owner-thread operation, not a lock. the application must publish jobs only after begin_read and join every reader before end_read. mutation, stepping, registration, capacity changes, import and destruction are rejected during this phase. query contexts require independent outputs and callback user data safe for concurrent reads
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_begin_read(entasis_world_t * world, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                              |
-| ------------ | ------------------------ | -------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | live world kept at a stable address until every context is destroyed |
-| `diagnostic` | `entasis_diagnostic_t *` | optional caller-exclusive diagnostic output                          |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_end_read`
-
-ends a read phase after the caller joins every read job
-
-owner-thread operation, not a lock. the application must publish jobs only after begin_read and join every reader before end_read. mutation, stepping, registration, capacity changes, import and destruction are rejected during this phase. query contexts require independent outputs and callback user data safe for concurrent reads
-
-```c
-ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_end_read(entasis_world_t * world, entasis_diagnostic_t * diagnostic);
-```
-
-| Parameter    | C type                   | Meaning                                                              |
-| ------------ | ------------------------ | -------------------------------------------------------------------- |
-| `world`      | `entasis_world_t *`      | live world kept at a stable address until every context is destroyed |
-| `diagnostic` | `entasis_diagnostic_t *` | optional caller-exclusive diagnostic output                          |
-
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_extensions_default`
-
-constructs empty optional tables with Legacy allocation scope
-
-```c
-ENTASIS_API entasis_world_extensions_t ENTASIS_CALL entasis_world_extensions_default(void);
-```
-
-returns an initialized descriptor using the current structure version
-
-### `entasis_world_init_extended`
+#### `entasis_world_init_extended`
 
 initializes a world with optional custom callbacks and timestep hooks
 
@@ -1266,7 +1314,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init_extended(entasis_wo
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_init_with_pool_extended`
+#### `entasis_world_init_with_pool_extended`
 
 initializes a world with borrowed storage and optional extensions
 
@@ -1284,7 +1332,40 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init_with_pool_extended(
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_stage_sleep`
+### Stepping and stages
+
+#### `entasis_world_step`
+
+advances one timestep without wrapper allocation
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_step(entasis_world_t * world, float dt, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                                      |
+| ------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | target world                                                                 |
+| `dt`         | `float`                  | positive timestep duration in seconds                                        |
+| `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_world_step_external`
+
+advances one timestep through a caller-owned blocking dispatcher
+
+the interface and all worker pools remain caller owned. the interface is used only for this call and may be stack allocated
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_step_external(entasis_world_t * world, float dt, const entasis_dispatcher_interface_t * interface, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                   | Meaning                                                                      |
+| ------------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                      | target world                                                                 |
+| `dt`         | `float`                                  | positive timestep duration in seconds                                        |
+| `interface`  | `const entasis_dispatcher_interface_t *` | external dispatcher interface                                                |
+| `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+#### `entasis_world_stage_sleep`
 
 executes only the sleep stage on an idle world
 
@@ -1301,7 +1382,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stage_sleep(entasis_worl
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_sleep`
+#### `entasis_step_scope_sleep`
 
 executes the sleep stage within the selected custom timestep
 
@@ -1318,7 +1399,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_sleep(entasis_step_
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_stage_predict_bounds`
+#### `entasis_world_stage_predict_bounds`
 
 executes only the predict bounds stage on an idle world
 
@@ -1336,7 +1417,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stage_predict_bounds(ent
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_predict_bounds`
+#### `entasis_step_scope_predict_bounds`
 
 executes the predict bounds stage within the selected custom timestep
 
@@ -1354,7 +1435,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_predict_bounds(enta
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_stage_collision_detection`
+#### `entasis_world_stage_collision_detection`
 
 executes only the collision detection stage on an idle world
 
@@ -1372,7 +1453,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stage_collision_detectio
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_collision_detection`
+#### `entasis_step_scope_collision_detection`
 
 executes the collision detection stage within the selected custom timestep
 
@@ -1390,7 +1471,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_collision_detection
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_stage_solve`
+#### `entasis_world_stage_solve`
 
 executes only the solve stage on an idle world
 
@@ -1408,7 +1489,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stage_solve(entasis_worl
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_solve`
+#### `entasis_step_scope_solve`
 
 executes the solve stage within the selected custom timestep
 
@@ -1426,7 +1507,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_solve(entasis_step_
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_world_stage_optimize`
+#### `entasis_world_stage_optimize`
 
 executes only the optimize stage on an idle world
 
@@ -1443,7 +1524,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_stage_optimize(entasis_w
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_optimize`
+#### `entasis_step_scope_optimize`
 
 executes the optimize stage within the selected custom timestep
 
@@ -1460,7 +1541,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_optimize(entasis_st
 
 returns the operation status. completed work is not rolled back on callback failure
 
-### `entasis_step_scope_report_completion`
+#### `entasis_step_scope_report_completion`
 
 reports a completion point chosen by the custom timestepper
 
@@ -1478,3 +1559,165 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_report_completion(e
 | `diagnostic` | `entasis_diagnostic_t *`              | optional output diagnostic         |
 
 returns the operation status. completed work is not rolled back on callback failure
+
+### Read scopes
+
+#### `entasis_world_begin_read`
+
+begins an immutable-world read phase
+
+owner-thread operation, not a lock. the application must publish jobs only after begin_read and join every reader before end_read. mutation, stepping, registration, capacity changes, import and destruction are rejected during this phase. query contexts require independent outputs and callback user data safe for concurrent reads
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_begin_read(entasis_world_t * world, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                              |
+| ------------ | ------------------------ | -------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | live world kept at a stable address until every context is destroyed |
+| `diagnostic` | `entasis_diagnostic_t *` | optional caller-exclusive diagnostic output                          |
+
+#### `entasis_world_end_read`
+
+ends a read phase after the caller joins every read job
+
+owner-thread operation, not a lock. the application must publish jobs only after begin_read and join every reader before end_read. mutation, stepping, registration, capacity changes, import and destruction are rejected during this phase. query contexts require independent outputs and callback user data safe for concurrent reads
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_end_read(entasis_world_t * world, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                   | Meaning                                                              |
+| ------------ | ------------------------ | -------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`      | live world kept at a stable address until every context is destroyed |
+| `diagnostic` | `entasis_diagnostic_t *` | optional caller-exclusive diagnostic output                          |
+
+### Origin frames and coordinates
+
+#### `entasis_origin_frame_at`
+
+constructs a caller-owned application origin after finite validation
+
+does not allocate or mutate a world. result is unchanged on failure
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_at(const entasis_global_position_t * origin, entasis_origin_frame_t * result, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                              | Meaning                                                       |
+| ------------ | ----------------------------------- | ------------------------------------------------------------- |
+| `origin`     | `const entasis_global_position_t *` | required finite application position of the simulation origin |
+| `result`     | `entasis_origin_frame_t *`          | required caller-owned frame output                            |
+| `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL                           |
+
+returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+
+#### `entasis_origin_frame_to_local`
+
+subtracts the application origin in f64 before narrowing the displacement to f32
+
+rejects nonfinite input and displacements outside the finite f32 range. result is unchanged on failure. does not allocate
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_to_local(const entasis_origin_frame_t * frame, const entasis_global_position_t * position, entasis_vector3_t * result, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                              | Meaning                                       |
+| ------------ | ----------------------------------- | --------------------------------------------- |
+| `frame`      | `const entasis_origin_frame_t *`    | required application origin                   |
+| `position`   | `const entasis_global_position_t *` | required finite application position          |
+| `result`     | `entasis_vector3_t *`               | required simulation-frame f32 position output |
+| `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL           |
+
+returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+
+#### `entasis_origin_frame_to_global`
+
+adds an f32 simulation position to the application origin in f64
+
+rejects nonfinite input or reconstruction overflow. result is unchanged on failure. does not allocate
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_to_global(const entasis_origin_frame_t * frame, const entasis_vector3_t * position, entasis_global_position_t * result, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                           | Meaning                                             |
+| ------------ | -------------------------------- | --------------------------------------------------- |
+| `frame`      | `const entasis_origin_frame_t *` | required application origin                         |
+| `position`   | `const entasis_vector3_t *`      | required finite simulation-frame f32 position       |
+| `result`     | `entasis_global_position_t *`    | required application-coordinate f64 position output |
+| `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL                 |
+
+returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+
+#### `entasis_global_position_delta`
+
+computes to - from in f64 before narrowing the displacement to f32
+
+both positions must use the same coordinate frame. rejects nonfinite input or a displacement outside the finite f32 range. result is unchanged on failure. does not allocate
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_global_position_delta(const entasis_global_position_t * from, const entasis_global_position_t * to, entasis_vector3_t * result, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                              | Meaning                             |
+| ------------ | ----------------------------------- | ----------------------------------- |
+| `from`       | `const entasis_global_position_t *` | required finite starting position   |
+| `to`         | `const entasis_global_position_t *` | required finite ending position     |
+| `result`     | `entasis_vector3_t *`               | required local displacement output  |
+| `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL |
+
+returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+
+#### `entasis_origin_frame_translate`
+
+adds an f64 delta to the caller-owned application origin
+
+does not move simulation objects or allocate. nonfinite input or addition overflow leaves the frame unchanged
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_translate(entasis_origin_frame_t * frame, const entasis_global_position_t * delta, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                              | Meaning                                              |
+| ------------ | ----------------------------------- | ---------------------------------------------------- |
+| `frame`      | `entasis_origin_frame_t *`          | required caller-owned frame, updated only on success |
+| `delta`      | `const entasis_global_position_t *` | required finite application-origin displacement      |
+| `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL                  |
+
+returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+
+#### `entasis_world_shift_origin`
+
+subtracts a common f32 delta from live absolute positions and advances the application origin
+
+requires the owner thread and exclusive access to an idle world. validates the translated world and frame before committing either. a successful nonzero shift invalidates direct views. positions saved in caller-owned snapshots, query inputs or callback state remain in their previous frame and need translation before reuse
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_shift_origin(entasis_world_t * world, entasis_origin_frame_t * frame, const entasis_vector3_t * delta, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                      | Meaning                                                                                |
+| ------------ | --------------------------- | -------------------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`         | required idle world                                                                    |
+| `frame`      | `entasis_origin_frame_t *`  | required caller-owned application origin, advanced only after the world shift succeeds |
+| `delta`      | `const entasis_vector3_t *` | required finite simulation-frame displacement to subtract                              |
+| `diagnostic` | `entasis_diagnostic_t *`    | optional diagnostic output, or NULL                                                    |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+#### `entasis_global_position`
+
+constructs an f64 position without validation or allocation
+
+```c
+ENTASIS_API entasis_global_position_t ENTASIS_CALL entasis_global_position(double x, double y, double z);
+```
+
+| Parameter | C type   | Meaning                |
+| --------- | -------- | ---------------------- |
+| `x`       | `double` | x coordinate in metres |
+| `y`       | `double` | y coordinate in metres |
+| `z`       | `double` | z coordinate in metres |
+
+returns the supplied coordinates unchanged

@@ -271,8 +271,8 @@ contextual_constraints_registration_rejects_invalid_storage_callbacks_and_ids ::
 	}
 	testing.expect_value(t, e.custom_constraint_register_contextual(&world, registration), e.Status.Ok);
 	testing.expect_value(t, e.custom_constraint_register_contextual(&world, registration), e.Status.Invalid_Argument);
-	_, ok := register_velocity_target_constraint(t, &world);
-	testing.expect(t, ok);
+	_, registration_status := register_velocity_target_constraint(t, &world);
+	testing.expect_value(t, registration_status, e.Status.Ok);
 	testing.expect_value(t, e.world_step(&world, 1.0/60.0), e.Status.Ok);
 	registration.type_id += 2;
 	testing.expect_value(t, e.custom_constraint_register_contextual(&world, registration), e.Status.Invalid_Argument);

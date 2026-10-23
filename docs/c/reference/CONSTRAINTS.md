@@ -8,6 +8,17 @@ Header: `<entasis/constraints.h>`
 
 Use the [C API guide](../API.md) for setup and examples. The declarations below describe each type and operation. Structure sizes and alignments are in bytes
 
+Function families:
+
+- [Constraint operations and targets](#constraint-operations-and-targets)
+- [Connectivity and activation](#connectivity-and-activation)
+- [Impulses and bounds](#impulses-and-bounds)
+- [Solver state](#solver-state)
+- [Fixed stepping](#fixed-stepping)
+- [Commands and state snapshots](#commands-and-state-snapshots)
+- [Custom constraints](#custom-constraints)
+- [Joint breaks and reactions](#joint-breaks-and-reactions)
+
 ## Scalar aliases
 
 ### `entasis_joint_break_metrics_t`
@@ -775,9 +786,85 @@ Size `184`, alignment `8`
 | `reserved`   | `uint32_t`                      | zero                                             |
 | `reaction`   | `entasis_joint_reaction_t`      | committed physical sample retained after removal |
 
+### `entasis_global_constraint_target_state_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+absolute position target for a linear servo or axis lock
+
+Size `32`, alignment `8`
+
+| Field      | C type                                    | Meaning                                                                  |
+| ---------- | ----------------------------------------- | ------------------------------------------------------------------------ |
+| `position` | `entasis_global_position_t`               | authoritative current-frame target                                       |
+| `kind`     | `entasis_global_constraint_target_kind_t` | linear-servo or axis-lock kind, which must match the existing constraint |
+
+### `entasis_global_state_selection_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+caller-owned live handles for four ordered state streams
+
+buffers remain valid until export or apply returns. nonzero counts require non-NULL pointers. duplicates are processed in selection order and identities are not remapped across worlds
+
+Size `64`, alignment `8`
+
+| Field                      | C type                                | Meaning                         |
+| -------------------------- | ------------------------------------- | ------------------------------- |
+| `bodies`                   | `const entasis_body_handle_t *`       | live handles in selection order |
+| `bodies_count`             | `uint64_t`                            | selected handle count           |
+| `statics`                  | `const entasis_static_handle_t *`     | live handles in selection order |
+| `statics_count`            | `uint64_t`                            | selected handle count           |
+| `constraint_targets`       | `const entasis_constraint_handle_t *` | live handles in selection order |
+| `constraint_targets_count` | `uint64_t`                            | selected handle count           |
+| `kinematic_targets`        | `const entasis_body_handle_t *`       | live handles in selection order |
+| `kinematic_targets_count`  | `uint64_t`                            | selected handle count           |
+
+### `entasis_global_state_snapshot_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+caller-owned body, static and target authoring-state buffers
+
+each capacity must cover the corresponding selection count. streams and selections must be disjoint. exported positions use the current simulation frame and require caller translation after an origin shift. snapshots do not restore topology, sleep counters, solver/contact history, optional systems or hidden execution state
+
+Size `64`, alignment `8`
+
+| Field                         | C type                                       | Meaning                            |
+| ----------------------------- | -------------------------------------------- | ---------------------------------- |
+| `bodies`                      | `entasis_global_body_state_t *`              | caller-owned disjoint state buffer |
+| `bodies_capacity`             | `uint64_t`                                   | state buffer capacity              |
+| `statics`                     | `entasis_global_static_state_t *`            | caller-owned disjoint state buffer |
+| `statics_capacity`            | `uint64_t`                                   | state buffer capacity              |
+| `constraint_targets`          | `entasis_global_constraint_target_state_t *` | caller-owned disjoint state buffer |
+| `constraint_targets_capacity` | `uint64_t`                                   | state buffer capacity              |
+| `kinematic_targets`           | `entasis_global_kinematic_target_state_t *`  | caller-owned disjoint state buffer |
+| `kinematic_targets_capacity`  | `uint64_t`                                   | state buffer capacity              |
+
+### `entasis_global_state_counts_t`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+completed prefixes for the four authoring-state streams
+
+counts follow the fixed processing order bodies, statics, constraint targets, then kinematic targets. a failure leaves later streams unprocessed
+
+Size `32`, alignment `8`
+
+| Field                | C type     | Meaning               |
+| -------------------- | ---------- | --------------------- |
+| `bodies`             | `uint64_t` | completed state count |
+| `statics`            | `uint64_t` | completed state count |
+| `constraint_targets` | `uint64_t` | completed state count |
+| `kinematic_targets`  | `uint64_t` | completed state count |
+
 ## Functions
 
-### `entasis_servo_settings`
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
+### Constraint operations and targets
+
+#### `entasis_servo_settings`
 
 constructs exact built-in servo settings without allocation
 
@@ -795,7 +882,7 @@ ENTASIS_API entasis_servo_settings_t ENTASIS_CALL entasis_servo_settings(float m
 
 returns the servo settings
 
-### `entasis_motor_settings`
+#### `entasis_motor_settings`
 
 constructs motor settings from maximum force and stable softness semantics
 
@@ -812,7 +899,7 @@ ENTASIS_API entasis_motor_settings_t ENTASIS_CALL entasis_motor_settings(float m
 
 returns the motor settings
 
-### `entasis_constraint_type_id`
+#### `entasis_constraint_type_id`
 
 returns candidate for a supported built-in description type or ENTASIS_CONSTRAINT_TYPE_INVALID
 
@@ -828,7 +915,7 @@ ENTASIS_API entasis_constraint_type_id_t ENTASIS_CALL entasis_constraint_type_id
 
 returns the constraint type ID
 
-### `entasis_constraint_body_count`
+#### `entasis_constraint_body_count`
 
 returns the required body count for one built-in constraint type, or zero when unsupported
 
@@ -842,7 +929,7 @@ ENTASIS_API uint32_t ENTASIS_CALL entasis_constraint_body_count(entasis_constrai
 
 returns the unsigned 32-bit integer
 
-### `entasis_constraint_add`
+#### `entasis_constraint_add`
 
 adds one built-in constraint
 
@@ -863,9 +950,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_add(entasis_world_t
 | `out_handle`       | `entasis_constraint_handle_t *` | receives the created constraint handle                                       |
 | `diagnostic`       | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_get`
+#### `entasis_constraint_get`
 
 copies one active or sleeping built-in constraint description into a matching typed output value
 
@@ -884,9 +969,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_get(entasis_world_t
 | `description_size` | `uint32_t`                     | size of one constraint description in bytes                                  |
 | `diagnostic`       | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_apply`
+#### `entasis_constraint_apply`
 
 applies one matching built-in constraint description and awakens a sleeping island when required
 
@@ -905,9 +988,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_apply(entasis_world
 | `description_size` | `uint32_t`                     | size of one constraint description in bytes                                  |
 | `diagnostic`       | `entasis_diagnostic_t *`       | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_remove`
+#### `entasis_constraint_remove`
 
 removes one active or sleeping constraint
 
@@ -923,9 +1004,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_remove(entasis_worl
 | `handle`     | `entasis_constraint_handle_t` | target constraint handle                                                     |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_add_batch`
+#### `entasis_constraint_add_batch`
 
 adds a homogeneous constraint batch using flattened body handles and contiguous typed descriptions
 
@@ -946,9 +1025,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_add_batch(entasis_w
 | `out_completed`      | `uint64_t *`                    | receives the number of successfully completed prefix entries                 |
 | `diagnostic`         | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_apply_batch`
+#### `entasis_constraint_apply_batch`
 
 applies matching homogeneous descriptions in input order and reports how many succeeded before the first failure
 
@@ -967,9 +1044,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_apply_batch(entasis
 | `out_completed`      | `uint64_t *`                          | receives the number of successfully completed prefix entries                 |
 | `diagnostic`         | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_remove_batch`
+#### `entasis_constraint_remove_batch`
 
 removes constraints in input order and reports how many succeeded before the first failure
 
@@ -985,9 +1060,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_remove_batch(entasi
 | `out_completed` | `uint64_t *`                          | receives the number of successfully completed prefix entries                 |
 | `diagnostic`    | `entasis_diagnostic_t *`              | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_inspect`
+#### `entasis_constraint_inspect`
 
 returns a pointer-free constraint storage and connectivity snapshot
 
@@ -1004,9 +1077,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_inspect(entasis_wor
 | `out_info`   | `entasis_constraint_info_t *` | receives the constraint info                                                 |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_count`
+#### `entasis_constraint_count`
 
 returns the total active and sleeping constraint count
 
@@ -1020,9 +1091,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_count(entasis_world
 | `out_count`  | `uint64_t *`             | receives the number of returned entries                                      |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_enumerate`
+#### `entasis_constraint_enumerate`
 
 writes live constraints in ascending numeric handle order without allocation
 
@@ -1041,9 +1110,51 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_enumerate(entasis_w
 | `out_required` | `uint64_t *`                  | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_constraint_get_global_target_state`
 
-### `entasis_body_constraint_count`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies the f64 absolute target of a linear servo or axis lock
+
+requires an idle world or an active read phase. does not wake objects or allocate. other constraint types are rejected. output is unchanged on failure
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_get_global_target_state(entasis_world_t * world, entasis_constraint_handle_t handle, entasis_global_constraint_target_state_t * output, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                       | Meaning                                                                      |
+| ------------ | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                          | target world                                                                 |
+| `handle`     | `entasis_constraint_handle_t`                | live target handle                                                           |
+| `output`     | `entasis_global_constraint_target_state_t *` | required caller-owned target state, unchanged on failure                     |
+| `diagnostic` | `entasis_diagnostic_t *`                     | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+
+#### `entasis_constraint_apply_global_target_state`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+replaces the f64 absolute target of a linear servo or axis lock
+
+requires the owner thread and exclusive access to an idle world. state.kind must match the existing constraint type and state.position uses the current simulation frame. retains the other constraint settings
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_apply_global_target_state(entasis_world_t * world, entasis_constraint_handle_t handle, const entasis_global_constraint_target_state_t * state, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                             | Meaning                                                                      |
+| ------------ | -------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                                | target world                                                                 |
+| `handle`     | `entasis_constraint_handle_t`                      | live target handle                                                           |
+| `state`      | `const entasis_global_constraint_target_state_t *` | required target state for the existing linear-servo or axis-lock kind        |
+| `diagnostic` | `entasis_diagnostic_t *`                           | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+### Connectivity and activation
+
+#### `entasis_body_constraint_count`
 
 returns the number of constraints connected to one body
 
@@ -1058,9 +1169,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_constraint_count(entasis_
 | `out_count`  | `uint64_t *`             | receives the number of returned entries                                      |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_constraints`
+#### `entasis_body_constraints`
 
 writes connected constraint handles in runtime body-list order
 
@@ -1080,9 +1189,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_constraints(entasis_world
 | `out_required` | `uint64_t *`                    | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`        | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_connected_bodies`
+#### `entasis_body_connected_bodies`
 
 writes connected body edges while preserving duplicates
 
@@ -1102,9 +1209,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_connected_bodies(entasis_
 | `out_required` | `uint64_t *`              | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_connected_bodies`
+#### `entasis_constraint_connected_bodies`
 
 writes body handles referenced by one constraint
 
@@ -1124,9 +1229,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_connected_bodies(en
 | `out_required` | `uint64_t *`                  | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_activation_state`
+#### `entasis_body_activation_state`
 
 reports whether one live body is active or sleeping
 
@@ -1143,9 +1246,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_activation_state(entasis_
 | `out_state`  | `entasis_body_activation_state_t *` | receives the copied body activation state                                    |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_is_active`
+#### `entasis_body_is_active`
 
 reports whether one live body is active
 
@@ -1162,9 +1263,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_is_active(entasis_world_t
 | `out_value`  | `entasis_bool_t *`       | receives ENTASIS_TRUE when the condition holds, otherwise ENTASIS_FALSE      |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_is_sleeping`
+#### `entasis_body_is_sleeping`
 
 reports whether one live body is sleeping
 
@@ -1181,9 +1280,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_is_sleeping(entasis_world
 | `out_value`  | `entasis_bool_t *`       | receives ENTASIS_TRUE when the condition holds, otherwise ENTASIS_FALSE      |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_awaken`
+#### `entasis_body_awaken`
 
 awakens the complete constraint-connected sleeping island containing one body
 
@@ -1199,9 +1296,9 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_awaken(entasis_world_t * 
 | `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+### Impulses and bounds
 
-### `entasis_body_apply_linear_impulse`
+#### `entasis_body_apply_linear_impulse`
 
 applies one instantaneous linear impulse without forcing activation
 
@@ -1218,9 +1315,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_linear_impulse(enta
 | `impulse`    | `entasis_vector3_t`      | world-space impulse                                                          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_apply_angular_impulse`
+#### `entasis_body_apply_angular_impulse`
 
 applies one instantaneous angular impulse using current world inverse inertia
 
@@ -1237,9 +1332,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_angular_impulse(ent
 | `impulse`    | `entasis_vector3_t`      | world-space impulse                                                          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_apply_impulse`
+#### `entasis_body_apply_impulse`
 
 applies an impulse at a world-space offset from center of mass
 
@@ -1257,9 +1350,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_impulse(entasis_wor
 | `offset`     | `entasis_vector3_t`      | offset applied by the operation                                              |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_velocity_at_offset`
+#### `entasis_body_velocity_at_offset`
 
 returns world-space velocity at an offset from center of mass
 
@@ -1277,9 +1368,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_velocity_at_offset(entasi
 | `out_velocity` | `entasis_vector3_t *`    | receives the requested body velocity component                               |
 | `diagnostic`   | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_bounds`
+#### `entasis_body_bounds`
 
 returns current broad-phase bounds of one body
 
@@ -1296,9 +1385,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_bounds(entasis_world_t * 
 | `out_bounds` | `entasis_bounding_box_t *` | receives the bounding box                                                    |
 | `diagnostic` | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_body_update_bounds`
+#### `entasis_body_update_bounds`
 
 recomputes broad-phase bounds after an advanced direct pose write
 
@@ -1314,9 +1401,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_update_bounds(entasis_wor
 | `handle`     | `entasis_body_handle_t`  | target body handle                                                           |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_bounds`
+#### `entasis_static_bounds`
 
 returns current broad-phase bounds of one static
 
@@ -1333,9 +1418,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_bounds(entasis_world_t 
 | `out_bounds` | `entasis_bounding_box_t *` | receives the bounding box                                                    |
 | `diagnostic` | `entasis_diagnostic_t *`   | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_static_update_bounds`
+#### `entasis_static_update_bounds`
 
 recomputes broad-phase bounds after an advanced direct pose write
 
@@ -1351,9 +1434,9 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_update_bounds(entasis_w
 | `handle`     | `entasis_static_handle_t` | target static handle                                                         |
 | `diagnostic` | `entasis_diagnostic_t *`  | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+### Solver state
 
-### `entasis_constraint_accumulated_impulses`
+#### `entasis_constraint_accumulated_impulses`
 
 writes all scalar warmstart impulses for one active or sleeping constraint
 
@@ -1373,9 +1456,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_accumulated_impulse
 | `out_required` | `uint64_t *`                  | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_accumulated_impulse_magnitude`
+#### `entasis_constraint_accumulated_impulse_magnitude`
 
 returns the accumulated impulse magnitude for one constraint
 
@@ -1390,9 +1471,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_accumulated_impulse
 | `out_value`  | `float *`                     | receives the floating-point value                                            |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_constraint_accumulated_impulse_magnitude_squared`
+#### `entasis_constraint_accumulated_impulse_magnitude_squared`
 
 returns the accumulated impulse magnitude squared for one constraint
 
@@ -1407,9 +1486,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_accumulated_impulse
 | `out_value`  | `float *`                     | receives the floating-point value                                            |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_scale_active_accumulated_impulses`
+#### `entasis_world_scale_active_accumulated_impulses`
 
 rescales active warmstart impulses after a timestep change
 
@@ -1425,9 +1502,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_scale_active_accumulated
 | `scale`      | `float`                  | scalar multiplier for accumulated impulses, typically new_effective_dt / old_effective_dt |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed              |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_world_scale_accumulated_impulses`
+#### `entasis_world_scale_accumulated_impulses`
 
 rescales active and sleeping warmstart impulses after a timestep change
 
@@ -1443,9 +1518,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_scale_accumulated_impuls
 | `scale`      | `float`                  | scalar multiplier for accumulated impulses, typically new_effective_dt / old_effective_dt |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output, or NULL when detailed failure data is not needed              |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_solver_contact_data`
+#### `entasis_solver_contact_data`
 
 extracts one built-in active or sleeping solver contact snapshot
 
@@ -1462,9 +1535,9 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_solver_contact_data(entasis_wo
 | `out_data`   | `entasis_solver_contact_data_t *` | receives the solver contact data                                             |
 | `diagnostic` | `entasis_diagnostic_t *`          | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+### Fixed stepping
 
-### `entasis_fixed_stepper`
+#### `entasis_fixed_stepper`
 
 constructs caller-owned fixed-step accumulator state
 
@@ -1479,7 +1552,7 @@ ENTASIS_API entasis_fixed_stepper_t ENTASIS_CALL entasis_fixed_stepper(float tim
 
 returns the fixed stepper
 
-### `entasis_fixed_stepper_reset`
+#### `entasis_fixed_stepper_reset`
 
 clears accumulated elapsed time without changing fixed-step policy
 
@@ -1491,9 +1564,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_fixed_stepper_reset(entasis_fi
 | --------- | --------------------------- | ----------------------------------- |
 | `stepper` | `entasis_fixed_stepper_t *` | caller-owned fixed-step accumulator |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_fixed_stepper_update`
+#### `entasis_fixed_stepper_update`
 
 advances a world in bounded exact fixed steps and returns interpolation alpha
 
@@ -1512,9 +1583,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_fixed_stepper_update(entasis_f
 | `out_alpha`  | `float *`                   | receives the remaining accumulator fraction after stepping                   |
 | `diagnostic` | `entasis_diagnostic_t *`    | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
-### `entasis_solve_description_substeps`
+#### `entasis_solve_description_substeps`
 
 constructs fixed substep and velocity-iteration solve settings
 
@@ -1532,7 +1601,9 @@ ENTASIS_API entasis_solve_description_t ENTASIS_CALL entasis_solve_description_s
 
 returns the solve description
 
-### `entasis_command_body_add`
+### Commands and state snapshots
+
+#### `entasis_command_body_add`
 
 constructs a body-add command with caller-selected result slot
 
@@ -1547,7 +1618,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_body_add(entasis_body
 
 returns the command
 
-### `entasis_command_body_apply`
+#### `entasis_command_body_apply`
 
 constructs a body-apply command
 
@@ -1562,7 +1633,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_body_apply(entasis_bo
 
 returns the command
 
-### `entasis_command_body_remove`
+#### `entasis_command_body_remove`
 
 constructs a body-remove command
 
@@ -1576,7 +1647,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_body_remove(entasis_b
 
 returns the command
 
-### `entasis_command_static_add`
+#### `entasis_command_static_add`
 
 constructs a static-add command with result slot and awakening policy
 
@@ -1592,7 +1663,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_static_add(entasis_st
 
 returns the command
 
-### `entasis_command_static_apply`
+#### `entasis_command_static_apply`
 
 constructs a static-apply command with awakening policy
 
@@ -1608,7 +1679,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_static_apply(entasis_
 
 returns the command
 
-### `entasis_command_static_remove`
+#### `entasis_command_static_remove`
 
 constructs a static-remove command with awakening policy
 
@@ -1623,7 +1694,7 @@ ENTASIS_API entasis_command_t ENTASIS_CALL entasis_command_static_remove(entasis
 
 returns the command
 
-### `entasis_command_buffer`
+#### `entasis_command_buffer`
 
 constructs a nonowning caller-owned structural command buffer view
 
@@ -1646,7 +1717,7 @@ ENTASIS_API entasis_command_buffer_t ENTASIS_CALL entasis_command_buffer(const e
 
 returns the command buffer
 
-### `entasis_world_apply_commands`
+#### `entasis_world_apply_commands`
 
 applies caller-owned structural commands in exact input order after one capacity preflight
 
@@ -1663,9 +1734,78 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_apply_commands(entasis_w
 | `out_processed` | `uint64_t *`                       | receives the number of commands processed before the operation stopped       |
 | `diagnostic`    | `entasis_diagnostic_t *`           | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
+#### `entasis_world_apply_commands_global`
 
-### `entasis_custom_constraint_registration_default`
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+executes an ordered command buffer with one f64 position per command
+
+requires the owner thread and exclusive access to an idle world. position_count must equal buffer.command_count. add and apply commands use their ordinal position instead of the embedded float position. remove commands ignore the paired position, including nonfinite values. capacity for additions is admitted before execution. stops on the first failed command and preserves earlier mutations and results. buffers remain caller-owned and must not overlap
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_apply_commands_global(entasis_world_t * world, const entasis_command_buffer_t * buffer, const entasis_global_position_t * positions, uint64_t position_count, uint64_t * out_processed, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                              | Meaning                                                                            |
+| ---------------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
+| `world`          | `entasis_world_t *`                 | target world                                                                       |
+| `buffer`         | `const entasis_command_buffer_t *`  | required command buffer and caller-owned result storage                            |
+| `positions`      | `const entasis_global_position_t *` | one current-frame f64 position per command ordinal, required for a nonempty buffer |
+| `position_count` | `uint64_t`                          | must equal buffer.command_count, including remove commands                         |
+| `out_processed`  | `uint64_t *`                        | required completed-command count, initialized to zero before validation            |
+| `diagnostic`     | `entasis_diagnostic_t *`            | optional diagnostic output, or NULL when detailed failure data is not needed       |
+
+returns ENTASIS_STATUS_OK when all commands succeed or the first failure, with out_processed reporting the successful prefix
+
+#### `entasis_world_export_global_states`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+copies selected body, static and target authoring states into caller-owned streams
+
+requires an idle world or an active read phase. does not wake objects or allocate. streams execute in the fixed order bodies, statics, constraint targets, then kinematic targets. all capacities are checked before processing any record. repeated handles execute in selection order. a later failure preserves completed prefixes and stops later records. unwritten output remains unchanged. snapshots contain current-frame positions and borrowed shape identities, without solver/contact history, sleep counters or execution phase state
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_export_global_states(entasis_world_t * world, const entasis_global_state_selection_t * selection, entasis_global_state_snapshot_t * snapshot, entasis_global_state_counts_t * out_counts, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter    | C type                                     | Meaning                                                                      |
+| ------------ | ------------------------------------------ | ---------------------------------------------------------------------------- |
+| `world`      | `entasis_world_t *`                        | target world                                                                 |
+| `selection`  | `const entasis_global_state_selection_t *` | required live-handle arrays with a non-NULL pointer for each nonzero count   |
+| `snapshot`   | `entasis_global_state_snapshot_t *`        | required disjoint output streams, each capacity covering its selected count  |
+| `out_counts` | `entasis_global_state_counts_t *`          | required per-stream written counts, initialized to zero before validation    |
+| `diagnostic` | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed |
+
+returns ENTASIS_STATUS_OK when all selected records succeed or the first failure, with per-stream completed counts
+
+#### `entasis_world_apply_global_states`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+applies selected body, static and target authoring states in stream order
+
+requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. streams execute in the fixed order bodies, statics, constraint targets, then kinematic targets. all capacities are checked before processing any record. repeated handles execute in selection order. a later failure preserves completed prefixes and stops later records. mutations are not rolled back as a group, and awakening side effects may remain on a failed record. input streams and selections must be disjoint and remain valid until return. identities must already exist in this world. translate saved positions after an origin shift before applying them
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_apply_global_states(entasis_world_t * world, const entasis_global_state_selection_t * selection, const entasis_global_state_snapshot_t * snapshot, entasis_awakening_policy_t awakening, entasis_body_control_wake_t target_wake, entasis_global_state_counts_t * out_counts, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter     | C type                                     | Meaning                                                                        |
+| ------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `world`       | `entasis_world_t *`                        | target world                                                                   |
+| `selection`   | `const entasis_global_state_selection_t *` | required destination live-handle arrays, without cross-world remapping         |
+| `snapshot`    | `const entasis_global_state_snapshot_t *`  | required caller-owned input streams, each capacity covering its selected count |
+| `awakening`   | `entasis_awakening_policy_t`               | awakening policy for static state applications                                 |
+| `target_wake` | `entasis_body_control_wake_t`              | wake policy for present kinematic target applications                          |
+| `out_counts`  | `entasis_global_state_counts_t *`          | required per-stream applied counts, initialized to zero before validation      |
+| `diagnostic`  | `entasis_diagnostic_t *`                   | optional diagnostic output, or NULL when detailed failure data is not needed   |
+
+returns ENTASIS_STATUS_OK when all selected records succeed or the first failure, with per-stream completed counts
+
+### Custom constraints
+
+#### `entasis_custom_constraint_registration_default`
 
 initializes custom constraint descriptor size and version
 
@@ -1677,7 +1817,7 @@ ENTASIS_API entasis_custom_constraint_registration_t ENTASIS_CALL entasis_custom
 
 returns an initialized descriptor
 
-### `entasis_custom_constraint_next_type_id`
+#### `entasis_custom_constraint_next_type_id`
 
 returns the first unused custom constraint ID
 
@@ -1695,7 +1835,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_next_type_id
 
 returns the operation status
 
-### `entasis_custom_constraint_register`
+#### `entasis_custom_constraint_register`
 
 registers copied contextual constraint callbacks
 
@@ -1713,7 +1853,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_register(ent
 
 returns the operation status
 
-### `entasis_custom_constraint_add`
+#### `entasis_custom_constraint_add`
 
 adds one custom constraint
 
@@ -1736,7 +1876,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_add(entasis_
 
 returns the operation status
 
-### `entasis_custom_constraint_get`
+#### `entasis_custom_constraint_get`
 
 copies one custom constraint description
 
@@ -1757,7 +1897,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_get(entasis_
 
 returns the operation status
 
-### `entasis_custom_constraint_apply`
+#### `entasis_custom_constraint_apply`
 
 replaces one custom constraint description
 
@@ -1778,7 +1918,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_apply(entasi
 
 returns the operation status
 
-### `entasis_custom_constraint_add_batch`
+#### `entasis_custom_constraint_add_batch`
 
 adds a strided batch of custom constraints
 
@@ -1803,7 +1943,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_add_batch(en
 
 returns the operation status
 
-### `entasis_custom_constraint_get_batch`
+#### `entasis_custom_constraint_get_batch`
 
 copies strided custom descriptions
 
@@ -1826,7 +1966,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_get_batch(en
 
 returns the operation status
 
-### `entasis_custom_constraint_apply_batch`
+#### `entasis_custom_constraint_apply_batch`
 
 applies strided custom descriptions
 
@@ -1849,7 +1989,30 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_apply_batch(
 
 returns the operation status
 
-### `entasis_world_enable_joint_breaks`
+#### `entasis_custom_constraint_register_position_space`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+registers a custom constraint type with an explicit solver position frame
+
+requires the owner thread and exclusive access to an idle world before its first step and before adding constraints. the descriptor is copied, while callback code and user state remain caller-owned through world destruction. world clear retains registrations. body-A-relative positions subtract in f64 before local f32 kernel access
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_custom_constraint_register_position_space(entasis_world_t * world, const entasis_custom_constraint_registration_t * registration, entasis_constraint_position_space_t position_space, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                                             | Meaning                                                                                                      |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `world`          | `entasis_world_t *`                                | initialized world                                                                                            |
+| `registration`   | `const entasis_custom_constraint_registration_t *` | complete registration descriptor                                                                             |
+| `position_space` | `entasis_constraint_position_space_t`              | absolute-float or body-A-relative solver input frame. a registered reaction provider must use the same frame |
+| `diagnostic`     | `entasis_diagnostic_t *`                           | optional diagnostic output                                                                                   |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+
+### Joint breaks and reactions
+
+#### `entasis_world_enable_joint_breaks`
 
 enables optional watched-joint breaking
 
@@ -1865,7 +2028,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_enable_joint_breaks(enta
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_world_disable_joint_breaks`
+#### `entasis_world_disable_joint_breaks`
 
 disables joint breaks after pending delivery is acknowledged
 
@@ -1882,7 +2045,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_disable_joint_breaks(ent
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_joint_break_reserve`
+#### `entasis_joint_break_reserve`
 
 reserves watched-joint storage outside stepping
 
@@ -1898,7 +2061,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_joint_break_reserve(entasis_wo
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_set_reaction_provider`
+#### `entasis_constraint_set_reaction_provider`
 
 sets the explicit custom physical-reaction provider
 
@@ -1917,7 +2080,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_set_reaction_provid
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_set_break_limits`
+#### `entasis_constraint_set_break_limits`
 
 sets or replaces the watched limits
 
@@ -1936,7 +2099,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_set_break_limits(en
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_get_break_limits`
+#### `entasis_constraint_get_break_limits`
 
 reads the current watched limits
 
@@ -1953,7 +2116,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_get_break_limits(en
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_clear_break_limits`
+#### `entasis_constraint_clear_break_limits`
 
 cancels a watch without threshold removal
 
@@ -1969,7 +2132,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_clear_break_limits(
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_reaction`
+#### `entasis_constraint_reaction`
 
 reads the last committed watched reaction
 
@@ -1988,7 +2151,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_reaction(entasis_wo
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_break_events_drain`
+#### `entasis_constraint_break_events_drain`
 
 drains one immutable break batch
 
@@ -2009,7 +2172,7 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_break_events_drain(
 
 returns ENTASIS_STATUS_OK or the original failure status
 
-### `entasis_constraint_break_events_discard`
+#### `entasis_constraint_break_events_discard`
 
 acknowledges pending breaks without copying events
 
@@ -2025,3 +2188,25 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_break_events_discar
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output           |
 
 returns ENTASIS_STATUS_OK or the original failure status
+
+#### `entasis_constraint_set_reaction_provider_position_space`
+
+Availability: mixed64 builds with `ENTASIS_PRECISION_MIXED64=1`
+
+sets or clears a custom constraint type's reaction reader and position frame
+
+requires the owner thread and exclusive access to an idle world with joint breaks enabled. the type must already be registered and have no watches. a non-NULL provider must match the registered type's position frame. copies the descriptor on success and borrows its user state until replacement, clearing or world disposal. rejection preserves the previous provider
+
+```c
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_constraint_set_reaction_provider_position_space(entasis_world_t * world, entasis_constraint_type_id_t type_id, const entasis_joint_reaction_provider_t * provider, entasis_constraint_position_space_t position_space, entasis_diagnostic_t * diagnostic);
+```
+
+| Parameter        | C type                                      | Meaning                                                                                 |
+| ---------------- | ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `world`          | `entasis_world_t *`                         | idle world with joint breaks enabled                                                    |
+| `type_id`        | `entasis_constraint_type_id_t`              | custom type registered in this world                                                    |
+| `provider`       | `const entasis_joint_reaction_provider_t *` | descriptor to copy, with caller-owned callback code and state. NULL clears the provider |
+| `position_space` | `entasis_constraint_position_space_t`       | valid position frame, which must match the registered type when installing a provider   |
+| `diagnostic`     | `entasis_diagnostic_t *`                    | optional diagnostic output                                                              |
+
+returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure

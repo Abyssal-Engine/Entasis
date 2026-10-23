@@ -719,6 +719,10 @@ island_sleeper_body_gather_worker :: proc "contextless" (
 		}
 		source_index := int(location.index);
 		job.target.dynamics_state.memory[index] = active.dynamics_state.memory[source_index];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			job.target.global_positions.memory[index] = active.global_positions.memory[source_index];
+		}
 		job.target.index_to_handle.memory[index] = handle;
 		job.target.collidables.memory[index] = active.collidables.memory[source_index];
 		job.target.activity.memory[index] = active.activity.memory[source_index];
@@ -744,6 +748,10 @@ island_sleeper_commit_body_migration :: proc "contextless" (
 	{
 		last := active.count;
 		active.dynamics_state.memory[location.index] = active.dynamics_state.memory[last];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			active.global_positions.memory[location.index] = active.global_positions.memory[last];
+		}
 		active.index_to_handle.memory[location.index] = active.index_to_handle.memory[last];
 		active.collidables.memory[location.index] = active.collidables.memory[last];
 		active.activity.memory[location.index] = active.activity.memory[last];
@@ -753,6 +761,10 @@ island_sleeper_commit_body_migration :: proc "contextless" (
 		sleeper.bodies.handle_to_location.memory[moved_handle.value] = location;
 	}
 	active.dynamics_state.memory[active.count] = {};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		active.global_positions.memory[active.count] = {};
+	}
 	active.index_to_handle.memory[active.count] = {};
 	active.collidables.memory[active.count] = {};
 	active.activity.memory[active.count] = {};
@@ -1026,6 +1038,10 @@ island_sleeper_sleep_island :: proc (
 			}
 			source_index := int(location.index);
 			target.dynamics_state.memory[body_index] = active.dynamics_state.memory[source_index];
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				target.global_positions.memory[body_index] = active.global_positions.memory[source_index];
+			}
 			target.index_to_handle.memory[body_index] = handle;
 			target.collidables.memory[body_index] = active.collidables.memory[source_index];
 			target.activity.memory[body_index] = active.activity.memory[source_index];

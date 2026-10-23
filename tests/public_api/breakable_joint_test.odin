@@ -360,9 +360,9 @@ joint_reaction_custom_provider_explicit_and_failure_atomic :: proc(t: ^testing.T
 	}
 	defer e.world_destroy(&world);
 	type_id: e.Constraint_Type_ID;
-	ok: bool;
-	type_id, ok = register_velocity_target_constraint(t, &world);
-	if !ok
+	registration_status: e.Status;
+	type_id, registration_status = register_velocity_target_constraint(t, &world);
+	if registration_status != .Ok
 	{
 		return;
 	}
@@ -505,9 +505,9 @@ joint_reaction_custom_bundle_failure_is_atomic_and_world_local :: proc(t: ^testi
 		}
 		defer e.world_destroy(&world);
 		type_id: e.Constraint_Type_ID;
-		ok: bool;
-		type_id, ok =register_velocity_target_constraint(t, &world);
-		if !ok
+		registration_status: e.Status;
+		type_id, registration_status = register_velocity_target_constraint(t, &world);
+		if registration_status != .Ok
 		{
 			return;
 		}
@@ -908,9 +908,9 @@ joint_break_scheduled_provider_failure :: proc (t: ^testing.T)
 		world: e.World;
 		testing.expect_value(t, e.world_init(&world, description), e.Status.Ok);
 		type_id: e.Constraint_Type_ID;
-		registered: bool;
-		type_id, registered = register_velocity_target_constraint(t, &world);
-		if !registered
+		registration_status: e.Status;
+		type_id, registration_status = register_velocity_target_constraint(t, &world);
+		if registration_status != .Ok
 		{
 			e.world_destroy(&world);
 			return;

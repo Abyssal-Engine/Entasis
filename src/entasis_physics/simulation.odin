@@ -199,8 +199,8 @@ simulation_create :: proc (
 	(description.shape_registry.state != .Allocated ||
 		description.shape_registry.pool != description.pool)
 	{
-		result.status = .Invalid_Description;
-		return result;
+			result.status = .Invalid_Description;
+			return result;
 	}
 	configuration, simd_status := util.host_simd_configuration();
 	result.simd_configuration = configuration;
@@ -452,6 +452,17 @@ simulation_timestep :: proc (
 	{
 		return .Invalid_Argument;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	if simulation.triggers != nil
 	{
 		status = trigger_step_prepare(simulation.triggers);
@@ -574,9 +585,9 @@ simulation_stage_validate :: proc (
 	(dispatcher.dispatch == nil || dispatcher.worker_count <= 0 ||
 		dispatcher.worker_count > int(simulation.allocation_sizes.workers))
 	{
-		return simulation_stage_validate_worker_capacity_cold(
-			simulation, dispatcher,
-		);
+			return simulation_stage_validate_worker_capacity_cold(
+				simulation, dispatcher,
+			);
 	}
 	return .Ok;
 }
@@ -589,6 +600,17 @@ simulation_sleep :: proc (
 	if status != .Ok
 	{
 		return status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
 	}
 	simulation_profiler_start(&simulation.profiler, .Sleep);
 	status = island_sleeper_update(&simulation.sleeper, dispatcher);
@@ -609,6 +631,17 @@ simulation_predict_bounding_boxes :: proc (
 	if dt <= 0
 	{
 		return .Invalid_Argument;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
 	}
 	standalone_controls: ^Body_Control_Storage;
 	if simulation.state == .Ready && simulation.body_control != nil
@@ -651,6 +684,17 @@ simulation_collision_detection :: proc (
 	if dt <= 0
 	{
 		return .Invalid_Argument;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
 	}
 	standalone_controls: ^Body_Control_Storage;
 	if simulation.state == .Ready && simulation.body_control != nil
@@ -709,6 +753,17 @@ simulation_solve :: proc (
 	if dt <= 0
 	{
 		return .Invalid_Argument;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
 	}
 	standalone_controls: Reference_State = .Missing;
 	if simulation.body_control != nil
@@ -774,6 +829,17 @@ simulation_incrementally_optimize_data_structures :: proc (
 	{
 		return status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if simulation.state == .Ready
+		{
+			status = world_precision_import_active_positions(&simulation.bodies);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	simulation_profiler_start(&simulation.profiler, .Incrementally_Optimize);
 	status = solver_compress(&simulation.solver, dispatcher);
 	simulation_profiler_end(&simulation.profiler, .Incrementally_Optimize);
@@ -782,16 +848,49 @@ simulation_incrementally_optimize_data_structures :: proc (
 
 simulation_add_body :: proc (
 	simulation: ^Simulation, description: ^Body_Description,
+	global_position: ^Global_Position = nil,
 ) -> (Body_Handle, Physics_Status)
 {
 	if simulation == nil || simulation.state != .Ready
 	{
 		return body_handle_invalid(), .Disposed;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil
+		{
+			if world_precision_position_validate(global_position^) != .Ok
+			{
+				return body_handle_invalid(), .Invalid_Argument;
+			}
+			if body_description_validate(description) != .Ok
+			{
+				return body_handle_invalid(), .Invalid_Description;
+			}
+			if typed_index_state(description.collidable.shape) == .Present
+			{
+				_, bounds_status := broad_phase_shape_bounds(
+					simulation_shape_registry(simulation), description.collidable.shape,
+					global_position^, description.pose.orientation,
+				);
+				if bounds_status != .Ok
+				{
+					return body_handle_invalid(), bounds_status;
+				}
+			}
+		}
+	}
 	handle, status := bodies_add(&simulation.bodies, description);
 	if status != .Ok
 	{
 		return handle, status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil
+		{
+			_ = bodies_set_global_position(&simulation.bodies, handle, global_position^);
+		}
 	}
 	if typed_index_state(description.collidable.shape) == .Present
 	{
@@ -807,7 +906,9 @@ simulation_add_body :: proc (
 
 simulation_add_static_internal :: proc (
 	simulation: ^Simulation, description: ^Static_Description,
-	awaken_bodies: bool,
+	awaken_bodies: Reference_State,
+	global_position: ^Global_Position = nil,
+	filter: Static_Awakening_Filter_Proc = nil, filter_context: rawptr = nil,
 ) -> (Static_Handle, Physics_Status)
 {
 	if simulation == nil || simulation.state != .Ready
@@ -818,28 +919,50 @@ simulation_add_static_internal :: proc (
 	{
 		return static_handle_invalid(), .Invalid_Description;
 	}
-	if awaken_bodies
+	position: Tree_Position = tree_position_from_local(description.pose.position);
+	when util.PRECISION_MODE == .Double_Coordinates
 	{
-		bounds, bounds_status := shape_registry_compute_world_bounds(
-			simulation_shape_registry(simulation),
-			description.shape, description.pose,
+		if global_position != nil
+		{
+			position = global_position^;
+			if world_precision_position_validate(position) != .Ok
+			{
+				return static_handle_invalid(), .Invalid_Argument;
+			}
+		}
+	}
+	if awaken_bodies == .Present || (util.PRECISION_MODE == .Double_Coordinates && global_position != nil)
+	{
+		bounds, bounds_status := broad_phase_shape_bounds(
+			simulation_shape_registry(simulation), description.shape,
+			position, description.pose.orientation,
 		);
 		if bounds_status != .Ok
 		{
 			return static_handle_invalid(), bounds_status;
 		}
-		wake_status := simulation_awaken_inactive_bodies_in_bounds(
-			simulation, bounds,
-		);
-		if wake_status != .Ok
+		if awaken_bodies == .Present
 		{
-			return static_handle_invalid(), wake_status;
+			wake_status := simulation_awaken_inactive_bodies_in_bounds_filtered(
+				simulation, bounds, filter, filter_context,
+			);
+			if wake_status != .Ok
+			{
+				return static_handle_invalid(), wake_status;
+			}
 		}
 	}
 	handle, status := statics_add(&simulation.statics, description);
 	if status != .Ok
 	{
 		return handle, status;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil
+		{
+			_ = statics_set_global_position(&simulation.statics, handle, position);
+		}
 	}
 	status = broad_phase_add_static(&simulation.broad_phase, handle);
 	if status != .Ok
@@ -854,21 +977,21 @@ simulation_add_static :: proc (
 	simulation: ^Simulation, description: ^Static_Description,
 ) -> (Static_Handle, Physics_Status)
 {
-	return simulation_add_static_internal(simulation, description, true);
+	return simulation_add_static_internal(simulation, description, .Present);
 }
 
 simulation_add_static_without_awakening_bodies :: proc (
 	simulation: ^Simulation, description: ^Static_Description,
 ) -> (Static_Handle, Physics_Status)
 {
-	return simulation_add_static_internal(simulation, description, false);
+	return simulation_add_static_internal(simulation, description, .Missing);
 }
 
 Static_Awakening_Filter_Proc :: #type proc "contextless" (
 	user_context: rawptr, body: Body_Handle,
-) -> bool;
+) -> Collision_Testing_State;
 simulation_awaken_inactive_bodies_in_bounds_filtered :: proc (
-	simulation: ^Simulation, bounds: util.Bounding_Box,
+	simulation: ^Simulation, bounds: Tree_Bounds,
 	filter: Static_Awakening_Filter_Proc, user_context: rawptr,
 ) -> Physics_Status
 {
@@ -896,7 +1019,7 @@ simulation_awaken_inactive_bodies_in_bounds_filtered :: proc (
 			continue;
 		}
 		handle := Body_Handle{collidable_reference_raw_handle(reference)};
-		if filter != nil && !filter(user_context, handle)
+		if filter != nil && filter(user_context, handle) != .Allow
 		{
 			continue;
 		}
@@ -943,7 +1066,7 @@ simulation_awaken_inactive_bodies_in_bounds_filtered :: proc (
 }
 
 simulation_awaken_inactive_bodies_in_bounds :: proc (
-	simulation: ^Simulation, bounds: util.Bounding_Box,
+	simulation: ^Simulation, bounds: Tree_Bounds,
 ) -> Physics_Status
 {
 	return simulation_awaken_inactive_bodies_in_bounds_filtered(
@@ -1013,14 +1136,14 @@ simulation_remove_body :: proc (simulation: ^Simulation, handle: Body_Handle) ->
 }
 
 simulation_remove_static_internal :: proc (
-	simulation: ^Simulation, handle: Static_Handle, awaken_bodies: bool,
+	simulation: ^Simulation, handle: Static_Handle, awaken_bodies: Reference_State,
 ) -> Physics_Status
 {
 	if simulation == nil || simulation.state != .Ready
 	{
 		return .Disposed;
 	}
-	if awaken_bodies && (simulation.triggers==nil || trigger_static_member(simulation.triggers, handle) == .Missing)
+	if awaken_bodies == .Present && (simulation.triggers==nil || trigger_static_member(simulation.triggers, handle) == .Missing)
 	{
 		static_description, description_status := statics_get_description(
 			&simulation.statics, handle,
@@ -1029,16 +1152,23 @@ simulation_remove_static_internal :: proc (
 		{
 			return description_status;
 		}
-		bounds, bounds_status := shape_registry_compute_world_bounds(
-			simulation_shape_registry(simulation),
-			static_description.shape, static_description.pose,
+		position: Tree_Position;
+		position, description_status = broad_phase_static_handle_position(&simulation.broad_phase, handle);
+		if description_status != .Ok
+		{
+			return description_status;
+		}
+		bounds, bounds_status := broad_phase_shape_bounds(
+			simulation_shape_registry(simulation), static_description.shape,
+			position, static_description.pose.orientation,
 		);
 		if bounds_status != .Ok
 		{
 			return bounds_status;
 		}
 		status := mixed_colliders_awaken_static(
-			simulation, handle, &static_description, &static_description, bounds, nil, nil,
+			simulation, handle, &static_description, &static_description,
+			position, position, bounds, nil, nil,
 		);
 		if status != .Ok
 		{
@@ -1057,23 +1187,36 @@ simulation_remove_static :: proc (
 	simulation: ^Simulation, handle: Static_Handle,
 ) -> Physics_Status
 {
-	return simulation_remove_static_internal(simulation, handle, true);
+	return simulation_remove_static_internal(simulation, handle, .Present);
 }
 
 simulation_remove_static_without_awakening_bodies :: proc (
 	simulation: ^Simulation, handle: Static_Handle,
 ) -> Physics_Status
 {
-	return simulation_remove_static_internal(simulation, handle, false);
+	return simulation_remove_static_internal(simulation, handle, .Missing);
 }
 
 simulation_apply_body_description :: proc (
 	simulation: ^Simulation, handle: Body_Handle, description: ^Body_Description,
+	global_position: ^Global_Position = nil,
 ) -> Physics_Status
 {
 	if simulation == nil || simulation.state != .Ready
 	{
 		return .Disposed;
+	}
+	validation: Physics_Status = body_description_validate(description);
+	if validation != .Ok
+	{
+		return validation;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil && world_precision_position_validate(global_position^) != .Ok
+		{
+			return .Invalid_Argument;
+		}
 	}
 	status := island_awakener_awaken_body(&simulation.awakener, handle);
 	if status != .Ok
@@ -1082,13 +1225,13 @@ simulation_apply_body_description :: proc (
 	}
 	broad_phase_change, broad_phase_status :=
 	broad_phase_prepare_body_description_change(
-		&simulation.broad_phase, handle, description,
+		&simulation.broad_phase, handle, description, global_position,
 	);
 	if broad_phase_status != .Ok
 	{
 		return broad_phase_status;
 	}
-	status = bodies_apply_description(&simulation.bodies, handle, description);
+	status = bodies_apply_description(&simulation.bodies, handle, description, global_position);
 	if status != .Ok
 	{
 		return status;
@@ -1101,7 +1244,9 @@ simulation_apply_body_description :: proc (
 
 simulation_apply_static_description_internal :: proc (
 	simulation: ^Simulation, handle: Static_Handle,
-	description: ^Static_Description, awaken_bodies: bool,
+	description: ^Static_Description, awaken_bodies: Reference_State,
+	global_position: ^Global_Position = nil,
+	filter: Static_Awakening_Filter_Proc = nil, filter_context: rawptr = nil,
 ) -> Physics_Status
 {
 	if simulation == nil || simulation.state != .Ready
@@ -1119,27 +1264,46 @@ simulation_apply_static_description_internal :: proc (
 	{
 		return old_status;
 	}
-	if awaken_bodies && (simulation.triggers==nil || trigger_static_member(simulation.triggers, handle) == .Missing)
+	old_position, position_status := broad_phase_static_handle_position(&simulation.broad_phase, handle);
+	if position_status != .Ok
 	{
-		old_bounds, old_bounds_status := shape_registry_compute_world_bounds(
-			simulation_shape_registry(simulation),
-			old_description.shape, old_description.pose,
+		return position_status;
+	}
+	// geometry may overflow the finite float tree even when its center is valid
+	// admit the replacement before changing membership, including no-wake calls
+	next_position: Tree_Position = tree_position_from_local(description.pose.position);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil
+		{
+			next_position = global_position^;
+			if world_precision_position_validate(next_position) != .Ok
+			{
+				return .Invalid_Argument;
+			}
+		}
+	}
+	new_bounds: Tree_Bounds;
+	bounds_status: Physics_Status;
+	new_bounds, bounds_status = broad_phase_shape_bounds(
+		simulation_shape_registry(simulation), description.shape, next_position, description.pose.orientation,
+	);
+	if bounds_status != .Ok
+	{
+		return bounds_status;
+	}
+	if awaken_bodies == .Present && (simulation.triggers==nil || trigger_static_member(simulation.triggers, handle) == .Missing)
+	{
+		old_bounds, old_bounds_status := broad_phase_shape_bounds(
+			simulation_shape_registry(simulation), old_description.shape, old_position, old_description.pose.orientation,
 		);
 		if old_bounds_status != .Ok
 		{
 			return old_bounds_status;
 		}
-		new_bounds, new_bounds_status := shape_registry_compute_world_bounds(
-			simulation_shape_registry(simulation),
-			description.shape, description.pose,
-		);
-		if new_bounds_status != .Ok
-		{
-			return new_bounds_status;
-		}
 		status := mixed_colliders_awaken_static(
-			simulation, handle, &old_description, description,
-			util.bounding_box_merge(old_bounds, new_bounds), nil, nil,
+			simulation, handle, &old_description, description, old_position, next_position,
+			tree_bounds_merge(old_bounds, new_bounds), filter, filter_context,
 		);
 		if status != .Ok
 		{
@@ -1151,7 +1315,14 @@ simulation_apply_static_description_internal :: proc (
 	{
 		return status;
 	}
-	status = statics_apply_description(&simulation.statics, handle, description);
+	replacement: ^Global_Position;
+	rollback: ^Global_Position;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		replacement = &next_position;
+		rollback = &old_position;
+	}
+	status = statics_apply_description(&simulation.statics, handle, description, replacement);
 	if status != .Ok
 	{
 		_ = broad_phase_add_static(&simulation.broad_phase, handle);
@@ -1161,7 +1332,7 @@ simulation_apply_static_description_internal :: proc (
 	if status != .Ok
 	{
 		_ = statics_apply_description(
-			&simulation.statics, handle, &old_description,
+			&simulation.statics, handle, &old_description, rollback,
 		);
 		_ = broad_phase_add_static(&simulation.broad_phase, handle);
 		return status;
@@ -1175,7 +1346,7 @@ simulation_apply_static_description :: proc (
 ) -> Physics_Status
 {
 	return simulation_apply_static_description_internal(
-		simulation, handle, description, true,
+		simulation, handle, description, .Present,
 	);
 }
 
@@ -1185,7 +1356,7 @@ simulation_apply_static_description_without_awakening_bodies :: proc (
 ) -> Physics_Status
 {
 	return simulation_apply_static_description_internal(
-		simulation, handle, description, false,
+		simulation, handle, description, .Missing,
 	);
 }
 
@@ -1202,9 +1373,20 @@ simulation_set_static_shape :: proc (
 	{
 		return status;
 	}
+	position: Tree_Position;
+	position, status = broad_phase_static_handle_position(&simulation.broad_phase, handle);
+	if status != .Ok
+	{
+		return status;
+	}
+	position_override: ^Global_Position;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_override = &position;
+	}
 	description.shape = shape;
 	return simulation_apply_static_description_internal(
-		simulation, handle, &description, true,
+		simulation, handle, &description, .Present, position_override,
 	);
 }
 
@@ -1221,9 +1403,20 @@ simulation_set_static_shape_without_awakening_bodies :: proc (
 	{
 		return status;
 	}
+	position: Tree_Position;
+	position, status = broad_phase_static_handle_position(&simulation.broad_phase, handle);
+	if status != .Ok
+	{
+		return status;
+	}
+	position_override: ^Global_Position;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_override = &position;
+	}
 	description.shape = shape;
 	return simulation_apply_static_description_internal(
-		simulation, handle, &description, false,
+		simulation, handle, &description, .Missing, position_override,
 	);
 }
 

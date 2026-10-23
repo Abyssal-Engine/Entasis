@@ -315,6 +315,8 @@ Size `40`, alignment `8`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_spring_settings`
 
 builds spring settings from frequency and damping ratio
@@ -359,8 +361,6 @@ allocation: none
 ```c
 ENTASIS_API entasis_contact_material_t ENTASIS_CALL entasis_contact_material_default(void);
 ```
-
-returns the default contact material
 
 ### `entasis_default_narrow_policy`
 
@@ -444,8 +444,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_layer(uint32_t index
 | `index`     | `uint32_t`                    | zero-based table index       |
 | `out_layer` | `entasis_collision_layer_t *` | receives the collision layer |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_layer_index`
 
 returns the integer layer index
@@ -527,8 +525,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_properties_validate(
 | --------- | -------------------------------- | -------------------- |
 | `value`   | `entasis_collision_properties_t` | collision properties |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_clear`
 
 invalidates every property while retaining capacity
@@ -541,8 +537,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_clear(entas
 | --------- | -------------------------------------- | ------------------------------- |
 | `table`   | `entasis_collision_property_table_t *` | target collision property table |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_destroy`
 
 releases caller-owned property storage
@@ -554,8 +548,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_destroy(ent
 | Parameter | C type                                 | Meaning                         |
 | --------- | -------------------------------------- | ------------------------------- |
 | `table`   | `entasis_collision_property_table_t *` | target collision property table |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_ensure_capacity`
 
@@ -571,8 +563,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_ensure_capa
 | `body_capacity`   | `uint64_t`                             | required body namespace capacity   |
 | `static_capacity` | `uint64_t`                             | required static namespace capacity |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_get`
 
 returns one body or static policy record
@@ -586,8 +576,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_get(entasis
 | `table`      | `entasis_collision_property_table_t *` | target collision property table   |
 | `collidable` | `entasis_collidable_reference_t`       | target collidable reference       |
 | `out_value`  | `entasis_collision_properties_t *`     | receives the collision properties |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_get_body`
 
@@ -603,8 +591,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_get_body(en
 | `handle`    | `entasis_body_handle_t`                | target body handle                |
 | `out_value` | `entasis_collision_properties_t *`     | receives the collision properties |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_get_static`
 
 returns one static policy record
@@ -618,8 +604,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_get_static(
 | `table`     | `entasis_collision_property_table_t *` | target collision property table   |
 | `handle`    | `entasis_static_handle_t`              | target static handle              |
 | `out_value` | `entasis_collision_properties_t *`     | receives the collision properties |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_init`
 
@@ -639,8 +623,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_init(entasi
 | `allocator`       | `const entasis_allocator_t *`          | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`      | `entasis_diagnostic_t *`               | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_remove`
 
 invalidates one body or static policy record
@@ -653,8 +635,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_remove(enta
 | ------------ | -------------------------------------- | ------------------------------- |
 | `table`      | `entasis_collision_property_table_t *` | target collision property table |
 | `collidable` | `entasis_collidable_reference_t`       | target collidable reference     |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_remove_batch`
 
@@ -671,8 +651,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_remove_batc
 | `count`         | `uint64_t`                               | number of entries in the input arrays                        |
 | `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_remove_body`
 
 invalidates one body policy lifetime
@@ -685,8 +663,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_remove_body
 | --------- | -------------------------------------- | ------------------------------- |
 | `table`   | `entasis_collision_property_table_t *` | target collision property table |
 | `handle`  | `entasis_body_handle_t`                | target body handle              |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_remove_static`
 
@@ -701,8 +677,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_remove_stat
 | `table`   | `entasis_collision_property_table_t *` | target collision property table |
 | `handle`  | `entasis_static_handle_t`              | target static handle            |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_set`
 
 creates or updates a body or static policy record
@@ -716,8 +690,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_set(entasis
 | `table`      | `entasis_collision_property_table_t *` | target collision property table |
 | `collidable` | `entasis_collidable_reference_t`       | target collidable reference     |
 | `value`      | `entasis_collision_properties_t`       | collision properties            |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_collision_property_set_batch`
 
@@ -735,8 +707,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_set_batch(e
 | `count`         | `uint64_t`                               | number of entries in the input arrays                        |
 | `out_completed` | `uint64_t *`                             | receives the number of successfully completed prefix entries |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_set_body`
 
 creates or updates one body policy record
@@ -751,8 +721,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_set_body(en
 | `handle`  | `entasis_body_handle_t`                | target body handle              |
 | `value`   | `entasis_collision_properties_t`       | collision properties            |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_collision_property_set_static`
 
 creates or updates one static policy record
@@ -766,8 +734,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_collision_property_set_static(
 | `table`   | `entasis_collision_property_table_t *` | target collision property table |
 | `handle`  | `entasis_static_handle_t`              | target static handle            |
 | `value`   | `entasis_collision_properties_t`       | collision properties            |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_layer_mask`
 
@@ -890,8 +856,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_layer_matrix_allow(entasis_lay
 | `a`       | `entasis_collision_layer_t` | collision layer A   |
 | `b`       | `entasis_collision_layer_t` | collision layer B   |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_layer_matrix_allows`
 
 checks both matrix directions
@@ -924,8 +888,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_layer_matrix_deny(entasis_laye
 | `a`       | `entasis_collision_layer_t` | collision layer A   |
 | `b`       | `entasis_collision_layer_t` | collision layer B   |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_layer_matrix_none`
 
 rejects every layer pair
@@ -950,8 +912,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_layer_matrix_set(entasis_layer
 | `a`       | `entasis_collision_layer_t` | collision layer A               |
 | `b`       | `entasis_collision_layer_t` | collision layer B               |
 | `allow`   | `entasis_bool_t`            | whether to allow the layer pair |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_material`
 
@@ -1010,8 +970,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_material_id(uint32_t index, en
 | --------- | ------------------------- | ------------------------ |
 | `index`   | `uint32_t`                | zero-based table index   |
 | `out_id`  | `entasis_material_id_t *` | receives the material ID |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_material_id_invalid`
 
@@ -1072,8 +1030,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_material_table_get(entasis_mat
 | `id`        | `entasis_material_id_t`    | material ID             |
 | `out_value` | `entasis_material_t *`     | receives the material   |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_material_to_contact`
 
 converts the facade material to the exact low-level contact material consumed by contact constraints
@@ -1099,8 +1055,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_material_validate(entasis_mate
 | Parameter | C type               | Meaning                               |
 | --------- | -------------------- | ------------------------------------- |
 | `value`   | `entasis_material_t` | material value to validate or convert |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_narrow_policy_layers_materials`
 
@@ -1146,8 +1100,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_enable_restitution(entas
 | `configuration` | `const entasis_restitution_configuration_t *` | copied configuration. NULL selects defaults  |
 | `diagnostic`    | `entasis_diagnostic_t *`                      | optional diagnostic output                   |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_world_disable_restitution`
 
 disables restitution and releases its settings, history and scratch
@@ -1160,8 +1112,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_disable_restitution(enta
 | ------------ | ------------------------ | -------------------------------------------- |
 | `world`      | `entasis_world_t *`      | idle world outside callbacks and read phases |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output                   |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_restitution_reserve`
 
@@ -1180,8 +1130,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_restitution_reserve(entasis_wo
 | `pair_capacity`       | `int32_t`                | impact history capacity hint                 |
 | `diagnostic`          | `entasis_diagnostic_t *` | optional diagnostic output                   |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_restitution_set`
 
 sets a copied per-instance override
@@ -1199,8 +1147,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_restitution_set(entasis_world_
 | `settings`   | `const entasis_restitution_settings_t *` | required finite settings, copied before application allocation |
 | `diagnostic` | `entasis_diagnostic_t *`                 | optional diagnostic output                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_restitution_get`
 
 reads an effective instance setting including fallback
@@ -1215,8 +1161,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_restitution_get(entasis_world_
 | `reference`    | `entasis_collidable_reference_t`   | live body or static collidable instance      |
 | `out_settings` | `entasis_restitution_settings_t *` | effective settings, written only on success  |
 | `diagnostic`   | `entasis_diagnostic_t *`           | optional diagnostic output                   |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_restitution_remove`
 
@@ -1233,5 +1177,3 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_restitution_remove(entasis_wor
 | `world`      | `entasis_world_t *`              | idle world outside callbacks and read phases |
 | `reference`  | `entasis_collidable_reference_t` | live body or static collidable instance      |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output                   |
-
-returns ENTASIS_STATUS_OK on success or a failure status

@@ -227,6 +227,8 @@ ENTASIS_1 {
     entasis_fixed_stepper;
     entasis_fixed_stepper_reset;
     entasis_fixed_stepper_update;
+    entasis_global_position;
+    entasis_global_position_delta;
     entasis_joint_break_reserve;
     entasis_joint_break_stepper_update;
     entasis_layer_mask;
@@ -259,6 +261,10 @@ ENTASIS_1 {
     entasis_motor_settings;
     entasis_narrow_policy_default;
     entasis_narrow_policy_layers_materials;
+    entasis_origin_frame_at;
+    entasis_origin_frame_to_global;
+    entasis_origin_frame_to_local;
+    entasis_origin_frame_translate;
     entasis_overlap_all;
     entasis_overlap_any;
     entasis_per_body_gravity_policy;
@@ -449,6 +455,7 @@ ENTASIS_1 {
     entasis_world_resize;
     entasis_world_scale_accumulated_impulses;
     entasis_world_scale_active_accumulated_impulses;
+    entasis_world_shift_origin;
     entasis_world_solver_stats;
     entasis_world_stage_collision_detection;
     entasis_world_stage_optimize;

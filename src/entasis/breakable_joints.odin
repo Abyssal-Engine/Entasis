@@ -101,6 +101,14 @@ constraint_set_reaction_provider :: proc(world:^World, type_id:Constraint_Type_I
 	{
 		return .Invalid_Argument;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if provider.read != nil && (physics.constraint_position_space_validate(provider.position_space) != .Ok ||
+			provider.position_space != record.position_space)
+		{
+			return .Invalid_Argument;
+		}
+	}
 	for index in 0..<owner.watches.count
 	{
 		if owner.watches.values.memory[index].type_id==id

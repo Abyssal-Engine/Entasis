@@ -51,7 +51,7 @@ island_scaffold_initialize :: proc (
 		constraint_capacity <= 0 ||
 		pool == nil
 	{
-		return .Invalid_Argument;
+			return .Invalid_Argument;
 	}
 	body_marks, body_status := util.buffer_pool_take_at_least(pool, u8, body_capacity);
 	if body_status != .Ok
@@ -120,7 +120,7 @@ island_scaffold_ensure_capacity :: proc (
 	if scaffold == nil || scaffold.state != .Ready ||
 		body_capacity <= 0 || constraint_capacity <= 0
 	{
-		return .Invalid_Argument;
+			return .Invalid_Argument;
 	}
 	status := physics_ensure_zeroed_buffer_capacity(
 		scaffold.pool, &scaffold.body_marks, body_capacity,
@@ -163,7 +163,7 @@ island_scaffold_resize :: proc (
 	if scaffold == nil || scaffold.state != .Ready ||
 		body_capacity <= 0 || constraint_capacity <= 0
 	{
-		return .Invalid_Argument;
+			return .Invalid_Argument;
 	}
 	status := physics_resize_zeroed_buffer_capacity(
 		scaffold.pool, &scaffold.body_marks, body_capacity,
@@ -253,6 +253,16 @@ solver_gather_inactive_constraint :: proc "contextless" (
 	{
 		return build_status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if constraint_global_target_prefix_size(location.type_id) != 0
+		{
+			constraint_global_target_inactive_write(target, constraint_global_target_read(
+				type_batch_prestep_bundle(type_batch, int(location.index_in_type_batch)), location.type_id,
+				int(location.index_in_type_batch) % util.PRODUCTION_LANE_COUNT,
+			));
+		}
+	}
 	impulses := ([^]util.F32x8)(type_batch_impulse_bundle(type_batch, int(location.index_in_type_batch)));
 	lane := int(location.index_in_type_batch) % util.PRODUCTION_LANE_COUNT;
 	for index in 0 ..< impulse_count
@@ -299,6 +309,13 @@ solver_commit_restore_inactive_constraint :: proc "contextless" (
 		&source.description[0], prestep, int(source.type_id), int(record.description_size),
 		int(record.prestep_bundle_size), lane,
 	);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if constraint_global_target_prefix_size(source.type_id) != 0
+		{
+			constraint_global_target_write(prestep, source.type_id, lane, constraint_global_target_inactive_read(source));
+		}
+	}
 	type_batch_write_reference_trusted(type_batch, index, prepared.reference);
 	impulse_vectors := ([^]util.F32x8)(impulses);
 	for impulse_index in 0 ..< int(source.impulse_count)

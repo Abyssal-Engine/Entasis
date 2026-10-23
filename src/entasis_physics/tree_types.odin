@@ -9,7 +9,7 @@ TREE_LEAF_NODE_MASK :: u32(0x7fff_ffff);
 TREE_LEAF_CHILD_MASK :: u32(0x8000_0000);
 TREE_BIN_MIN_COUNT :: 16;
 TREE_BIN_MAX_COUNT :: 64;
-TREE_BIN_LEAF_MULTIPLIER :: f32(1.0 / 16.0);
+TREE_BIN_LEAF_MULTIPLIER :: Tree_Scalar(1.0 / 16.0);
 TREE_MICROSWEEP_THRESHOLD :: 64;
 
 Tree_Leaf :: struct
@@ -34,9 +34,9 @@ tree_leaf_child_index :: proc "contextless" (leaf: Tree_Leaf) -> int
 
 Tree_Node_Child :: struct
 {
-	min:        util.Vector3,
+	min:        Tree_Position,
 	index:      i32,
-	max:        util.Vector3,
+	max:        Tree_Position,
 	leaf_count: i32,
 }
 
@@ -55,7 +55,7 @@ Tree_Metanode :: struct
 
 Tree_Build_Reference :: struct
 {
-	bounds:     util.Bounding_Box,
+	bounds:     Tree_Bounds,
 	leaf_index: i32,
 }
 
@@ -112,7 +112,7 @@ tree_child :: proc "contextless" (node: ^Tree_Node, child_index: int) -> ^Tree_N
 // Tree query bounds and rays obey the engine's finite-math contract. these
 // ordered helpers avoid generic NaN-preserving compare-and-blend sequences in
 // slab intersection while retaining identical results for valid operands
-tree_ordered_min :: #force_inline proc "contextless" (a, b: f32) -> f32
+tree_ordered_min :: #force_inline proc "contextless" (a, b: Tree_Scalar) -> Tree_Scalar
 {
 	if a < b
 	{
@@ -121,7 +121,7 @@ tree_ordered_min :: #force_inline proc "contextless" (a, b: f32) -> f32
 	return b;
 }
 
-tree_ordered_max :: #force_inline proc "contextless" (a, b: f32) -> f32
+tree_ordered_max :: #force_inline proc "contextless" (a, b: Tree_Scalar) -> Tree_Scalar
 {
 	if a > b
 	{
@@ -130,22 +130,22 @@ tree_ordered_max :: #force_inline proc "contextless" (a, b: f32) -> f32
 	return b;
 }
 
-tree_bounds_merge :: proc "contextless" (a, b: util.Bounding_Box) -> util.Bounding_Box
+tree_bounds_merge :: proc "contextless" (a, b: Tree_Bounds) -> Tree_Bounds
 {
-	return {min=util.vector3_min(a.min, b.min), max=util.vector3_max(a.max, b.max)};
+	return {min=tree_position_min(a.min, b.min), max=tree_position_max(a.max, b.max)};
 }
 
-tree_child_bounds :: proc "contextless" (child: Tree_Node_Child) -> util.Bounding_Box
+tree_child_bounds :: proc "contextless" (child: Tree_Node_Child) -> Tree_Bounds
 {
 	return {min=child.min, max=child.max};
 }
 
-tree_child_from_bounds :: proc "contextless" (bounds: util.Bounding_Box, index, leaf_count: i32) -> Tree_Node_Child
+tree_child_from_bounds :: proc "contextless" (bounds: Tree_Bounds, index, leaf_count: i32) -> Tree_Node_Child
 {
 	return {min=bounds.min, index=index, max=bounds.max, leaf_count=leaf_count};
 }
 
-tree_bounds_intersect :: proc "contextless" (a, b: util.Bounding_Box) -> Reference_State
+tree_bounds_intersect :: proc "contextless" (a, b: Tree_Bounds) -> Reference_State
 {
 	if a.max.x < b.min.x || a.min.x > b.max.x ||
 		a.max.y < b.min.y || a.min.y > b.max.y ||
@@ -156,9 +156,9 @@ tree_bounds_intersect :: proc "contextless" (a, b: util.Bounding_Box) -> Referen
 	return .Present;
 }
 
-tree_bounds_metric :: proc "contextless" (bounds: util.Bounding_Box) -> f32
+tree_bounds_metric :: proc "contextless" (bounds: Tree_Bounds) -> Tree_Scalar
 {
-	extent := util.vector3_subtract(bounds.max, bounds.min);
+	extent := tree_position_subtract(bounds.max, bounds.min);
 	return extent.x * extent.y + extent.y * extent.z + extent.x * extent.z;
 }
 
@@ -391,7 +391,7 @@ tree_clear :: proc "contextless" (tree: ^Tree) -> Physics_Status
 	return .Ok;
 }
 
-tree_get_leaf_bounds :: proc "contextless" (tree: ^Tree, leaf_index: int) -> (util.Bounding_Box, Physics_Status)
+tree_get_leaf_bounds :: proc "contextless" (tree: ^Tree, leaf_index: int) -> (Tree_Bounds, Physics_Status)
 {
 	if tree == nil || tree.state != .Ready || leaf_index < 0 || leaf_index >= tree.leaf_count
 	{
@@ -423,6 +423,6 @@ tree_dispose :: proc (tree: ^Tree) -> Physics_Status
 }
 
 #assert(size_of(Tree_Leaf) == 4);
-#assert(size_of(Tree_Node_Child) == 32);
-#assert(size_of(Tree_Node) == 64);
+#assert(size_of(Tree_Node_Child) == 8 * size_of(Tree_Scalar));
+#assert(size_of(Tree_Node) == 16 * size_of(Tree_Scalar));
 #assert(size_of(Tree_Metanode) == 12);

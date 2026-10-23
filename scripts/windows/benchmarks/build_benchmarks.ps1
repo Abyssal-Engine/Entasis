@@ -8,9 +8,11 @@ param(
         "awakening_duplicate_sets", "container", "contact_churn_grid_4k",
         "noncontact_constraint_mix", "noncontact_fallback_smoke", "shape_mixed_bounds", "spatial_query_trace", "spatial_query_batch",
         "custom_extensions", "query_extensions", "world_lifecycle",
-        "contact_islands", "ragdoll_stair_tumble", "pyramid", "pyramid_wall", "scene_stability"
+        "contact_islands", "ragdoll_stair_tumble", "pyramid", "pyramid_wall", "scene_stability", "large_world_precision"
     )]
     [string]$Package,
+    [string]$Precision = "Float32",
+    [string]$PrecisionCandidate = "",
     [string]$Components = "All",
     [ValidateSet("Executable", "Assembly")]
     [string]$Emit = "Executable",
@@ -22,6 +24,39 @@ param(
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if ($Precision -notin @("Float32", "Mixed64"))
+{
+    [Console]::Error.WriteLine("Precision must be Float32 or Mixed64")
+    exit 2
+}
+if ($Package -eq "large_world_precision")
+{
+    if ($PrecisionCandidate -cnotin @("baseline", "origin", "mixed64") -or
+        $Record -ne "Off" -or $PSBoundParameters.ContainsKey("Components"))
+    {
+        [Console]::Error.WriteLine("Precision package requires a supported candidate, Record Off and no Components")
+        exit 2
+    }
+    $selectedPrecision = if ($PrecisionCandidate -eq "mixed64")
+    {
+        "Mixed64"
+    }
+    else
+    {
+        "Float32"
+    }
+    if ($PSBoundParameters.ContainsKey("Precision") -and $Precision -ne $selectedPrecision)
+    {
+        [Console]::Error.WriteLine("Precision conflicts with candidate")
+        exit 2
+    }
+    $Precision = $selectedPrecision
+}
+elseif ($PSBoundParameters.ContainsKey("PrecisionCandidate"))
+{
+    [Console]::Error.WriteLine("PrecisionCandidate requires large_world_precision")
+    exit 2
+}
 if ($Symbols -eq "On" -and ($Configuration -ne "Release" -or $Emit -ne "Executable" -or
     -not $PSBoundParameters.ContainsKey("Package") -or $Record -ne "Off"))
 {
@@ -86,7 +121,7 @@ Write-Host "BENCHMARK_BUILD_CONFIG configuration=$($Configuration.ToLowerInvaria
 
 foreach ($selectedPackage in $packages)
 {
-    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols
+    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols $Precision $PrecisionCandidate
 }
 if ($Emit -eq "Executable")
 {

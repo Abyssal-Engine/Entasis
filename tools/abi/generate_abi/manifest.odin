@@ -565,6 +565,12 @@ validate_manifest :: proc(manifest: ^Manifest) -> (External_Flag, string)
 		items := field_items(root, section_name)
 		for item, index in items
 		{
+			availability: string = field_string(item, "availability");
+			if (node_field(item, "availability") != nil && node_field(item, "availability").kind != .String) ||
+				(availability != "" && availability != "mixed64")
+			{
+				return .Disabled, fmt.aprintf("unsupported availability for %s", field_string(item, "name"));
+			}
 			name := field_string(item, "name")
 			for previous in items[:index]
 			{

@@ -484,6 +484,13 @@ pose_callbacks_state :: #force_inline proc "contextless" (
 	callbacks: Pose_Callbacks,
 ) -> Callback_Table_State
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if callbacks.integrate_velocity_global != nil
+		{
+			return .Configured;
+		}
+	}
 	if callbacks.initialize == nil &&
 		callbacks.prepare_for_integration == nil &&
 		callbacks.integrate_velocity == nil && callbacks.dispose == nil &&

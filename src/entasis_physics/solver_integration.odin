@@ -382,7 +382,7 @@ solver_prepare_integration_region_block :: proc "contextless" (
 	type_batch := &batch.type_batches.memory[type_batch_index];
 	word_count := int(type_batch.integration_flag_word_count);
 	flag_offset := int(type_batch.integration_flags_offset);
-	has_responsibility := false;
+	responsibility: Reference_State = .Missing;
 	for bundle_index in int(block.start_bundle) ..< int(block.end_bundle)
 	{
 		first_constraint_index := bundle_index * util.PRODUCTION_LANE_COUNT;
@@ -419,11 +419,11 @@ solver_prepare_integration_region_block :: proc "contextless" (
 					(constraint_index >> util.INDEX_SET_SHIFT);
 				solver.integration_flags.memory[flag_word_index] |=
 					u64(1) << uint(constraint_index & util.INDEX_SET_MASK);
-				has_responsibility = true;
+				responsibility = .Present;
 			}
 		}
 	}
-	if has_responsibility
+	if responsibility == .Present
 	{
 		block.end_bundle = -block.end_bundle;
 	}
@@ -600,13 +600,23 @@ solver_integrate_constraint_body_nonconserving_wide :: #force_inline proc "conte
 		~integration_mask;
 	if phase == .Continuation
 	{
-		integrated_position := util.vector3_wide_add(
-			position^,
-			util.vector3_wide_scale(velocity.linear, util.F32x8(dt)),
-		);
-		position^ = util.vector3_wide_select(
-			integration_mask, integrated_position, position^,
-		);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position^ = bodies_integrate_global_positions_trusted(
+				solver.bodies, encoded_references, integration_mask,
+				util.vector3_wide_scale(velocity.linear, util.F32x8(dt)), position^,
+			);
+		}
+		else
+		{
+			integrated_position := util.vector3_wide_add(
+				position^,
+				util.vector3_wide_scale(velocity.linear, util.F32x8(dt)),
+			);
+			position^ = util.vector3_wide_select(
+				integration_mask, integrated_position, position^,
+			);
+		}
 		integrated_orientation := solver_integrate_orientation_nonconserving_wide(
 			orientation^, velocity.angular, util.F32x8(dt * 0.5),
 		);
@@ -622,8 +632,8 @@ solver_integrate_constraint_body_nonconserving_wide :: #force_inline proc "conte
 		inverse_mass=local_inertia.inverse_mass,
 	};
 	previous_velocity := velocity^;
-	solver.integrator.callbacks.integrate_velocity(
-		solver.integrator.callbacks.user_context,
+	pose_integrator_invoke_velocity(
+		solver.integrator,
 		decoded,
 		position^,
 		orientation^,
@@ -702,7 +712,17 @@ solver_integrate_constraint_body :: proc "contextless" (
 			previous_orientation := lane_orientation;
 			lane_position := util.vector3_wide_read_slot(position^, lane);
 			lane_linear := util.vector3_wide_read_slot(velocity.linear, lane);
-			lane_position = util.vector3_add(lane_position, util.vector3_scale(lane_linear, dt));
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				lane_position = world_precision_advance_position(
+					&integrator.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].global_positions.memory[index],
+					util.vector3_scale(lane_linear, dt),
+				);
+			}
+			else
+			{
+				lane_position = util.vector3_add(lane_position, util.vector3_scale(lane_linear, dt));
+			}
 			lane_orientation = pose_integrator_integrate_orientation(lane_orientation, lane_velocity, dt);
 			if integrator.callbacks.angular_mode == .Conserve_Momentum &&
 				simd.extract(local_inertia.inverse_mass, lane) > 0
@@ -765,8 +785,8 @@ solver_integrate_constraint_body :: proc "contextless" (
 	if solver_mask_has_lanes(callback_mask) == .Present
 	{
 		previous_velocity := velocity^;
-		integrator.callbacks.integrate_velocity(
-			integrator.callbacks.user_context, transmute(util.I32x8)decoded_values,
+		pose_integrator_invoke_velocity(
+			integrator, transmute(util.I32x8)decoded_values,
 			position^, orientation^, local_inertia, callback_mask, worker_index, util.F32x8(dt), velocity,
 		);
 		velocity.linear = util.vector3_wide_select(callback_mask, velocity.linear, previous_velocity.linear);
@@ -818,7 +838,17 @@ solver_integrate_kinematic_lanes :: proc "contextless" (
 			lane_velocity := util.vector3_wide_read_slot(velocity.linear, lane);
 			lane_orientation := util.quaternion_wide_read_slot(orientation, lane);
 			lane_angular := util.vector3_wide_read_slot(velocity.angular, lane);
-			lane_position = util.vector3_add(lane_position, util.vector3_scale(lane_velocity, dt));
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				lane_position = world_precision_advance_position(
+					&integrator.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].global_positions.memory[decoded_values[lane]],
+					util.vector3_scale(lane_velocity, dt),
+				);
+			}
+			else
+			{
+				lane_position = util.vector3_add(lane_position, util.vector3_scale(lane_velocity, dt));
+			}
 			lane_orientation = pose_integrator_integrate_orientation(
 				lane_orientation, lane_angular, dt,
 			);
@@ -831,8 +861,8 @@ solver_integrate_kinematic_lanes :: proc "contextless" (
 	}
 	if integrator.callbacks.integrate_kinematic_velocity == .Enabled
 	{
-		integrator.callbacks.integrate_velocity(
-			integrator.callbacks.user_context, decoded, position, orientation, {},
+		pose_integrator_invoke_velocity(
+			integrator, decoded, position, orientation, {},
 			integration_mask, worker_index, util.F32x8(dt), &velocity,
 		);
 		bodies_scatter_active_velocities_trusted(

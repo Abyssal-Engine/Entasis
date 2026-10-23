@@ -26,7 +26,7 @@ To build the libraries yourself, obtain the [full checkout](https://github.com/A
 
 Source builds require Odin. The scripts obtain missing declared tools, check generated ABI files, compile shared and static runtime/cooking libraries, and verify exports. Rebuild after source changes before running consumer or semantic tests
 
-Packaging uses the existing Release libraries. It does not rebuild them. The extracted SDK's root `README.md` has consumer commands, CMake targets and Linux pkg-config linking
+Packaging uses the existing Release libraries. It does not rebuild them
 
 ## Common tasks
 

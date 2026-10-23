@@ -126,7 +126,41 @@ solver_execute_type_bundle_dispatch_integration :: proc "contextless" (
 		body.inverse_mass = inertia.inverse_mass;
 		body.inverse_inertia = inertia.inverse_inertia_tensor;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< int(type_batch.body_count)
+		{
+			if .Position in body_accesses[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if ((record.type_id < FIRST_CALLER_CONSTRAINT_TYPE_ID && type_batch.body_count > 1) || record.position_space == .Body_A_Relative) && position_bodies != 0
+		{
+			status: Physics_Status = solver_gather_constraint_relative_positions(
+				solver.bodies, &encoded_references[0], int(type_batch.body_count), position_bodies, active_mask, &kernel_bodies[0]);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	prestep := type_batch_prestep_bundle(type_batch, first_index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		local_target: Constraint_Local_Target_Prestep;
+		if (record.type_id == ONE_BODY_LINEAR_SERVO_TYPE_ID || record.type_id == BODY_AXIS_LOCK_TYPE_ID) && (stage == .Warmstart || stage == .Solve)
+		{
+			status: Physics_Status = solver_prepare_constraint_global_target(
+				solver.bodies, record.type_id, prestep, encoded_references[0], active_mask, &kernel_bodies[0], &local_target);
+			if status != .Ok
+			{
+				return status;
+			}
+			prestep = &local_target;
+		}
+	}
 	impulses := type_batch_impulse_bundle(type_batch, first_index);
 	when callback_dispatch == .Contextual
 	{
@@ -320,12 +354,12 @@ solver_execute_direct_noncontact_kernel :: #force_inline proc "contextless" (
 }
 
 solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
-	$type_id: i32, body_index: int, solve: bool,
+	$type_id: i32, body_index: int, stage: Solver_Execution_Stage,
 ) -> Body_Access_Mask
 {
 	when type_id == BALL_SOCKET_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ALL;
 		}
@@ -333,7 +367,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == ANGULAR_HINGE_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ONLY_ANGULAR;
 		}
@@ -353,7 +387,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == ANGULAR_SERVO_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ONLY_ANGULAR;
 		}
@@ -361,7 +395,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == ANGULAR_MOTOR_TYPE_ID
 	{
-		if !solve
+		if stage != .Solve
 		{
 			return BODY_ACCESS_ONLY_ANGULAR_WITHOUT_POSE;
 		}
@@ -373,7 +407,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == WELD_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ALL;
 		}
@@ -402,7 +436,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == ANGULAR_AXIS_MOTOR_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ONLY_ANGULAR;
 		}
@@ -418,7 +452,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == ONE_BODY_ANGULAR_MOTOR_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ONLY_ANGULAR;
 		}
@@ -432,7 +466,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	type_id == HINGE_TYPE_ID ||
 	type_id == BALL_SOCKET_SERVO_TYPE_ID
 	{
-		if solve
+		if stage == .Solve
 		{
 			return BODY_ACCESS_ALL;
 		}
@@ -440,7 +474,7 @@ solver_direct_noncontact_body_access :: #force_inline proc "contextless" (
 	}
 	else when type_id == BALL_SOCKET_MOTOR_TYPE_ID
 	{
-		if solve || body_index != 0
+		if stage == .Solve || body_index != 0
 		{
 			return BODY_ACCESS_ALL;
 		}
@@ -487,7 +521,7 @@ solver_execute_direct_noncontact_bundle_integration :: proc "contextless" (
 		);
 		encoded_references[body_index] = encoded;
 		access := solver_direct_noncontact_body_access(
-			type_id, body_index, stage == .Solve,
+			type_id, body_index, stage,
 		);
 		integration_mode := Solver_Bundle_Integration_Mode.None;
 		integration_mask: util.I32x8;
@@ -544,7 +578,41 @@ solver_execute_direct_noncontact_bundle_integration :: proc "contextless" (
 		body.inverse_mass = inertia.inverse_mass;
 		body.inverse_inertia = inertia.inverse_inertia_tensor;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< body_count
+		{
+			if .Position in body_accesses[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if body_count > 1 && position_bodies != 0
+		{
+			status: Physics_Status = solver_gather_constraint_relative_positions(
+				solver.bodies, &encoded_references[0], body_count, position_bodies, active_mask, &kernel_bodies[0]);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	prestep := type_batch_prestep_bundle(type_batch, first_index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		local_target: Constraint_Local_Target_Prestep;
+		if type_id == ONE_BODY_LINEAR_SERVO_TYPE_ID && (stage == .Warmstart || stage == .Solve)
+		{
+			status: Physics_Status = solver_prepare_constraint_global_target(
+				solver.bodies, type_id, prestep, encoded_references[0], active_mask, &kernel_bodies[0], &local_target);
+			if status != .Ok
+			{
+				return status;
+			}
+			prestep = &local_target;
+		}
+	}
 	impulses := type_batch_impulse_bundle(type_batch, first_index);
 	switch stage
 	{
@@ -1293,6 +1361,18 @@ solver_execute_ball_socket_work_block_stage :: proc "contextless" (
 			kernel_body.inverse_inertia.zy = inertia.inverse_inertia_tensor.zy;
 			kernel_body.inverse_inertia.zz = inertia.inverse_inertia_tensor.zz;
 		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			when stage == .Warmstart
+			{
+				status: Physics_Status = solver_gather_constraint_relative_positions(
+					solver.bodies, &encoded_references[0], 2, 3, active_mask, &kernel_bodies[0]);
+				if status != .Ok
+				{
+					return status;
+				}
+			}
+		}
 		prestep: ^Ball_Socket_Prestep = (^Ball_Socket_Prestep)(type_batch_prestep_bundle(type_batch, first_index));
 		impulses: ^util.Vector3_Wide = (^util.Vector3_Wide)(type_batch_impulse_bundle(type_batch, first_index));
 		when stage == .Warmstart
@@ -1537,7 +1617,41 @@ solver_execute_type_lane_dispatch_integration :: proc "contextless" (
 		body.inverse_mass = inertia.inverse_mass;
 		body.inverse_inertia = inertia.inverse_inertia_tensor;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< int(type_batch.body_count)
+		{
+			if .Position in body_accesses[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if ((record.type_id < FIRST_CALLER_CONSTRAINT_TYPE_ID && type_batch.body_count > 1) || record.position_space == .Body_A_Relative) && position_bodies != 0
+		{
+			status: Physics_Status = solver_gather_constraint_relative_positions(
+				solver.bodies, &encoded_references[0], int(type_batch.body_count), position_bodies, active_mask, &kernel_bodies[0]);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	prestep := type_batch_prestep_bundle(type_batch, constraint_index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		local_target: Constraint_Local_Target_Prestep;
+		if (record.type_id == ONE_BODY_LINEAR_SERVO_TYPE_ID || record.type_id == BODY_AXIS_LOCK_TYPE_ID) && (stage == .Warmstart || stage == .Solve)
+		{
+			status: Physics_Status = solver_prepare_constraint_global_target(
+				solver.bodies, record.type_id, prestep, encoded_references[0], active_mask, &kernel_bodies[0], &local_target);
+			if status != .Ok
+			{
+				return status;
+			}
+			prestep = &local_target;
+		}
+	}
 	impulses := type_batch_impulse_bundle(type_batch, constraint_index);
 	when callback_dispatch == .Contextual
 	{
@@ -1631,7 +1745,7 @@ solver_execute_direct_noncontact_lane_integration :: proc "contextless" (
 		}
 		encoded_references[body_index] = encoded;
 		access := solver_direct_noncontact_body_access(
-			type_id, body_index, stage == .Solve,
+			type_id, body_index, stage,
 		);
 		integration_mode := Solver_Bundle_Integration_Mode.None;
 		integration_mask: util.I32x8;
@@ -1688,7 +1802,41 @@ solver_execute_direct_noncontact_lane_integration :: proc "contextless" (
 		body.inverse_mass = inertia.inverse_mass;
 		body.inverse_inertia = inertia.inverse_inertia_tensor;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< body_count
+		{
+			if .Position in body_accesses[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if body_count > 1 && position_bodies != 0
+		{
+			status: Physics_Status = solver_gather_constraint_relative_positions(
+				solver.bodies, &encoded_references[0], body_count, position_bodies, active_mask, &kernel_bodies[0]);
+			if status != .Ok
+			{
+				return status;
+			}
+		}
+	}
 	prestep := type_batch_prestep_bundle(type_batch, constraint_index);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		local_target: Constraint_Local_Target_Prestep;
+		if type_id == ONE_BODY_LINEAR_SERVO_TYPE_ID && (stage == .Warmstart || stage == .Solve)
+		{
+			status: Physics_Status = solver_prepare_constraint_global_target(
+				solver.bodies, type_id, prestep, encoded_references[0], active_mask, &kernel_bodies[0], &local_target);
+			if status != .Ok
+			{
+				return status;
+			}
+			prestep = &local_target;
+		}
+	}
 	impulses := type_batch_impulse_bundle(type_batch, constraint_index);
 	switch stage
 	{

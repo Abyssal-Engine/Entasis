@@ -26,8 +26,19 @@ Report_Status :: enum
 	Allocation_Failed,
 }
 
+Query_Measurement :: struct
+{
+	group, family, components: string,
+	case_name, operation, cell: string,
+	inputs, passes, queries: int,
+	repetitions, warmup_repetitions, warmup_batches, measured_batches: int,
+}
+
 Report_Request :: struct
 {
+	query: Query_Measurement,
+	ray_pattern: string,
+	precision, precision_candidate, precision_case, sampling_mode: string,
 	variant: string,
 	source_directory:  string,
 	package_name:      string,
@@ -44,6 +55,9 @@ Report_Request :: struct
 
 Lane_Summary :: struct
 {
+	query: Query_Measurement,
+	profile: string,
+	precision: Precision_Result,
 	recording_mode: Result_Recording,
 	timing_method: Result_Timing,
 	benchmark_parameters: string,
@@ -55,6 +69,7 @@ Lane_Summary :: struct
 	maximum:      f64,
 	speedup:      f64,
 	ray_checksum: u64,
+	ray_pattern: string,
 	measured_units: int,
 	query_count: int,
 	median_throughput: f64,
@@ -176,6 +191,303 @@ summarize_csv :: proc(path: string, expected_rows, worker_count: int, package_na
 	return summarize_records(records, path, expected_rows, worker_count, package_name)
 }
 
+query_positive_count :: proc "contextless" (value: string, limit: u64 = 1_000_000) -> (int, Report_Status)
+{
+	if len(value) == 0
+	{
+		return 0, .Invalid_Measurement;
+	}
+	count: u64;
+	for character in value
+	{
+		if character < '0' || character > '9' || count > (limit-u64(character-'0'))/10
+		{
+			return 0, .Invalid_Measurement;
+		}
+		count = count*10+u64(character-'0');
+	}
+	return int(count), .Ok if count > 0 && count <= limit else .Invalid_Measurement;
+}
+
+query_group_column :: proc(group, components: string) -> (string, Report_Status)
+{
+	routes: [4]string = {"convex", "compound", "mesh", "native_custom"};
+	operations: [12]string = {"ray_closest", "ray_filtered", "ray_all", "sweep_closest", "sweep_all", "geometric_overlap", "direct_collision", "collision_batch", "closest_point", "shape_distance", "depenetration", "overlap_any"};
+	for route in routes
+	{
+		for operation, index in operations
+		{
+			if index >= 8 && components != "all"
+			{
+				continue;
+			}
+			if group == fmt.tprintf("%s.%s", route, operation)
+			{
+				return fmt.aprintf("%s_%s", route, operation), .Ok;
+			}
+		}
+	}
+	return "", .Invalid_Measurement;
+}
+
+query_measurement_read :: proc(records: [][]string, package_name: string, worker: int) -> (Query_Measurement, Report_Result)
+{
+	settings: Query_Measurement;
+	if package_name != "query_extensions" && package_name != "spatial_query_trace" && package_name != "spatial_query_batch"
+	{
+		return settings, {status=.Ok};
+	}
+	header: []string = records[0];
+	for name, index in header
+	{
+		for prior in header[:index]
+		{
+			if name == prior
+			{
+				return {}, report_error(.Invalid_Header, "duplicate query header: %s", name);
+			}
+		}
+	}
+	if _, status := header_index(header, "query_case"); status == .Ok
+	{
+		if package_name != "query_extensions"
+		{
+			return {}, report_error(.Invalid_Header, "query case requires query_extensions");
+		}
+		return query_case_read(records, worker);
+	}
+	for name in ([2]string{"query_operation", "query_cell"})
+	{
+		if _, status := header_index(header, name); status == .Ok
+		{
+			return {}, report_error(.Invalid_Header, "partial query case metadata");
+		}
+	}
+	group_column, group_status := header_index(header, "query_group");
+	repetitions_column, repetitions_status := header_index(header, "query_repetitions");
+	warmup_column, warmup_status := header_index(header, "query_warmup_repetitions");
+	family_column, family_status := header_index(header, "query_family");
+	metadata_count: int = (1 if group_status == .Ok else 0)+(1 if repetitions_status == .Ok else 0)+(1 if warmup_status == .Ok else 0);
+	if (metadata_count != 0 && metadata_count != 3) || (metadata_count > 0 && package_name != "query_extensions") ||
+		(family_status == .Ok && package_name != "spatial_query_trace")
+	{
+		return {}, report_error(.Invalid_Header, "partial or inapplicable query selection metadata");
+	}
+	for row, row_index in records[1:]
+	{
+		if len(row) != len(header)
+		{
+			return {}, report_error(.Csv_Invalid, "query column count mismatch");
+		}
+		current: Query_Measurement;
+		if package_name == "query_extensions"
+		{
+			current.case_name = "control";
+		}
+		if column, status := header_index(header, "worker_count"); status == .Ok
+		{
+			value, parsed := strconv.parse_i64(row[column]);
+			if !parsed || value != i64(worker)
+			{
+				return {}, report_error(.Invalid_Measurement, "query worker mismatch");
+			}
+		}
+		if column, status := header_index(header, "benchmark_components"); status == .Ok
+		{
+			current.components = row[column];
+			if current.components != "common" && current.components != "all"
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid query components");
+			}
+		}
+		if metadata_count == 3
+		{
+			current.group = row[group_column];
+			selected, selection_status := query_group_column(current.group, current.components);
+			defer delete(selected);
+			var_status: Report_Status;
+			current.repetitions, var_status = query_positive_count(row[repetitions_column]);
+			current.warmup_repetitions, warmup_status = query_positive_count(row[warmup_column]);
+			count_column, count_status := header_index(header, "query_count_per_operation");
+			if selection_status != .Ok || var_status != .Ok || warmup_status != .Ok || count_status != .Ok
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid focused query selection or counts");
+			}
+			calls, calls_status := query_positive_count(row[count_column], 8192*1_000_000);
+			if calls_status != .Ok || u64(calls) != 8192*u64(current.repetitions)
+			{
+				return {}, report_error(.Invalid_Measurement, "focused query call accounting mismatch");
+			}
+			state_column, state_status := header_index(header, "cq01_state");
+			if state_status != .Ok || row[state_column] != "Excluded"
+			{
+				return {}, report_error(.Invalid_Measurement, "focused query total must be excluded");
+			}
+			if column, status := header_index(header, "cq01_elapsed_ms"); status == .Ok && row[column] != "excluded"
+			{
+				return {}, report_error(.Invalid_Measurement, "focused additional total must be excluded");
+			}
+			selected_columns, group_columns: int;
+			for name, column in header
+			{
+				if name == "physics_elapsed_ms" || name == "cq01_elapsed_ms"
+				{
+					continue;
+				}
+				if !strings.has_suffix(name, "_ms") && !strings.has_suffix(name, "_hits") && !strings.has_suffix(name, "_checksum")
+				{
+					continue;
+				}
+				group_columns += 1;
+				if name == fmt.tprintf("%s_ms", selected) || name == fmt.tprintf("%s_hits", selected) || name == fmt.tprintf("%s_checksum", selected)
+				{
+					value, parsed := strconv.parse_f64(row[column]);
+					if !parsed || math.is_nan(value) || math.is_inf(value) || value < 0 || (strings.has_suffix(name, "_ms") && value <= 0)
+					{
+						return {}, report_error(.Invalid_Measurement, "invalid executed focused group");
+					}
+					if strings.has_suffix(name, "_ms")
+					{
+						total_column, total_status := header_index(header, "physics_elapsed_ms");
+						if total_status != .Ok || row[column] != row[total_column]
+						{
+							return {}, report_error(.Invalid_Measurement, "focused elapsed total differs from selected group");
+						}
+					}
+					selected_columns += 1;
+				}
+				else if row[column] != "excluded"
+				{
+					return {}, report_error(.Invalid_Measurement, "unselected query group must be excluded");
+				}
+			}
+			if selected_columns != 3 || group_columns != (144 if current.components == "all" else 96)
+			{
+				return {}, report_error(.Invalid_Header, "missing focused group columns");
+			}
+		}
+		if package_name == "query_extensions" && metadata_count == 0
+		{
+			if column, status := header_index(header, "query_count_per_operation"); status == .Ok
+			{
+				count, count_status := query_positive_count(row[column], 8192);
+				if count_status != .Ok || count != 8192
+				{
+					return {}, report_error(.Invalid_Measurement, "complete extension workload requires 8192 calls per operation");
+				}
+			}
+			for name, column in header
+			{
+				if name != "cq01_elapsed_ms" && (strings.has_suffix(name, "_ms") || strings.has_suffix(name, "_hits") || strings.has_suffix(name, "_checksum")) && row[column] == "excluded"
+				{
+					return {}, report_error(.Invalid_Measurement, "excluded query group requires focused metadata");
+				}
+			}
+		}
+		if package_name == "spatial_query_trace" || package_name == "spatial_query_batch"
+		{
+			current.family = "all";
+			current.warmup_batches = 10;
+			if family_status == .Ok
+			{
+				current.family = row[family_column];
+			}
+			if current.family != "all" && current.family != "ray" && current.family != "sphere-cast" && current.family != "aabb-presence"
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid query family");
+			}
+			for name, index in ([2]string{"warmup_batches", "measured_batches"})
+			{
+				column, status := header_index(header, name);
+				if status != .Ok
+				{
+					return {}, report_error(.Invalid_Header, "missing spatial work count");
+				}
+				count, count_status := query_positive_count(row[column]);
+				if count_status != .Ok
+				{
+					return {}, report_error(.Invalid_Measurement, "invalid spatial work count");
+				}
+				if index == 0
+				{
+					current.warmup_batches = count;
+				}
+				else
+				{
+					current.measured_batches = count;
+				}
+			}
+			if current.family != "all"
+			{
+				if column, status := header_index(header, "ray_pattern"); status == .Ok && row[column] == "oblique" && current.family != "ray"
+				{
+					return {}, report_error(.Invalid_Measurement, "oblique requires rays");
+				}
+			}
+			if package_name == "spatial_query_trace"
+			{
+				total: f64;
+				for family, index in ([3]string{"ray", "sphere_cast", "overlap"})
+				{
+					family_names: [3]string = {"ray", "sphere-cast", "aabb-presence"};
+					family_name: string = family_names[index];
+					for suffix in ([5]string{"_query_count", "_hit_count", "_checksum", "_elapsed_ms", "_queries_per_second"})
+					{
+						name: string = fmt.tprintf("%s%s", family, suffix);
+						column, status := header_index(header, name);
+						if status != .Ok && family_status != .Ok
+						{
+							continue;
+						}
+						if status != .Ok
+						{
+							return {}, report_error(.Invalid_Header, "missing selected spatial family column: %s", name);
+						}
+						if current.family != "all" && current.family != family_name
+						{
+							if row[column] != "excluded"
+							{
+								return {}, report_error(.Invalid_Measurement, "skipped spatial family must be excluded");
+							}
+							continue;
+						}
+						value, parsed := strconv.parse_f64(row[column]);
+						if !parsed || math.is_nan(value) || math.is_inf(value) || value <= 0 ||
+							(suffix == "_query_count" && value != f64(50_000 if index == 0 else 25_000)) ||
+							(suffix == "_hit_count" && value != f64(25_000 if index == 0 else 12_500))
+						{
+							return {}, report_error(.Invalid_Measurement, "invalid executed spatial family");
+						}
+						if suffix == "_elapsed_ms"
+						{
+							total += value;
+						}
+					}
+				}
+				if total > 0
+				{
+					column, status := header_index(header, "physics_elapsed_ms");
+					if status != .Ok
+					{
+						return {}, report_error(.Invalid_Header, "missing spatial total");
+					}
+					value, parsed := strconv.parse_f64(row[column]);
+					if !parsed || abs(value-total) > 0.00000001
+					{
+						return {}, report_error(.Invalid_Measurement, "spatial total differs from executed families");
+					}
+				}
+			}
+		}
+		if row_index > 0 && current != settings
+		{
+			return {}, report_error(.Invalid_Measurement, "query selection, counts or components differ within lane");
+		}
+		settings = current;
+	}
+	return settings, {status=.Ok};
+}
+
 summarize_records :: proc(records: [][]string, path: string, expected_rows, worker_count: int, package_name: string) -> (Lane_Summary, Report_Result)
 {
 	if len(records) != expected_rows + 1
@@ -187,6 +499,32 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 			expected_rows,
 			len(records) - 1,
 		)
+	}
+	query, query_status := query_measurement_read(records, package_name, worker_count);
+	if query_status.status != .Ok
+	{
+		return {}, query_status;
+	}
+	profile: string;
+	profile_status: Report_Result;
+	profile, profile_status = result_precision_profile(records);
+	if profile_status.status != .Ok
+	{
+		return {}, profile_status;
+	}
+	precision: Precision_Result;
+	if package_name == "large_world_precision"
+	{
+		precision_status: Report_Result;
+		precision, precision_status = precision_result_summary(records, worker_count);
+		if precision_status.status != .Ok
+		{
+			return {}, precision_status;
+		}
+		if precision.mode == "memory"
+		{
+			return {profile=profile, precision=precision, worker_count=worker_count, sample_count=expected_rows, recording_mode=.Off, timing_method=.Allocator_Instrumented}, {status=.Ok};
+		}
 	}
 	recording_mode, timing_method, recording_status := result_recording_conditions(records);
 	if recording_status.status != .Ok
@@ -239,11 +577,28 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 			parameter_columns[index] = column
 		}
 	}
+	ray_pattern: string;
+	ray_pattern_column: int = -1;
+	if package_name == "spatial_query_batch" || package_name == "spatial_query_trace"
+	{
+		ray_pattern = "axial";
+		for name, index in records[0]
+		{
+			if name == "ray_pattern"
+			{
+				if ray_pattern_column >= 0
+				{
+					return {}, report_error(.Invalid_Header, "duplicated ray_pattern in %s", path);
+				}
+				ray_pattern_column = index;
+			}
+		}
+	}
 	ray_columns: [7]int
 	if package_name == "spatial_query_batch"
 	{
 		names: [7]string = {"worker_count", "batch_size", "ray_query_count", "warmup_batches", "measured_batches", "ray_hit_count", "ray_checksum"}
-		if len(records[0]) != len(names) + 2
+		if len(records[0]) != len(names) + 2 + (1 if len(profile) > 0 else 0) + (1 if ray_pattern_column >= 0 else 0)
 		{
 			return {}, report_error(.Invalid_Header, "unexpected ray CSV columns in %s", path)
 		}
@@ -276,13 +631,22 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 		{
 			return {}, report_error(.Csv_Invalid, "column count mismatch in %s row %d", path, row_index + 2)
 		}
+		if ray_pattern_column >= 0
+		{
+			pattern: string = record[ray_pattern_column];
+			if (pattern != "axial" && pattern != "oblique") || (row_index > 0 && pattern != ray_pattern)
+			{
+				return {}, report_error(.Invalid_Measurement, "invalid or mixed ray pattern in %s row %d", path, row_index+2);
+			}
+			ray_pattern = pattern;
+		}
 		if record[case_status_index] != "ok" || record[metric_status_index] != "ok"
 		{
 			return {}, report_error(.Invalid_Status, "non-ok status in %s row %d", path, row_index + 2)
 		}
 		if package_name == "spatial_query_batch"
 		{
-			expected: [6]u64 = {u64(worker_count), 256, 50_000, 10, 100, 25_000}
+			expected: [6]u64 = {u64(worker_count), 256, 50_000, u64(query.warmup_batches), u64(query.measured_batches), 25_000}
 			for column, index in ray_columns
 			{
 				value, parsed := strconv.parse_u64(record[column])
@@ -318,10 +682,10 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 			units, units_parsed := strconv.parse_i64(record[unit_column])
 			queries, queries_parsed := strconv.parse_i64(record[query_column])
 			if !units_parsed || units <= 0 || units > 1_000_000 || !queries_parsed || queries <= 0 || queries > i64(max(i32)) ||
-				(package_name == "spatial_query_trace" && queries != 100_000) ||
+				(package_name == "spatial_query_trace" && queries != i64(100_000 if query.family == "all" else 50_000 if query.family == "ray" else 25_000)) ||
 				(row_index > 0 && (units != i64(measured_units) || queries != i64(query_count)))
 			{
-				return {}, report_error(.Invalid_Measurement, "query measured counts differ or are nonpositive")
+					return {}, report_error(.Invalid_Measurement, "query measured counts differ or are nonpositive")
 			}
 			measured_units, query_count = int(units), int(queries)
 		}
@@ -353,7 +717,14 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 			median_throughput = (throughputs[middle-1]+throughputs[middle])/2
 		}
 	}
+	if query.case_name == "hierarchy" || query.case_name == "global" || query.case_name == "collision-batch"
+	{
+		query_count, measured_units = query.queries, 1;
+		median_throughput = f64(query.queries)*0.001/median;
+	}
 	return Lane_Summary{
+		query=query,
+		profile=profile, precision=precision,
 		recording_mode=recording_mode, timing_method=timing_method,
 		worker_count = worker_count,
 		sample_count = expected_rows,
@@ -361,6 +732,7 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 		minimum = measurements[0],
 		maximum = measurements[len(measurements) - 1],
 		ray_checksum = ray_checksum,
+		ray_pattern = ray_pattern,
 		measured_units=measured_units, query_count=query_count, median_throughput=median_throughput, physical=physical,
 		benchmark_parameters = parameters,
 		measured_steps = measured_steps,
@@ -369,7 +741,7 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 
 collect_summaries :: proc(request: Report_Request) -> Report_Result
 {
-	if (workload_kind(request.package_name) == .Parameterized && variant_status(request.variant) != .Ok) ||
+	if (workload_kind(request.package_name) == .Parameterized && request.package_name != "large_world_precision" && variant_status(request.variant) != .Ok) ||
 	(workload_kind(request.package_name) == .Legacy && len(request.variant) != 0)
 	{
 		return report_error(.Invalid_Arguments, "variant must identify a configurable workload")
@@ -430,10 +802,41 @@ collect_summaries :: proc(request: Report_Request) -> Report_Result
 		{
 			return summary_result
 		}
+		if len(request.precision) > 0 && summary.profile != request.precision
+		{
+			return report_error(.Invalid_Measurement, "compiled precision differs from prepared artifact");
+		}
+		if request.package_name == "large_world_precision" &&
+			(summary.precision.candidate != request.precision_candidate || summary.precision.precision_case != request.precision_case || summary.precision.mode != request.sampling_mode)
+		{
+				return report_error(.Invalid_Measurement, "precision output differs from requested cell");
+		}
+		if (request.query.case_name != "" && request.query.case_name != summary.query.case_name) ||
+			(request.query.operation != "" && request.query.operation != summary.query.operation) ||
+			(request.query.cell != "" && request.query.cell != summary.query.cell) ||
+			((request.query.group != "" || request.query.components != "") && request.query.group != summary.query.group) ||
+			(request.query.family != "" && request.query.family != summary.query.family) ||
+			(request.query.components != "" && request.query.components != summary.query.components) ||
+			(request.query.repetitions > 0 && request.query.repetitions != summary.query.repetitions) ||
+			(request.query.warmup_repetitions > 0 && request.query.warmup_repetitions != summary.query.warmup_repetitions) ||
+			(request.query.warmup_batches > 0 && request.query.warmup_batches != summary.query.warmup_batches) ||
+			(request.query.measured_batches > 0 && request.query.measured_batches != summary.query.measured_batches) ||
+			(request.ray_pattern != "" && request.ray_pattern != summary.ray_pattern)
+		{
+			return report_error(.Invalid_Measurement, "emitted query settings differ from requested Run");
+		}
+		if len(summaries) > 0 && (summary.query != summaries[0].query || summary.profile != summaries[0].profile)
+		{
+			return report_error(.Invalid_Measurement, "query selection, counts, components or precision differ across workers");
+		}
+		if len(summaries) > 0 && summary.ray_pattern != summaries[0].ray_pattern
+		{
+			return report_error(.Invalid_Measurement, "ray pattern differs across worker counts in %s", path);
+		}
 		if request.package_name == "spatial_query_batch" && len(summaries) > 0 &&
 			summary.ray_checksum != summaries[0].ray_checksum
 		{
-			return report_error(.Invalid_Measurement, "ray checksum differs across worker counts in %s", path)
+				return report_error(.Invalid_Measurement, "ray checksum differs across worker counts in %s", path)
 		}
 		if workload_kind(request.package_name) == .Parameterized && len(summaries) > 0 &&
 		(summary.benchmark_parameters != summaries[0].benchmark_parameters || summary.measured_steps != summaries[0].measured_steps)
@@ -447,7 +850,7 @@ collect_summaries :: proc(request: Report_Request) -> Report_Result
 		if len(summaries) > 0 && (summary.physical.mode != summaries[0].physical.mode || summary.physical.criterion != summaries[0].physical.criterion ||
 			summary.physical.shape_limit != summaries[0].physical.shape_limit || summary.measured_units != summaries[0].measured_units || summary.query_count != summaries[0].query_count)
 		{
-			return report_error(.Invalid_Measurement, "incompatible physical verification or query counts across workers")
+				return report_error(.Invalid_Measurement, "incompatible physical verification or query counts across workers")
 		}
 		append(&summaries, summary)
 	}
@@ -462,7 +865,14 @@ collect_summaries :: proc(request: Report_Request) -> Report_Result
 	baseline := summaries[smallest_worker_index].median
 	for &summary in summaries
 	{
-		summary.speedup = baseline / summary.median
+		if summary.precision.mode != "memory"
+		{
+			summary.speedup = baseline / summary.median;
+			if (summary.query.case_name == "hierarchy" || summary.query.case_name == "global" || summary.query.case_name == "collision-batch") && summaries[smallest_worker_index].worker_count != 1
+			{
+				summary.speedup = 0;
+			}
+		}
 	}
 	return Report_Result{status = .Ok, summaries = summaries}
 }
@@ -476,7 +886,14 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	{
 		compiler_version = compiler_version[version_start + len(" version "):]
 	}
-	report_format_line(&builder, "# Benchmark result: %s", request.package_name)
+	if summaries[0].query.group != ""
+	{
+		report_format_line(&builder, "# Benchmark result: %s (%s)", request.package_name, summaries[0].query.group);
+	}
+	else
+	{
+		report_format_line(&builder, "# Benchmark result: %s", request.package_name);
+	}
 	report_line(&builder)
 	report_format_line(&builder, "- Configuration: `%s`", request.configuration)
 	report_format_line(&builder, "- Recording: %v | Timing: %v", summaries[0].recording_mode, summaries[0].timing_method)
@@ -486,6 +903,37 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	report_format_line(&builder, "- Processor: `%s`", request.processor)
 	report_format_line(&builder, "- Logical processors: `%d`", request.logical_processors)
 	report_line(&builder)
+	if request.package_name == "large_world_precision"
+	{
+		report_format_line(&builder, "Precision: %s | Candidate: %s | Case: %s | Mode: %s", request.precision, request.precision_candidate, request.precision_case, request.sampling_mode);
+		if request.sampling_mode == "memory"
+		{
+			report_line(&builder, "Memory observations from separate allocator-instrumented processes");
+			report_line(&builder, "| Workers | Field | Maximum observed value |");
+			report_line(&builder, "| --- | --- | --- |");
+			for summary in summaries
+			{
+				for name, index in PRECISION_MEMORY_NAMES
+				{
+					report_format_line(&builder, "| %d | %s | %d |", summary.worker_count, name, summary.precision.memory[index]);
+				}
+			}
+			return strings.to_string(builder);
+		}
+		report_line(&builder, "| Workers | Observations | Frame median ms, maximum across processes | Frame maximum ms | Maintenance events | Maintenance maximum ms |");
+		report_line(&builder, "| --- | --- | --- | --- | --- | --- |");
+		for summary in summaries
+		{
+			if request.sampling_mode == "batch"
+			{
+				report_format_line(&builder, "| %d | %d | unavailable | unavailable | %d | unavailable |", summary.worker_count, summary.precision.count, summary.precision.maintenance_count);
+			}
+			else
+			{
+				report_format_line(&builder, "| %d | %d | %.9f | %.9f | %d | %.9f |", summary.worker_count, summary.precision.count, summary.precision.frame_median_ms, summary.precision.frame_max_ms, summary.precision.maintenance_count, summary.precision.maintenance_max_ms);
+			}
+		}
+	}
 	if workload_kind(request.package_name) == .Parameterized
 	{
 		report_format_line(&builder, "Variant: `%s`", request.variant)
@@ -507,20 +955,58 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	{
 		report_line(&builder, "## Closest-ray time summary")
 		report_line(&builder)
-		report_line(&builder, "Public query_batch, batch size 256. Times are native totals divided by measured frames, in ms/frame (50,000 rays). Lower is better. Each process measures 100 frames after 10 warmup frames. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
+		report_line(&builder, "Public query_batch, batch size 256. Times are native totals divided by measured frames, in ms/frame (50,000 rays). Lower is better. Work counts are stated below. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
 	}
 	else if request.package_name == "spatial_query_trace"
 	{
 		report_line(&builder, "## Mixed-query time summary")
 		report_line(&builder)
-		report_line(&builder, "Times are native totals divided by measured batches, in ms/batch (100,000 queries). Lower is better")
+		report_line(&builder, "Times are native totals divided by measured batches, in ms/batch (100,000 queries) for the default all-family workload. Selected-family work counts are stated below. Lower is better")
 	}
 	else
 	{
 		report_line(&builder, "## physics_elapsed_ms summary")
 	}
 	report_line(&builder)
-	if request.package_name == "query_extensions"
+	if request.package_name == "query_extensions" && (summaries[0].query.case_name == "hierarchy" || summaries[0].query.case_name == "global" || summaries[0].query.case_name == "collision-batch")
+	{
+		query: Query_Measurement = summaries[0].query;
+		if query.case_name == "collision-batch"
+		{
+			report_format_line(&builder, "Selected query: %s/%s/%s | 24,576 inputs x 1 pass = 24,576 pairs", query.case_name, query.operation, query.cell);
+		}
+		else
+		{
+			report_format_line(&builder, "Selected query: %s/%s/%s | 1,536 inputs x 8 passes = 12,288 queries", query.case_name, query.operation, query.cell);
+		}
+		report_line(&builder, "The timer includes dispatch, completion, the production query and required output writes. Setup, warmup, oracle checking and checksum reduction are outside timing. Each worker owns a context and result range. WN includes the caller. Scaling requires a measured W1 lane in this same dataset");
+		report_line(&builder);
+		report_line(&builder, "| Workers | Median M queries/s |");
+		report_line(&builder, "| ------: | -----------------: |");
+		for summary in summaries
+		{
+			report_format_line(&builder, "| %d | %.6f |", summary.worker_count, summary.median_throughput);
+		}
+		report_line(&builder);
+	}
+	else if request.package_name == "query_extensions" && summaries[0].query.group != ""
+	{
+		query: Query_Measurement = summaries[0].query;
+		report_format_line(&builder, "Selected query: %s | %d measured chunks of 8,192 API calls | %d warmup chunks of 128 calls", query.group, query.repetitions, query.warmup_repetitions);
+		report_line(&builder, "Times sum validated measured chunks. Other groups and complete Common/All totals are excluded. Calls execute serially, and workers configure world resources. Timing ratios compare resource counts and do not measure parallel speedup or a per-call latency distribution");
+		if strings.has_suffix(query.group, ".collision_batch")
+		{
+			report_format_line(&builder, "Each API call performs two pair tests: %d calls and %d pair tests", u64(query.repetitions)*8192, u64(query.repetitions)*16384);
+		}
+		report_line(&builder, "| World resources | Mean ns/API call from median process sum |");
+		report_line(&builder, "| --- | --- |");
+		for summary in summaries
+		{
+			report_format_line(&builder, "| %d | %.6f |", summary.worker_count, summary.median*1e6/(8192*f64(query.repetitions)));
+		}
+		report_line(&builder);
+	}
+	else if request.package_name == "query_extensions"
 	{
 		report_line(&builder, "Common totals sum 8,192 calls for each of eight operations across four shape routes, after 128 warmup calls per operation. Calls execute serially, including the two-pair direct collision batch. Worker counts configure world resources. The speedup column is a timing ratio across those configurations and does not measure parallel query scaling. Enabled CQ01 timings are separate CSV columns")
 		report_line(&builder)
@@ -534,6 +1020,10 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	report_line(&builder)
 	if request.package_name == "spatial_query_batch" || request.package_name == "spatial_query_trace"
 	{
+		report_format_line(&builder, "Ray pattern: %s", summaries[0].ray_pattern);
+		report_format_line(&builder, "Query family: %s | Queries/batch: %d | Warmup batches: %d | Measured batches: %d", summaries[0].query.family, summaries[0].query_count, summaries[0].query.warmup_batches, summaries[0].query.measured_batches);
+		report_line(&builder, "Per-process aggregate timings do not supply p95/p99 query latency");
+		report_line(&builder);
 		unit: string = "ms/frame" if request.package_name == "spatial_query_batch" else "ms/batch"
 		report_format_line(&builder, "| Workers | Samples | Median %s | Minimum %s | Maximum %s | Speedup |", unit, unit, unit)
 	}
@@ -545,6 +1035,11 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	for summary in summaries
 	{
 		divisor: f64 = f64(summary.measured_units) if request.package_name == "spatial_query_batch" || request.package_name == "spatial_query_trace" else 1
+		if (summary.query.case_name == "hierarchy" || summary.query.case_name == "global" || summary.query.case_name == "collision-batch") && summary.speedup == 0
+		{
+			report_format_line(&builder, "| %d | %d | %.6f | %.6f | %.6f | unmeasured |", summary.worker_count, summary.sample_count, summary.median, summary.minimum, summary.maximum);
+			continue;
+		}
 		report_format_line(
 			&builder,
 			"| %d | %d | %.6f | %.6f | %.6f | %.6fx |",
@@ -635,7 +1130,7 @@ workload_kind :: proc(package_name: string) -> Workload_Kind
 {
 	switch package_name
 	{
-		case "container", "contact_islands", "pyramid": return .Parameterized
+		case "container", "contact_islands", "pyramid", "large_world_precision": return .Parameterized
 	}
 	return .Legacy
 }

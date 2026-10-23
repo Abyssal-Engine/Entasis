@@ -315,6 +315,10 @@ bodies_ensure_inactive_arena_capacity :: proc (
 			target_index := cursor + body_index;
 			new_arena.dynamics_state.memory[target_index] =
 			set.dynamics_state.memory[body_index];
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				new_arena.global_positions.memory[target_index] = set.global_positions.memory[body_index];
+			}
 			new_arena.index_to_handle.memory[target_index] =
 			set.index_to_handle.memory[body_index];
 			new_arena.collidables.memory[target_index] =
@@ -425,6 +429,10 @@ bodies_rebuild_inactive_arena :: proc (
 			target_index := cursor + body_index;
 			new_arena.dynamics_state.memory[target_index] =
 			set.dynamics_state.memory[body_index];
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				new_arena.global_positions.memory[target_index] = set.global_positions.memory[body_index];
+			}
 			new_arena.index_to_handle.memory[target_index] =
 			set.index_to_handle.memory[body_index];
 			new_arena.collidables.memory[target_index] =
@@ -738,6 +746,7 @@ bodies_get_description :: proc "contextless" (
 
 bodies_apply_description :: proc (
 	bodies: ^Bodies, handle: Body_Handle, description: ^Body_Description,
+	global_position: ^Global_Position = nil,
 ) -> Physics_Status
 {
 	location, resolve_status := bodies_resolve(bodies, handle);
@@ -749,6 +758,13 @@ bodies_apply_description :: proc (
 	if validation != .Ok
 	{
 		return validation;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if global_position != nil && world_precision_position_validate(global_position^) != .Ok
+		{
+			return .Invalid_Argument;
+		}
 	}
 	set := &bodies.sets.memory[location.set_index];
 	old_shape := set.collidables.memory[location.index].shape;
@@ -788,7 +804,7 @@ bodies_apply_description :: proc (
 			return retain_status;
 		}
 	}
-	apply_status := body_set_apply_description(set, int(location.index), description);
+	apply_status := body_set_apply_description(set, int(location.index), description, global_position);
 	if apply_status != .Ok
 	{
 		if mobility_change.state == .Prepared
@@ -870,6 +886,10 @@ bodies_move :: proc (bodies: ^Bodies, handle: Body_Handle, target_set_index: int
 	target_index := target.count;
 	target.count += 1;
 	target.dynamics_state.memory[target_index] = source.dynamics_state.memory[source_index];
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		target.global_positions.memory[target_index] = source.global_positions.memory[source_index];
+	}
 	target.index_to_handle.memory[target_index] = handle;
 	target.collidables.memory[target_index] = source.collidables.memory[source_index];
 	target.activity.memory[target_index] = source.activity.memory[source_index];
@@ -1004,6 +1024,10 @@ bodies_clear :: proc (bodies: ^Bodies) -> Physics_Status
 		if set.storage == .Owned
 		{
 			_ = util.buffer_clear(set.dynamics_state, 0, set.count);
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				_ = util.buffer_clear(set.global_positions, 0, set.count);
+			}
 			_ = util.buffer_clear(set.index_to_handle, 0, set.count);
 			_ = util.buffer_clear(set.collidables, 0, set.count);
 			_ = util.buffer_clear(set.activity, 0, set.count);
@@ -1021,6 +1045,13 @@ bodies_clear :: proc (bodies: ^Bodies) -> Physics_Status
 				return status;
 			}
 		}
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		_ = util.buffer_clear(
+			bodies.inactive_arena.global_positions, 0,
+			int(bodies.inactive_arena.global_positions.length),
+		);
 	}
 	_ = util.buffer_clear(
 		bodies.inactive_arena.dynamics_state, 0,

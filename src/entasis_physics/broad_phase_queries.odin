@@ -159,7 +159,7 @@ broad_phase_append_query_leaves :: proc "contextless" (
 	}
 	return .Ok;
 }
-broad_phase_volume_any_query :: proc "contextless" (
+broad_phase_volume_any_query :: #force_inline proc "contextless" (
 	broad_phase: ^Broad_Phase, bounds: util.Bounding_Box,
 ) -> (Collidable_Reference, Reference_State, Physics_Status)
 {
@@ -167,7 +167,17 @@ broad_phase_volume_any_query :: proc "contextless" (
 	{
 		return {}, .Missing, .Invalid_Argument;
 	}
-	leaf_index, state, status := tree_volume_any(&broad_phase.active_tree, bounds);
+	leaf_index: int;
+	state: Reference_State;
+	status: Physics_Status;
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		leaf_index, state, status = tree_volume_any(&broad_phase.active_tree, tree_bounds_from_local(bounds));
+	}
+	else
+	{
+		leaf_index, state, status = tree_volume_any(&broad_phase.active_tree, bounds);
+	}
 	if status != .Ok
 	{
 		return {}, .Missing, status;
@@ -181,7 +191,14 @@ broad_phase_volume_any_query :: proc "contextless" (
 		}
 		return broad_phase.active_leaves.memory[leaf_index], .Present, .Ok;
 	}
-	leaf_index, state, status = tree_volume_any(&broad_phase.static_tree, bounds);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		leaf_index, state, status = tree_volume_any(&broad_phase.static_tree, tree_bounds_from_local(bounds));
+	}
+	else
+	{
+		leaf_index, state, status = tree_volume_any(&broad_phase.static_tree, bounds);
+	}
 	if status != .Ok
 	{
 		return {}, .Missing, status;
@@ -208,7 +225,7 @@ broad_phase_volume_query :: proc "contextless" (
 		return 0, .Invalid_Argument;
 	}
 	output_count := 0;
-	count, status := tree_query_overlaps(&broad_phase.active_tree, bounds, broad_phase.leaf_scratch);
+	count, status := tree_query_overlaps(&broad_phase.active_tree, tree_bounds_from_local(bounds), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return 0, status;
@@ -224,7 +241,7 @@ broad_phase_volume_query :: proc "contextless" (
 	{
 		return output_count, status;
 	}
-	count, status = tree_query_overlaps(&broad_phase.static_tree, bounds, broad_phase.leaf_scratch);
+	count, status = tree_query_overlaps(&broad_phase.static_tree, tree_bounds_from_local(bounds), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return output_count, status;
@@ -252,7 +269,7 @@ broad_phase_ray_query :: proc "contextless" (
 		return 0, .Invalid_Argument;
 	}
 	output_count := 0;
-	count, status := tree_ray_query(&broad_phase.active_tree, ray, broad_phase.leaf_scratch);
+	count, status := tree_ray_query(&broad_phase.active_tree, tree_ray_from_local(ray), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return 0, status;
@@ -268,7 +285,7 @@ broad_phase_ray_query :: proc "contextless" (
 	{
 		return output_count, status;
 	}
-	count, status = tree_ray_query(&broad_phase.static_tree, ray, broad_phase.leaf_scratch);
+	count, status = tree_ray_query(&broad_phase.static_tree, tree_ray_from_local(ray), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return output_count, status;
@@ -296,7 +313,7 @@ broad_phase_sweep_query :: proc "contextless" (
 		return 0, .Invalid_Argument;
 	}
 	output_count := 0;
-	count, status := tree_sweep_query(&broad_phase.active_tree, bounds, sweep, maximum_t, broad_phase.leaf_scratch);
+	count, status := tree_sweep_query(&broad_phase.active_tree, tree_bounds_from_local(bounds), tree_position_from_local(sweep), Tree_Scalar(maximum_t), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return 0, status;
@@ -312,7 +329,7 @@ broad_phase_sweep_query :: proc "contextless" (
 	{
 		return output_count, status;
 	}
-	count, status = tree_sweep_query(&broad_phase.static_tree, bounds, sweep, maximum_t, broad_phase.leaf_scratch);
+	count, status = tree_sweep_query(&broad_phase.static_tree, tree_bounds_from_local(bounds), tree_position_from_local(sweep), Tree_Scalar(maximum_t), broad_phase.leaf_scratch);
 	if status != .Ok
 	{
 		return output_count, status;

@@ -22,14 +22,14 @@ next_random :: proc(state: ^u32) -> u32
 	return state^;
 }
 
-random_bounds :: proc(state: ^u32, index: int) -> util.Bounding_Box
+random_bounds :: proc(state: ^u32, index: int) -> physics.Tree_Bounds
 {
-	x := f32(i32(next_random(state) % 2000) - 1000) * 0.01;
-	y := f32(i32(next_random(state) % 2000) - 1000) * 0.01;
-	z := f32(i32(next_random(state) % 2000) - 1000) * 0.01;
-	extent := f32(1 + next_random(state) % 80) * 0.01;
+	x := physics.Tree_Scalar(i32(next_random(state) % 2000) - 1000) * 0.01;
+	y := physics.Tree_Scalar(i32(next_random(state) % 2000) - 1000) * 0.01;
+	z := physics.Tree_Scalar(i32(next_random(state) % 2000) - 1000) * 0.01;
+	extent := physics.Tree_Scalar(1 + next_random(state) % 80) * 0.01;
 	// index bias prevents the randomized fixture from collapsing into identical bounds
-	x += f32(index) * 0.0001;
+	x += physics.Tree_Scalar(index) * 0.0001;
 	return {min={x - extent, y - extent, z - extent}, max={x + extent, y + extent, z + extent}};
 }
 
@@ -48,9 +48,9 @@ tree_hash :: proc "contextless" (tree: ^physics.Tree) -> u64
 	for node_index in 0 ..< tree.node_count
 	{
 		node := tree.nodes.memory[node_index];
-		values := [6]u32{
-			transmute(u32)node.a.min.x, transmute(u32)node.a.max.x, u32(node.a.index),
-			transmute(u32)node.b.min.x, transmute(u32)node.b.max.x, u32(node.b.index),
+		values: [6]physics.Tree_Bits = {
+			transmute(physics.Tree_Bits)node.a.min.x, transmute(physics.Tree_Bits)node.a.max.x, physics.Tree_Bits(node.a.index),
+			transmute(physics.Tree_Bits)node.b.min.x, transmute(physics.Tree_Bits)node.b.max.x, physics.Tree_Bits(node.b.index),
 		};
 		for value in values
 		{
@@ -88,7 +88,7 @@ validate_pinned_binned_builder_strategies :: proc(t: ^testing.T)
 		);
 	}
 	defer util.buffer_pool_dispose(&pool);
-	bounds: [MAX_SOURCE_FIXTURE_LEAVES]util.Bounding_Box;
+	bounds: [MAX_SOURCE_FIXTURE_LEAVES]physics.Tree_Bounds;
 	for fixture_index in 0 ..< len(counts)
 	{
 		count := counts[fixture_index];
@@ -120,7 +120,7 @@ randomized_add_update_refit_refine_query_and_remove_match_brute_force :: proc(t:
 	tree: physics.Tree;
 	testing.expect_value(t, physics.tree_initialize(&tree, MAX_LEAVES, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree);
-	model: [MAX_LEAVES]util.Bounding_Box;
+	model: [MAX_LEAVES]physics.Tree_Bounds;
 	random_state := u32(0x39ac_72e1);
 	count := 72;
 	for index in 0 ..< count
@@ -198,7 +198,7 @@ self_intertree_ray_and_sweep_queries_match_direct_bounds_tests :: proc(t: ^testi
 	testing.expect_value(t, physics.tree_initialize(&tree_b, 16, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree_a);
 	defer physics.tree_dispose(&tree_b);
-	bounds_a := [6]util.Bounding_Box{
+	bounds_a := [6]physics.Tree_Bounds{
 		{min={-1, -1, -1}, max={1, 1, 1}},
 		{min={0, 0, 0}, max={2, 2, 2}},
 		{min={4, 0, 0}, max={5, 1, 1}},
@@ -206,7 +206,7 @@ self_intertree_ray_and_sweep_queries_match_direct_bounds_tests :: proc(t: ^testi
 		{min={-5, -1, -1}, max={-4, 1, 1}},
 		{min={8, 8, 8}, max={9, 9, 9}},
 	};
-	bounds_b := [3]util.Bounding_Box{
+	bounds_b := [3]physics.Tree_Bounds{
 		{min={0.5, -2, -2}, max={0.75, 2, 2}},
 		{min={5, -2, -2}, max={5.25, 2, 2}},
 		{min={20, 20, 20}, max={21, 21, 21}},
@@ -253,11 +253,11 @@ self_intertree_ray_and_sweep_queries_match_direct_bounds_tests :: proc(t: ^testi
 
 	leaf_storage: [MAX_LEAVES]i32;
 	leaves := util.Buffer(i32){memory=&leaf_storage[0], length=i32(len(leaf_storage)), id=-1};
-	ray := physics.Tree_Ray{origin={-10, 0.5, 0.5}, direction={1, 0, 0}, maximum_t=30};
+	ray := physics.Tree_Coordinate_Ray{origin={-10, 0.5, 0.5}, direction={1, 0, 0}, maximum_t=30};
 	ray_count, ray_status := physics.tree_ray_query(&tree_a, ray, leaves);
 	testing.expect_value(t, ray_status, physics.Physics_Status.Ok);
 	testing.expect_value(t, ray_count, 5);
-	sweep_bounds := util.Bounding_Box{min={-0.25, -0.25, -0.25}, max={0.25, 0.25, 0.25}};
+	sweep_bounds := physics.Tree_Bounds{min={-0.25, -0.25, -0.25}, max={0.25, 0.25, 0.25}};
 	sweep_count, sweep_status := physics.tree_sweep_query(&tree_a, sweep_bounds, {1, 0, 0}, 20, leaves);
 	testing.expect_value(t, sweep_status, physics.Physics_Status.Ok);
 	testing.expect(t, sweep_count >= 3);
@@ -280,8 +280,8 @@ parallel_refit_refine_and_queries_are_valid_and_repeatable :: proc(t: ^testing.T
 	defer physics.tree_dispose(&tree_a);
 	defer physics.tree_dispose(&tree_b);
 	random_state := u32(0x7e51_8923);
-	bounds_a: [48]util.Bounding_Box;
-	bounds_b: [37]util.Bounding_Box;
+	bounds_a: [48]physics.Tree_Bounds;
+	bounds_b: [37]physics.Tree_Bounds;
 	for index in 0 ..< len(bounds_a)
 	{
 		bounds_a[index] = random_bounds(&random_state, index);
@@ -410,7 +410,7 @@ parallel_refit_refine_and_queries_are_valid_and_repeatable :: proc(t: ^testing.T
 
 	// dense small trees require more claims than the four initial worker jobs.
 	// both constructors must reset the shared cursor after empty queries and failures
-	dense_bounds: [8]util.Bounding_Box;
+	dense_bounds: [8]physics.Tree_Bounds;
 	for &bounds in dense_bounds
 	{
 		bounds = {min={-1, -1, -1}, max={1, 1, 1}};
@@ -567,7 +567,7 @@ validate_root_refine2_budget_and_parallel_path :: proc(t: ^testing.T)
 		);
 	}
 	defer util.buffer_pool_dispose(&pool);
-	bounds: [REFINEMENT_LEAF_COUNT]util.Bounding_Box;
+	bounds: [REFINEMENT_LEAF_COUNT]physics.Tree_Bounds;
 	random_state := u32(0x8b71_4d29);
 	for index in 0 ..< len(bounds)
 	{
@@ -649,7 +649,7 @@ validate_large_refine2_inner_tasks :: proc(t: ^testing.T)
 		);
 	}
 	defer util.buffer_pool_dispose(&pool);
-	bounds: [LEAF_COUNT]util.Bounding_Box;
+	bounds: [LEAF_COUNT]physics.Tree_Bounds;
 	random_state := u32(0x4b81_29d7);
 	for index in 0 ..< len(bounds)
 	{
@@ -723,7 +723,7 @@ tree_growth_preserves_data_while_pool_expands :: proc(t: ^testing.T)
 	tree: physics.Tree;
 	testing.expect_value(t, physics.tree_initialize(&tree, 1, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree);
-	bounds := util.Bounding_Box{min={1, 2, 3}, max={4, 5, 6}};
+	bounds := physics.Tree_Bounds{min={1, 2, 3}, max={4, 5, 6}};
 	_, add_status := physics.tree_add(&tree, bounds);
 	testing.expect_value(t, add_status, physics.Physics_Status.Ok);
 	blocked: [4]util.Buffer(physics.Tree_Node);

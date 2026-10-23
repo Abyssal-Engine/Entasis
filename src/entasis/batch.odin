@@ -1,5 +1,7 @@
 package entasis
 
+import util "entasis:entasis_utilities"
+
 import physics "entasis:entasis_physics"
 
 @(private)
@@ -164,15 +166,16 @@ batch_add_static_low_level :: #force_inline proc (
 	simulation: ^physics.Simulation,
 	description: ^Static_Description,
 	awakening: Awakening_Policy,
+	global_position: ^Global_Position = nil,
 ) -> (Static_Handle, Status)
 {
 	switch awakening
 	{
 		case .Overlaps:
-			return physics.simulation_add_static(simulation, description);
+			return physics.simulation_add_static_internal(simulation, description, .Present, global_position);
 		case .None:
-			return physics.simulation_add_static_without_awakening_bodies(
-				simulation, description,
+			return physics.simulation_add_static_internal(
+				simulation, description, .Missing, global_position,
 			);
 		case:
 			return static_handle_invalid(), .Invalid_Argument;
@@ -185,17 +188,18 @@ batch_apply_static_low_level :: #force_inline proc (
 	handle: Static_Handle,
 	description: ^Static_Description,
 	awakening: Awakening_Policy,
+	global_position: ^Global_Position = nil,
 ) -> Status
 {
 	switch awakening
 	{
 		case .Overlaps:
-			return physics.simulation_apply_static_description(
-				simulation, handle, description,
+			return physics.simulation_apply_static_description_internal(
+				simulation, handle, description, .Present, global_position,
 			);
 		case .None:
-			return physics.simulation_apply_static_description_without_awakening_bodies(
-				simulation, handle, description,
+			return physics.simulation_apply_static_description_internal(
+				simulation, handle, description, .Missing, global_position,
 			);
 		case:
 			return .Invalid_Argument;
@@ -222,18 +226,22 @@ batch_remove_static_low_level :: #force_inline proc (
 	}
 }
 
-// body_add_batch adds a prefix of descriptions in input order after one capacity
-// check. handles must contain at least len(descriptions) entries. on failure,
-// written is the number of successfully committed prefix entries and handles at
-// and after written remain invalid
-// allocation: the initial capacity check may grow world storage
-// ownership: owner thread only while the world is idle
-body_add_batch :: proc (
+body_add_batch_internal :: proc (
 	world: ^World,
 	descriptions: []Body_Description,
 	handles: []Body_Handle,
+	positions: []Global_Position = nil,
+	position_input: Batch_Position_Input = .Float32,
 ) -> (written: int, status: Status)
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_input == .Global && len(positions) != len(descriptions)
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
+
 	if len(handles) < len(descriptions)
 	{
 		return 0, .Invalid_Argument;
@@ -261,9 +269,20 @@ body_add_batch :: proc (
 	}
 	for index in 0 ..< len(descriptions)
 	{
-		stored_description := descriptions[index];
+		stored_description: Body_Description = descriptions[index];
+		position_override: ^Global_Position;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_status: Status;
+			position_override, position_status = batch_global_position_override(positions, index, position_input, &stored_description.pose);
+			if position_status != .Ok
+			{
+				return index, position_status;
+			}
+		}
+
 		handle, add_status := physics.simulation_add_body(
-			simulation, &stored_description,
+			simulation, &stored_description, position_override,
 		);
 		if add_status != .Ok
 		{
@@ -274,16 +293,22 @@ body_add_batch :: proc (
 	return len(descriptions), .Ok;
 }
 
-// body_apply_batch applies matching handles and descriptions in input order.
-// a failure stops the batch. applied identifies the first failing index
-// allocation: may occur only through the existing body mutation path
-// ownership: owner thread only while the world is idle
-body_apply_batch :: proc (
+body_apply_batch_internal :: proc (
 	world: ^World,
 	handles: []Body_Handle,
 	descriptions: []Body_Description,
+	positions: []Global_Position = nil,
+	position_input: Batch_Position_Input = .Float32,
 ) -> (applied: int, status: Status)
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_input == .Global && len(positions) != len(descriptions)
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
+
 	if len(handles) != len(descriptions)
 	{
 		return 0, .Invalid_Argument;
@@ -300,9 +325,20 @@ body_apply_batch :: proc (
 	world_invalidate_views_data(data);
 	for index in 0 ..< len(handles)
 	{
-		stored_description := descriptions[index];
+		stored_description: Body_Description = descriptions[index];
+		position_override: ^Global_Position;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_status: Status;
+			position_override, position_status = batch_global_position_override(positions, index, position_input, &stored_description.pose);
+			if position_status != .Ok
+			{
+				return index, position_status;
+			}
+		}
+
 		apply_status := physics.simulation_apply_body_description(
-			simulation, handles[index], &stored_description,
+			simulation, handles[index], &stored_description, position_override,
 		);
 		if apply_status != .Ok
 		{
@@ -350,13 +386,32 @@ batch_add_statics_to_empty_tree :: proc (
 	descriptions: []Static_Description,
 	handles: []Static_Handle,
 	awakening: Awakening_Policy,
+	positions: []Global_Position,
+	position_input: Batch_Position_Input,
 ) -> (written: int, status: Status)
 {
 	tree := &simulation.broad_phase.static_tree;
 	status = .Ok;
 	for index in 0 ..< len(descriptions)
 	{
-		description := descriptions[index];
+		description: Static_Description = descriptions[index];
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_override: ^Global_Position;
+			position_override, status = batch_global_position_override(positions, index, position_input, &description.pose);
+			if status != .Ok
+			{
+				break;
+			}
+		}
+		position: physics.Tree_Position = physics.tree_position_from_local(description.pose.position);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if position_override != nil
+			{
+				position = position_override^;
+			}
+		}
 		status = physics.static_description_validate(&description);
 		if status != .Ok
 		{
@@ -366,8 +421,8 @@ batch_add_statics_to_empty_tree :: proc (
 		{
 			// preserve bounds callback order before shape retention. no sleeping
 			// collidable can appear while this owner-thread batch is executing
-			wake_bounds, bounds_status := physics.shape_registry_compute_world_bounds(
-				physics.simulation_shape_registry(simulation), description.shape, description.pose,
+			wake_bounds, bounds_status := physics.broad_phase_shape_bounds(
+				physics.simulation_shape_registry(simulation), description.shape, position, description.pose.orientation,
 			);
 			status = bounds_status;
 			if status == .Ok && (wake_bounds.min.x > wake_bounds.max.x ||
@@ -386,8 +441,13 @@ batch_add_statics_to_empty_tree :: proc (
 		{
 			break;
 		}
-		bounds, bounds_status := physics.shape_registry_compute_world_bounds(
-			simulation.broad_phase.shapes, description.shape, description.pose,
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			simulation.statics.global_positions.memory[simulation.statics.count - 1] = position;
+		}
+		local_bounds: physics.Shape_Bounds;
+		bounds, bounds_status := physics.broad_phase_shape_bounds(
+			simulation.broad_phase.shapes, description.shape, position, description.pose.orientation, &local_bounds,
 		);
 		status = bounds_status;
 		reference, reference_status := physics.collidable_reference_static(handle);
@@ -405,6 +465,11 @@ batch_add_statics_to_empty_tree :: proc (
 			_ = physics.statics_remove(&simulation.statics, handle);
 			break;
 		}
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			// pending data stays Missing until the tree accepts this prefix
+			simulation.statics.local_bounds.memory[simulation.statics.count - 1].bounds = local_bounds;
+		}
 		tree.build_references.memory[index] = {bounds=bounds, leaf_index=i32(index)};
 		simulation.broad_phase.static_leaves.memory[index] = reference;
 		simulation.statics.statics.memory[simulation.statics.count - 1].broad_phase_index = i32(index);
@@ -417,23 +482,48 @@ batch_add_statics_to_empty_tree :: proc (
 		for index in 0 ..< written
 		{
 			_ = physics.tree_add_trusted(tree, tree.build_references.memory[index].bounds);
+			when util.PRECISION_MODE == .Double_Coordinates
+			{
+				dense_index: int;
+				dense_index, _ = physics.statics_resolve(&simulation.statics, handles[index]);
+				physics.statics_publish_local_bounds(&simulation.statics, dense_index, simulation.statics.local_bounds.memory[dense_index].bounds);
+			}
 		}
 		return written, status;
 	}
-	return written, physics.tree_build_from_references(tree, written);
+	status = physics.tree_build_from_references(tree, written);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if status == .Ok
+		{
+			for index in 0 ..< written
+			{
+				dense_index: int;
+				dense_index, _ = physics.statics_resolve(&simulation.statics, handles[index]);
+				physics.statics_publish_local_bounds(&simulation.statics, dense_index, simulation.statics.local_bounds.memory[dense_index].bounds);
+			}
+		}
+	}
+	return written, status;
 }
 
-// static_add_batch adds a prefix of descriptions in input order after one
-// capacity check. the awakening policy is applied to every item
-// allocation: the initial capacity check may grow world storage
-// ownership: owner thread only while the world is idle
-static_add_batch :: proc (
+static_add_batch_internal :: proc (
 	world: ^World,
 	descriptions: []Static_Description,
 	handles: []Static_Handle,
 	awakening: Awakening_Policy = .Overlaps,
+	positions: []Global_Position = nil,
+	position_input: Batch_Position_Input = .Float32,
 ) -> (written: int, status: Status)
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_input == .Global && len(positions) != len(descriptions)
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
+
 	if len(handles) < len(descriptions)
 	{
 		return 0, .Invalid_Argument;
@@ -466,13 +556,24 @@ static_add_batch :: proc (
 	initial_tree_count := simulation.broad_phase.static_tree.leaf_count;
 	if initial_tree_count == 0 && len(descriptions) > 1
 	{
-		return batch_add_statics_to_empty_tree(simulation, descriptions, handles, awakening);
+		return batch_add_statics_to_empty_tree(simulation, descriptions, handles, awakening, positions, position_input);
 	}
 	for index in 0 ..< len(descriptions)
 	{
-		stored_description := descriptions[index];
+		stored_description: Static_Description = descriptions[index];
+		position_override: ^Global_Position;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_status: Status;
+			position_override, position_status = batch_global_position_override(positions, index, position_input, &stored_description.pose);
+			if position_status != .Ok
+			{
+				return index, position_status;
+			}
+		}
+
 		handle, add_status := batch_add_static_low_level(
-			simulation, &stored_description, awakening,
+			simulation, &stored_description, awakening, position_override,
 		);
 		if add_status != .Ok
 		{
@@ -490,16 +591,23 @@ static_add_batch :: proc (
 	return len(descriptions), .Ok;
 }
 
-// static_apply_batch applies matching handles and descriptions in input order.
-// a failure stops the batch. applied identifies the first failing index
-// ownership: owner thread only while the world is idle
-static_apply_batch :: proc (
+static_apply_batch_internal :: proc (
 	world: ^World,
 	handles: []Static_Handle,
 	descriptions: []Static_Description,
 	awakening: Awakening_Policy = .Overlaps,
+	positions: []Global_Position = nil,
+	position_input: Batch_Position_Input = .Float32,
 ) -> (applied: int, status: Status)
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_input == .Global && len(positions) != len(descriptions)
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
+
 	if len(handles) != len(descriptions)
 	{
 		return 0, .Invalid_Argument;
@@ -520,9 +628,20 @@ static_apply_batch :: proc (
 	world_invalidate_views_data(data);
 	for index in 0 ..< len(handles)
 	{
-		stored_description := descriptions[index];
+		stored_description: Static_Description = descriptions[index];
+		position_override: ^Global_Position;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			position_status: Status;
+			position_override, position_status = batch_global_position_override(positions, index, position_input, &stored_description.pose);
+			if position_status != .Ok
+			{
+				return index, position_status;
+			}
+		}
+
 		apply_status := batch_apply_static_low_level(
-			simulation, handles[index], &stored_description, awakening,
+			simulation, handles[index], &stored_description, awakening, position_override,
 		);
 		if apply_status != .Ok
 		{
@@ -735,4 +854,90 @@ shape_remove_batch :: proc (
 		}
 	}
 	return len(handles), .Ok;
+}
+
+Batch_Position_Input :: enum u8
+{
+	Float32,
+	Global,
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	// position stream shape is admitted before result mutation, each coordinate
+	// is admitted at its row so successful-prefix behavior remains sequential
+	batch_global_position_override :: proc "contextless" (
+		positions: []Global_Position, index: int, input: Batch_Position_Input, pose: ^Rigid_Pose,
+	) -> (^Global_Position, Status)
+	{
+		if input == .Float32
+		{
+			return nil, .Ok;
+		}
+		position: ^Global_Position = &positions[index];
+		status: Status = physics.world_precision_position_validate(position^);
+		if status != .Ok
+		{
+			return nil, status;
+		}
+		pose.position = physics.world_precision_position_cache(position^);
+		return position, .Ok;
+	}
+}
+
+
+// body_add_batch commits descriptions in input order. handles must contain at
+// least len(descriptions) entries. a short slice is rejected without output writes
+// after length admission, uncommitted slots in handles[:len(descriptions)] are
+// invalid. the returned count is the committed prefix, including on failure
+// handles[len(descriptions):] is unchanged
+// allocation: the initial capacity check may grow world storage
+// ownership: owner thread only while the world is idle
+body_add_batch :: proc (
+	world: ^World,
+	descriptions: []Body_Description,
+	handles: []Body_Handle,
+) -> (int, Status)
+{
+	return body_add_batch_internal(world, descriptions, handles);
+}
+
+// body_apply_batch applies matching handles and descriptions in input order.
+// a failure stops the batch. applied identifies the first failing index
+// allocation: may occur only through the existing body mutation path
+// ownership: owner thread only while the world is idle
+body_apply_batch :: proc (
+	world: ^World,
+	handles: []Body_Handle,
+	descriptions: []Body_Description,
+) -> (int, Status)
+{
+	return body_apply_batch_internal(world, handles, descriptions);
+}
+
+// static_add_batch adds a prefix of descriptions in input order after one
+// capacity check. the awakening policy is applied to every item
+// allocation: the initial capacity check may grow world storage
+// ownership: owner thread only while the world is idle
+static_add_batch :: proc (
+	world: ^World,
+	descriptions: []Static_Description,
+	handles: []Static_Handle,
+	awakening: Awakening_Policy = .Overlaps,
+) -> (int, Status)
+{
+	return static_add_batch_internal(world, descriptions, handles, awakening);
+}
+
+// static_apply_batch applies matching handles and descriptions in input order.
+// a failure stops the batch. applied identifies the first failing index
+// ownership: owner thread only while the world is idle
+static_apply_batch :: proc (
+	world: ^World,
+	handles: []Static_Handle,
+	descriptions: []Static_Description,
+	awakening: Awakening_Policy = .Overlaps,
+) -> (int, Status)
+{
+	return static_apply_batch_internal(world, handles, descriptions, awakening);
 }

@@ -165,7 +165,7 @@ Queries include sensors as geometry by default and do not change trigger history
 
 ### Drain events and preserve identity
 
-`trigger_events_drain` copies Enter, Exit and selected Stay events to caller storage. Each event includes a completed step number, owner epoch, lifetime tokens, collidable references and copied application values. Published values survive endpoint removal
+`trigger_events_drain` copies Enter, Exit and selected Stay events to caller-owned storage, disjoint from engine storage. Each event includes a completed step number, owner epoch, lifetime tokens, collidable references and copied application values. Published values survive endpoint removal
 
 If output is too small, drain returns zero written and the exact required count. Grow the output and retry **without stepping again**. A nonempty undrained batch blocks the next step. `trigger_events_discard` acknowledges the batch without copying. Empty batches need no acknowledgement. `trigger_overlaps` copies retained pairs without advancing history
 
@@ -182,6 +182,10 @@ Public mutation operations notify trigger tracking. After changing application f
 ### Reserve capacity and recover from failure
 
 `Trigger_Configuration` reserves retained pairs, candidates per worker and child scratch separately. `trigger_reserve` reuses sufficient storage and preserves committed history if growth fails. Child capacity must cover the children generated within one collision batch
+
+Stepping, `trigger_set` and `trigger_set_user_id` do not reserve storage implicitly. Expanded body/static handle tables or worker spans can require `trigger_reserve` again before mutation or stepping
+
+Stale step reservation returns `Capacity_Missing` before advancing the step or publishing history, including after a partially failed mixed reservation. Explicit reservation reconciles trigger and mixed worker storage before retry
 
 Exhausted pair, candidate or child capacity returns `Capacity_Missing` without publishing a partial event batch or replacing committed overlap history. Increase the relevant reservation before retrying. Earlier physics stages may already have executed. Failure preserves tracking history, not a rollback of world state
 

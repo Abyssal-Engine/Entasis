@@ -67,9 +67,14 @@ function Invoke-CapturedToFile([string]$FilePath, [string[]]$Arguments, [string]
     [System.IO.File]::WriteAllText($OutputPath, $stdout, [System.Text.UTF8Encoding]::new($false))
 }
 
-function Get-CAbiBuildRoot([string]$Configuration)
+function Get-CAbiBuildRoot([string]$Configuration, [string]$Precision = "Float32")
 {
-    return (Join-Path $script:Root "build\c_abi\windows\$($Configuration.ToLowerInvariant())")
+    $buildPath = "build/c_abi/windows/$($Configuration.ToLowerInvariant())"
+    if ($Precision -eq "Mixed64")
+    {
+        $buildPath = Join-Path $buildPath "mixed64"
+    }
+    return (Join-Path $script:Root $buildPath)
 }
 
 function Assert-CAbiBuildArtifacts([string]$BuildRoot, [string]$Configuration)

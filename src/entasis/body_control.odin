@@ -36,7 +36,15 @@ world_enable_body_control :: proc (
 	{
 		undamped = body_control_per_body_undamped;
 	}
-	return physics.body_control_initialize(&data.simulation, configuration, data.allocator, data.allocation_scope, undamped);
+	status: Status = physics.body_control_initialize(&data.simulation, configuration, data.allocator, data.allocation_scope, undamped);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if status == .Ok && callbacks.integrate_velocity_global == planetary_gravity_global_velocity
+		{
+			data.simulation.body_control.undamped_global = planetary_gravity_global_undamped;
+		}
+	}
+	return status;
 }
 
 world_disable_body_control :: proc (world: ^World) -> Status
@@ -128,6 +136,11 @@ body_add_force_at_position :: proc (
 	wake: Body_Control_Wake = .Wake,
 ) -> Status
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		return body_add_force_at_global_position(world, body, force, physics.world_precision_position_from_float(position), wake);
+	}
+
 	owner: ^physics.Body_Control_Storage;
 	status: Status;
 	owner, status = body_control_owner(world);

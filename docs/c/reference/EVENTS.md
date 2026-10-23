@@ -417,6 +417,8 @@ Size `44`, alignment `4`
 
 ## Functions
 
+Functions returning `entasis_status_t` return `ENTASIS_STATUS_OK` on success or a failure status. Operation-specific return behavior is documented with the function
+
 ### `entasis_contact_user_table_init`
 
 initializes generation-aware contact user identifiers
@@ -433,8 +435,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_table_init(entasi
 | `allocator`       | `const entasis_allocator_t *`    | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`      | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_user_table_ensure_capacity`
 
 grows contact user identifier storage
@@ -449,8 +449,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_table_ensure_capa
 | `body_capacity`   | `uint64_t`                       | required body namespace capacity                                             |
 | `static_capacity` | `uint64_t`                       | required static namespace capacity                                           |
 | `diagnostic`      | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_user_set_body`
 
@@ -467,8 +465,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_set_body(entasis_
 | `user_id`    | `uint64_t`                       | caller-selected stable collidable ID                                         |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_user_set_static`
 
 associates a user identifier with a static property lifetime
@@ -484,8 +480,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_set_static(entasi
 | `user_id`    | `uint64_t`                       | caller-selected stable collidable ID                                         |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_user_remove_body`
 
 ends one body user identifier lifetime
@@ -499,8 +493,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_remove_body(entas
 | `table`      | `entasis_contact_user_table_t *` | target contact user table                                                    |
 | `handle`     | `entasis_body_handle_t`          | target body handle                                                           |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_user_remove_static`
 
@@ -516,8 +508,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_remove_static(ent
 | `handle`     | `entasis_static_handle_t`        | target static handle                                                         |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_user_table_clear`
 
 clears contact user identifiers while retaining storage
@@ -531,8 +521,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_table_clear(entas
 | `table`      | `entasis_contact_user_table_t *` | target contact user table                                                    |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_user_table_destroy`
 
 destroys contact user identifier storage
@@ -545,8 +533,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_user_table_destroy(ent
 | ------------ | -------------------------------- | ---------------------------------------------------------------------------- |
 | `table`      | `entasis_contact_user_table_t *` | target contact user table                                                    |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_tracker_init`
 
@@ -564,8 +550,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_init(entasis_c
 | `initial_capacity` | `uint64_t`                    | initial retained capacity                                                                                                        |
 | `allocator`        | `const entasis_allocator_t *` | copied allocator callbacks for storage covered by the selected allocation scope. user_context remains borrowed until destruction |
 | `diagnostic`       | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed                                                     |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_tracker_capacity`
 
@@ -597,8 +581,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_ensure_capacit
 | `required_capacity` | `uint64_t`                    | required retained capacity                                                   |
 | `diagnostic`        | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_tracker_bind`
 
 binds contact history to one world and optional user table
@@ -616,8 +598,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_bind(entasis_c
 | `users`      | `entasis_contact_user_table_t *` | optional contact user table bound to the tracker                             |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_tracker_clear`
 
 clears contact history while retaining binding and capacity
@@ -632,8 +612,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_clear(entasis_
 | ------------ | ----------------------------- | ---------------------------------------------------------------------------- |
 | `tracker`    | `entasis_contact_tracker_t *` | target contact tracker                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_tracker_unbind`
 
@@ -650,8 +628,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_unbind(entasis
 | `tracker`    | `entasis_contact_tracker_t *` | target contact tracker                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_tracker_destroy`
 
 destroys contact pair history
@@ -666,8 +642,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_tracker_destroy(entasi
 | ------------ | ----------------------------- | ---------------------------------------------------------------------------- |
 | `tracker`    | `entasis_contact_tracker_t *` | target contact tracker                                                       |
 | `diagnostic` | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_contact_events_drain`
 
@@ -688,8 +662,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_events_drain(entasis_c
 | `out_required` | `uint64_t *`                  | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_contact_events_discard`
 
 commits and discards one completed step of events
@@ -705,8 +677,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_contact_events_discard(entasis
 | `tracker`      | `entasis_contact_tracker_t *` | target contact tracker                                                       |
 | `out_required` | `uint64_t *`                  | receives the total required output capacity                                  |
 | `diagnostic`   | `entasis_diagnostic_t *`      | optional diagnostic output, or NULL when detailed failure data is not needed |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_configuration_default`
 
@@ -734,8 +704,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_enable_triggers(entasis_
 | `configuration` | `const entasis_trigger_configuration_t *` | configuration from the default constructor |
 | `diagnostic`    | `entasis_diagnostic_t *`                  | optional diagnostic output                 |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_world_disable_triggers`
 
 disables triggers and releases optional resources
@@ -750,8 +718,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_disable_triggers(entasis
 | ------------ | ------------------------ | -------------------------- |
 | `world`      | `entasis_world_t *`      | idle target world          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_reserve`
 
@@ -768,8 +734,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_reserve(entasis_world_
 | `world`         | `entasis_world_t *`                       | idle target world                          |
 | `configuration` | `const entasis_trigger_configuration_t *` | configuration from the default constructor |
 | `diagnostic`    | `entasis_diagnostic_t *`                  | optional diagnostic output                 |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_set`
 
@@ -788,8 +752,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_set(entasis_world_t * 
 | `settings`   | `const entasis_trigger_settings_t *` | settings, or NULL for Enter/Exit defaults |
 | `diagnostic` | `entasis_diagnostic_t *`             | optional diagnostic output                |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_trigger_get`
 
 reads current sensor settings
@@ -805,8 +767,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_get(entasis_world_t * 
 | `out_settings` | `entasis_trigger_settings_t *`   | receives current settings  |
 | `diagnostic`   | `entasis_diagnostic_t *`         | optional diagnostic output |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_trigger_remove`
 
 removes sensor mode without removing the collidable
@@ -820,8 +780,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_remove(entasis_world_t
 | `world`      | `entasis_world_t *`              | idle target world          |
 | `reference`  | `entasis_collidable_reference_t` | target collidable instance |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_mark_geometry_dirty`
 
@@ -837,8 +795,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_mark_geometry_dirty(en
 | `reference`  | `entasis_collidable_reference_t` | target collidable instance |
 | `diagnostic` | `entasis_diagnostic_t *`         | optional diagnostic output |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_trigger_mark_filters_dirty`
 
 invalidates trigger detection after application filter-policy changes
@@ -851,8 +807,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_mark_filters_dirty(ent
 | ------------ | ------------------------ | -------------------------- |
 | `world`      | `entasis_world_t *`      | idle target world          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_reset_history`
 
@@ -867,8 +821,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_reset_history(entasis_
 | `world`      | `entasis_world_t *`      | idle target world          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_trigger_events_discard`
 
 explicitly acknowledges a pending event batch without copying it
@@ -881,8 +833,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_events_discard(entasis
 | ------------ | ------------------------ | -------------------------- |
 | `world`      | `entasis_world_t *`      | idle target world          |
 | `diagnostic` | `entasis_diagnostic_t *` | optional diagnostic output |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_events_drain`
 
@@ -903,8 +853,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_events_drain(entasis_w
 | `out_required` | `uint64_t *`                | receives exact required element count                 |
 | `diagnostic`   | `entasis_diagnostic_t *`    | optional diagnostic output                            |
 
-returns ENTASIS_STATUS_OK on success or a failure status
-
 ### `entasis_trigger_overlaps`
 
 copies the current committed parent-pair set
@@ -923,8 +871,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_overlaps(entasis_world
 | `out_written`  | `uint64_t *`               | receives elements copied                              |
 | `out_required` | `uint64_t *`               | receives exact required element count                 |
 | `diagnostic`   | `entasis_diagnostic_t *`   | optional diagnostic output                            |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_stepper_update`
 
@@ -945,8 +891,6 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_trigger_stepper_update(entasis
 | `capacity`   | `uint64_t`                          | output event capacity                      |
 | `out_result` | `entasis_trigger_update_result_t *` | receives completed steps and pending state |
 | `diagnostic` | `entasis_diagnostic_t *`            | optional diagnostic output                 |
-
-returns ENTASIS_STATUS_OK on success or a failure status
 
 ### `entasis_trigger_set_user_id`
 

@@ -589,6 +589,32 @@ bodies_scatter_active_pose :: proc "contextless" (
 	{
 		return status;
 	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			if masks[lane] != 0 && indices[lane] >= 0
+			{
+				status = world_precision_position_validate(world_precision_position_from_float(
+					util.vector3_wide_read_slot(position, lane),
+				));
+				if status != .Ok
+				{
+					return status;
+				}
+			}
+		}
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			if masks[lane] != 0 && indices[lane] >= 0
+			{
+				index: int = int(u32(indices[lane]) & BODY_REFERENCE_INDEX_MASK);
+				active.global_positions.memory[index] = world_precision_position_from_float(
+					util.vector3_wide_read_slot(position, lane),
+				);
+			}
+		}
+	}
 	bodies_scatter_active_pose_trusted(
 		bodies, encoded_body_indices, lane_mask, position, orientation,
 	);
@@ -733,4 +759,75 @@ bodies_scatter_active_velocities :: proc "contextless" (
 	}
 	bodies_scatter_active_velocities_trusted(bodies, encoded_body_indices, velocity, access);
 	return .Ok;
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	// existing integration ownership assigns each live body once per phase. eight
+	// encoded lanes, zero masks and negative sentinels share the existing gather
+	// contract, no alignment or padding beyond the real body column is required
+	bodies_integrate_global_positions_trusted :: proc "contextless" (
+		bodies: ^Bodies, encoded, mask: util.I32x8,
+		displacement, previous_cache: util.Vector3_Wide,
+	) -> util.Vector3_Wide
+	{
+		active: ^Body_Set = &bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		result: util.Vector3_Wide = previous_cache;
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			reference: i32 = simd.extract(encoded, lane);
+			if simd.extract(mask, lane) == 0 || reference < 0
+			{
+				continue;
+			}
+			index: int = int(u32(reference) & BODY_REFERENCE_INDEX_MASK);
+			cache: util.Vector3 = world_precision_advance_position(
+				&active.global_positions.memory[index],
+				util.vector3_wide_read_slot(displacement, lane),
+			);
+			util.vector3_wide_write_slot(&result, lane, cache);
+		}
+		return result;
+	}
+	// each live lane is a body/body pair. missing or masked pairs return zero
+	// subtract absolute positions in f64 before narrowing the pair-local offset
+	// invalid active indices or unrepresentable deltas return no partial bundle
+	// static pairs and absolute-target constraints use their own global positions
+	bodies_gather_relative_positions :: proc "contextless" (
+		bodies: ^Bodies, references_a, references_b, mask: util.I32x8,
+	) -> (util.Vector3_Wide, Physics_Status)
+	{
+		if bodies == nil || bodies.state != .Allocated
+		{
+			return {}, .Disposed;
+		}
+		active: ^Body_Set = &bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
+		result: util.Vector3_Wide;
+		for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+		{
+			a: i32 = simd.extract(references_a, lane);
+			b: i32 = simd.extract(references_b, lane);
+			if simd.extract(mask, lane) == 0 || a < 0 || b < 0
+			{
+				continue;
+			}
+			index_a: int = int(u32(a) & BODY_REFERENCE_INDEX_MASK);
+			index_b: int = int(u32(b) & BODY_REFERENCE_INDEX_MASK);
+			if index_a >= active.count || index_b >= active.count
+			{
+				return {}, .Not_Found;
+			}
+			position_a: Global_Position = active.global_positions.memory[index_a];
+			position_b: Global_Position = active.global_positions.memory[index_b];
+			delta: util.Vector3;
+			status: Physics_Status;
+			delta, status = world_precision_relative_position(position_a, position_b);
+			if status != .Ok
+			{
+				return {}, status;
+			}
+			util.vector3_wide_write_slot(&result, lane, delta);
+		}
+		return result, .Ok;
+	}
 }

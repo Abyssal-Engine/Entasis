@@ -13,7 +13,7 @@ rebuild_initializes_live_nodes_without_touching_unused_capacity :: proc(t: ^test
 	tree: physics.Tree;
 	testing.expect_value(t, physics.tree_initialize(&tree, 4096, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree);
-	bounds: [257]util.Bounding_Box;
+	bounds: [257]physics.Tree_Bounds;
 	seed := u32(91827);
 	for &value, index in bounds
 	{
@@ -86,7 +86,7 @@ rebuild_growth_shrink_and_repeated_public_build_preserve_live_bounds :: proc(t: 
 	tree: physics.Tree;
 	testing.expect_value(t, physics.tree_initialize(&tree, 2, &pool), physics.Physics_Status.Ok);
 	defer physics.tree_dispose(&tree);
-	bounds: [257]util.Bounding_Box;
+	bounds: [257]physics.Tree_Bounds;
 	seed := u32(102311);
 	for &value, index in bounds
 	{
@@ -120,10 +120,10 @@ rounded_leaf_storage_never_outgrows_rebuild_scratch :: proc(t: ^testing.T)
 			return;
 		}
 		defer physics.tree_dispose(&tree);
-		bounds: [1025]util.Bounding_Box;
+		bounds: [1025]physics.Tree_Bounds;
 		for &value, i in bounds
 		{
-			value = {min={f32(i)*6, 0, 0}, max={f32(i)*6+2, 2, 2}};
+			value = {min={physics.Tree_Scalar(i)*6, 0, 0}, max={physics.Tree_Scalar(i)*6+2, 2, 2}};
 		}
 		if path == .Direct
 		{

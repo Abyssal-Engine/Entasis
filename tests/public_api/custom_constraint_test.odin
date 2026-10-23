@@ -1,24 +1,17 @@
 package public_api_tests
 
 import "core:testing"
-import "core:simd"
 import entasis "entasis:entasis"
-import util "entasis:entasis_utilities"
+import support "../../benchmarks/benchmark_support"
 
 Velocity_Target_Constraint :: struct
 {
 	target_speed: f32,
 }
 
-Velocity_Target_Prestep :: struct
-{
-	target_speed: entasis.F32x8,
-}
-
-Velocity_Target_Impulses :: struct
-{
-	accumulated: entasis.F32x8,
-}
+Velocity_Target_Prestep :: support.Velocity_Target_Prestep;
+Velocity_Target_Impulses :: support.Velocity_Target_Impulses;
+velocity_target_kernel :: support.velocity_target_kernel;
 
 velocity_target_validate :: proc "contextless" (
 	type_id: i32, description: rawptr,
@@ -36,56 +29,14 @@ velocity_target_validate :: proc "contextless" (
 	return .Ok;
 }
 
-velocity_target_kernel :: proc "contextless" (
-	prestep_raw: rawptr,
-	bodies: ^[4]entasis.Constraint_Kernel_Body_Wide,
-	dt, inverse_dt: f32,
-	impulses_raw: rawptr,
-	active_mask: entasis.I32x8,
-	phase: entasis.Constraint_Kernel_Phase,
-)
-{
-	_, _ = dt, inverse_dt;
-	prestep := (^Velocity_Target_Prestep)(prestep_raw);
-	impulses := (^Velocity_Target_Impulses)(impulses_raw);
-	body := &bodies[0];
-	switch phase
-	{
-		case .Prestep, .Incremental_Update:
-			return;
-		case .Warmstart:
-			updated := simd.add(
-				body.linear_velocity.x,
-				simd.mul(impulses.accumulated, body.inverse_mass),
-			);
-			body.linear_velocity.x = util.wide_select_f32(
-				active_mask, updated, body.linear_velocity.x,
-			);
-		case .Solve:
-			delta_velocity := simd.sub(prestep.target_speed, body.linear_velocity.x);
-			impulse_delta := simd.div(delta_velocity, body.inverse_mass);
-			updated_velocity := simd.add(
-				body.linear_velocity.x,
-				simd.mul(impulse_delta, body.inverse_mass),
-			);
-			body.linear_velocity.x = util.wide_select_f32(
-				active_mask, updated_velocity, body.linear_velocity.x,
-			);
-			updated_impulse := simd.add(impulses.accumulated, impulse_delta);
-			impulses.accumulated = util.wide_select_f32(
-				active_mask, updated_impulse, impulses.accumulated,
-			);
-	}
-}
-
 register_velocity_target_constraint :: proc(
 	t: ^testing.T, world: ^entasis.World,
-) -> (entasis.Constraint_Type_ID, bool)
+) -> (entasis.Constraint_Type_ID, entasis.Status)
 {
 	type_id, next_status := entasis.custom_constraint_next_type_id(world);
 	if !testing.expect_value(t, next_status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, next_status;
 	}
 	access := [4]entasis.Body_Access_Mask{
 		entasis.BODY_ACCESS_NO_POSE, {}, {}, {},
@@ -101,13 +52,12 @@ register_velocity_target_constraint :: proc(
 		velocity_target_validate,
 		velocity_target_kernel,
 	);
-	if !testing.expect_value(
-		t, entasis.custom_constraint_register(world, registration), entasis.Status.Ok,
-	)
+	status := entasis.custom_constraint_register(world, registration);
+	if !testing.expect_value(t, status, entasis.Status.Ok)
 	{
-		return {}, false;
+		return {}, status;
 	}
-	return type_id, true;
+	return type_id, .Ok;
 }
 
 custom_constraint_body_description :: proc "contextless" (
@@ -137,8 +87,8 @@ custom_constraint_runs_full_and_tail_bundles_and_supports_get_apply :: proc(t: ^
 		return;
 	}
 	defer entasis.world_destroy(&world);
-	type_id, ok := register_velocity_target_constraint(t, &world);
-	if !ok
+	type_id, registration_status := register_velocity_target_constraint(t, &world);
+	if registration_status != .Ok
 	{
 		return;
 	}
@@ -217,8 +167,8 @@ custom_constraint_uses_fallback_batch_and_survives_sleeping_description_storage 
 		return;
 	}
 	defer entasis.world_destroy(&world);
-	type_id, ok := register_velocity_target_constraint(t, &world);
-	if !ok
+	type_id, registration_status := register_velocity_target_constraint(t, &world);
+	if registration_status != .Ok
 	{
 		return;
 	}

@@ -134,3 +134,13 @@ Use `update` instead of `check` to change the declarations. An intentional compi
 An invalid explicit tool path stops immediately. Correct that selection before retrying
 
 Download and extraction failures report an `INSTALL_FAILED partial=...` directory. Keep it while diagnosing the missing prerequisite, checksum, path, or network failure, then rerun the original command after repair
+
+## Precision selection
+
+Native Build, Test, example Build/Run and C ABI Build accept `--precision float32` or `--precision mixed64`, defaulting to float32. PowerShell uses `-Precision Float32` or `-Precision Mixed64`. For direct Odin compilation, add `-define:ENTASIS_PRECISION=mixed64` to the application's normal collection, target and build-profile flags
+
+Selection applies to all linked Entasis packages at compile time. Other values fail compilation. See [world precision](odin/reference/WORLD.md#precision-profiles-and-origin-frames) for coordinate contracts
+
+Mixed64 examples, tests and C ABI libraries use a `mixed64/` child of the corresponding configuration output directory. Build runtime and cooking with the same profile. A prebuilt C SDK has a fixed profile, documented in its installed build guide, and its consumer runner does not switch profiles
+
+For commands, see the [large-world example](../examples/headless/large_world_precision/README.md) and [benchmark reproduction](../BENCHMARK.md#reproduction)

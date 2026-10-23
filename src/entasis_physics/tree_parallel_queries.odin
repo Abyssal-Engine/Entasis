@@ -118,56 +118,70 @@ tree_parallel_add_query_job :: proc "contextless" (
 	job_count^ += 1;
 	return .Ok;
 }
+// each subtree owns an exclusive upper bound in the existing job buffer
+// coarse far-coordinate leaves can overlap quadratically, stopping subdivision
+// emits the entire remaining subtree as a normal job, never drops a pair
 tree_parallel_collect_pair_jobs :: proc "contextless" (
 	tree_a: ^Tree, child_a: Tree_Node_Child, tree_b: ^Tree, child_b: Tree_Node_Child,
 	mode: Tree_Parallel_Query_Mode, leaf_threshold: int,
-	workspace: ^Tree_Parallel_Query_Workspace, job_count: ^int,
+	workspace: ^Tree_Parallel_Query_Workspace, job_count: ^int, job_limit: int,
 ) -> Physics_Status
 {
 	if tree_bounds_intersect(tree_child_bounds(child_a), tree_child_bounds(child_b)) != .Present
 	{
 		return .Ok;
 	}
-	if child_a.index < 0 && child_b.index < 0 || int(child_a.leaf_count + child_b.leaf_count) <= leaf_threshold
+	if job_count^ >= job_limit
+	{
+		return .Capacity_Missing;
+	}
+	if job_limit - job_count^ == 1 ||
+		child_a.index < 0 && child_b.index < 0 ||
+		int(child_a.leaf_count + child_b.leaf_count) <= leaf_threshold
 	{
 		return tree_parallel_add_query_job(
 			workspace, job_count, {a=child_a, b=child_b, kind=.Child_Pair, mode=mode},
 		);
 	}
+	first_limit: int = job_count^ + (job_limit - job_count^) / 2;
 	if child_b.index < 0 || child_a.index >= 0 && child_a.leaf_count >= child_b.leaf_count
 	{
-		node := &tree_a.nodes.memory[child_a.index];
-		status := tree_parallel_collect_pair_jobs(
-			tree_a, node.a, tree_b, child_b, mode, leaf_threshold, workspace, job_count,
+		node: ^Tree_Node = &tree_a.nodes.memory[child_a.index];
+		status: Physics_Status = tree_parallel_collect_pair_jobs(
+			tree_a, node.a, tree_b, child_b, mode, leaf_threshold, workspace, job_count, first_limit,
 		);
 		if status != .Ok
 		{
 			return status;
 		}
 		return tree_parallel_collect_pair_jobs(
-			tree_a, node.b, tree_b, child_b, mode, leaf_threshold, workspace, job_count,
+			tree_a, node.b, tree_b, child_b, mode, leaf_threshold, workspace, job_count, job_limit,
 		);
 	}
-	node := &tree_b.nodes.memory[child_b.index];
-	status := tree_parallel_collect_pair_jobs(
-		tree_a, child_a, tree_b, node.a, mode, leaf_threshold, workspace, job_count,
+	node: ^Tree_Node = &tree_b.nodes.memory[child_b.index];
+	status: Physics_Status = tree_parallel_collect_pair_jobs(
+		tree_a, child_a, tree_b, node.a, mode, leaf_threshold, workspace, job_count, first_limit,
 	);
 	if status != .Ok
 	{
 		return status;
 	}
 	return tree_parallel_collect_pair_jobs(
-		tree_a, child_a, tree_b, node.b, mode, leaf_threshold, workspace, job_count,
+		tree_a, child_a, tree_b, node.b, mode, leaf_threshold, workspace, job_count, job_limit,
 	);
 }
 tree_parallel_collect_self_jobs :: proc "contextless" (
 	tree: ^Tree, node_index, leaf_threshold: int,
-	workspace: ^Tree_Parallel_Query_Workspace, job_count: ^int,
+	workspace: ^Tree_Parallel_Query_Workspace, job_count: ^int, job_limit: int,
 ) -> Physics_Status
 {
-	node := &tree.nodes.memory[node_index];
-	leaf_count := int(node.a.leaf_count + node.b.leaf_count);
-	if leaf_count <= leaf_threshold
+	if job_count^ >= job_limit
+	{
+		return .Capacity_Missing;
+	}
+	node: ^Tree_Node = &tree.nodes.memory[node_index];
+	leaf_count: int = int(node.a.leaf_count + node.b.leaf_count);
+	if leaf_count <= leaf_threshold || job_limit - job_count^ < 3
 	{
 		return tree_parallel_add_query_job(
 			workspace, job_count, {node_index=i32(node_index), kind=.Self_Node, mode=.Self},
@@ -175,7 +189,8 @@ tree_parallel_collect_self_jobs :: proc "contextless" (
 	}
 	if node.a.index >= 0
 	{
-		status := tree_parallel_collect_self_jobs(tree, int(node.a.index), leaf_threshold, workspace, job_count);
+		first_limit: int = job_count^ + (job_limit - job_count^) / 3;
+		status: Physics_Status = tree_parallel_collect_self_jobs(tree, int(node.a.index), leaf_threshold, workspace, job_count, first_limit);
 		if status != .Ok
 		{
 			return status;
@@ -183,14 +198,15 @@ tree_parallel_collect_self_jobs :: proc "contextless" (
 	}
 	if node.b.index >= 0
 	{
-		status := tree_parallel_collect_self_jobs(tree, int(node.b.index), leaf_threshold, workspace, job_count);
+		second_limit: int = job_count^ + (job_limit - job_count^) / 2;
+		status: Physics_Status = tree_parallel_collect_self_jobs(tree, int(node.b.index), leaf_threshold, workspace, job_count, second_limit);
 		if status != .Ok
 		{
 			return status;
 		}
 	}
 	return tree_parallel_collect_pair_jobs(
-		tree, node.a, tree, node.b, .Self, leaf_threshold, workspace, job_count,
+		tree, node.a, tree, node.b, .Self, leaf_threshold, workspace, job_count, job_limit,
 	);
 }
 tree_parallel_execute_query_job :: proc "contextless" (
@@ -309,7 +325,7 @@ tree_parallel_visit :: proc "contextless" (
 	status := Physics_Status.Ok;
 	if mode == .Self
 	{
-		status = tree_parallel_collect_self_jobs(tree_a, 0, leaf_threshold, workspace, &job_count);
+		status = tree_parallel_collect_self_jobs(tree_a, 0, leaf_threshold, workspace, &job_count, workspace.maximum_jobs);
 	}
 	else
 	{
@@ -328,9 +344,11 @@ tree_parallel_visit :: proc "contextless" (
 		{
 			for b_index in 0 ..< b_count
 			{
+				remaining_roots: int = a_count * b_count - a_index * b_count - b_index;
+				job_limit: int = job_count + (workspace.maximum_jobs - job_count) / remaining_roots;
 				status = tree_parallel_collect_pair_jobs(
 					tree_a, tree_child(root_a, a_index)^, tree_b, tree_child(root_b, b_index)^,
-					.Intertree, leaf_threshold, workspace, &job_count,
+					.Intertree, leaf_threshold, workspace, &job_count, job_limit,
 				);
 				if status != .Ok
 				{
@@ -393,8 +411,13 @@ tree_self_intertree_visit_parallel :: proc "contextless" (
 	if tree_a.leaf_count >= 2
 	{
 		self_leaf_threshold := max(2, tree_a.leaf_count / (worker_count * 8));
+		self_limit: int = workspace.maximum_jobs;
+		if tree_b.leaf_count > 0
+		{
+			self_limit /= 2;
+		}
 		status := tree_parallel_collect_self_jobs(
-			tree_a, 0, self_leaf_threshold, workspace, &job_count,
+			tree_a, 0, self_leaf_threshold, workspace, &job_count, self_limit,
 		);
 		if status != .Ok
 		{
@@ -421,10 +444,12 @@ tree_self_intertree_visit_parallel :: proc "contextless" (
 		{
 			for b_index in 0 ..< b_count
 			{
+				remaining_roots: int = a_count * b_count - a_index * b_count - b_index;
+				job_limit: int = job_count + (workspace.maximum_jobs - job_count) / remaining_roots;
 				status := tree_parallel_collect_pair_jobs(
 					tree_a, tree_child(root_a, a_index)^,
 					tree_b, tree_child(root_b, b_index)^,
-					.Intertree, intertree_leaf_threshold, workspace, &job_count,
+					.Intertree, intertree_leaf_threshold, workspace, &job_count, job_limit,
 				);
 				if status != .Ok
 				{

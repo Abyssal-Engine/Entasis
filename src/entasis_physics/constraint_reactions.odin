@@ -30,10 +30,22 @@ Constraint_Reaction_Provider_Proc :: #type proc "contextless" (
 	user_context: rawptr, input: ^Constraint_Reaction_Provider_Input,
 	output: ^[4]Constraint_Impulse_Wrench,
 ) -> Physics_Status;
-Constraint_Reaction_Provider :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	read: Constraint_Reaction_Provider_Proc,
-	user_context: rawptr,
+	Constraint_Reaction_Provider :: struct
+	{
+		read: Constraint_Reaction_Provider_Proc,
+		user_context: rawptr,
+		position_space: Constraint_Position_Space,
+	}
+}
+else
+{
+	Constraint_Reaction_Provider :: struct
+	{
+		read: Constraint_Reaction_Provider_Proc,
+		user_context: rawptr,
+	}
 }
 
 constraint_builtin_reaction_support :: proc "contextless" (type_id: i32) -> Reference_State
@@ -197,11 +209,18 @@ constraint_read_reaction_impulses :: proc "contextless" (
 	builtin: Reference_State = constraint_builtin_reaction_support(record.type_id);
 	// registry admission already establishes description size and callbacks.
 	// the reaction provider adds only its scalar impulse bound and unit contract
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if builtin == .Missing && provider.position_space != record.position_space
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
 	if builtin == .Missing && (record.type_id < FIRST_CALLER_CONSTRAINT_TYPE_ID ||
 		provider.read == nil || record.impulse_bundle_size % size_of(util.F32x8) != 0 ||
 		record.impulse_bundle_size / size_of(util.F32x8) > 32)
 	{
-		return 0, .Invalid_Argument;
+			return 0, .Invalid_Argument;
 	}
 	body_count = record.body_count;
 	first: int = int(location.index_in_type_batch);
@@ -231,6 +250,26 @@ constraint_read_reaction_impulses :: proc "contextless" (
 			body.inverse_inertia.zz = util.F32x8(1);
 		}
 		mask: util.I32x8 = simd.replace(util.I32x8(0), lane, -1);
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< int(body_count)
+		{
+			if .Position in record.initial_access[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if body_count > 1 && position_bodies != 0
+		{
+			status = solver_gather_constraint_relative_positions(solver.bodies,
+				type_batch_body_bundle(type_batch, first), int(body_count), position_bodies, mask, &bodies[0]);
+			if status != .Ok
+			{
+				return 0, status;
+			}
+		}
+	}
 		constraint_builtin_reaction_kernel(record.type_id, prestep, impulses, &bodies, mask);
 		for body_index in 0 ..< int(body_count)
 		{
@@ -240,6 +279,17 @@ constraint_read_reaction_impulses :: proc "contextless" (
 	}
 	else
 	{
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if record.position_space == .Body_A_Relative
+		{
+			status = constraint_reaction_relative_poses(solver.bodies, &handles, int(body_count), &poses);
+			if status != .Ok
+			{
+				return 0, status;
+			}
+		}
+	}
 		// decode only this lane into caller-local scalar provider views
 		input: Constraint_Reaction_Provider_Input = {
 			type_id=record.type_id, body_count=body_count, poses=poses,
@@ -423,6 +473,26 @@ constraint_capture_reaction_bundle :: proc "contextless" (
 			pose: Rigid_Pose=solver.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX].dynamics_state.memory[body_location.index].motion.pose;
 			util.vector3_wide_write_slot(&bodies[body_index].position, lane, pose.position);
 			util.quaternion_wide_write_slot(&bodies[body_index].orientation, lane, pose.orientation);
+		}
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_bodies: u8;
+		for body_index in 0 ..< int(record.body_count)
+		{
+			if .Position in record.initial_access[body_index]
+			{
+				position_bodies |= u8(1) << u32(body_index);
+			}
+		}
+		if record.body_count > 1 && position_bodies != 0
+		{
+			status = solver_gather_constraint_relative_positions(solver.bodies,
+				type_batch_body_bundle(type_batch, first), int(record.body_count), position_bodies, mask, &bodies[0]);
+			if status != .Ok
+			{
+				return status;
+			}
 		}
 	}
 	constraint_builtin_reaction_kernel(record.type_id, type_batch_prestep_bundle(type_batch, first), type_batch_impulse_bundle(type_batch, first), &bodies, mask);

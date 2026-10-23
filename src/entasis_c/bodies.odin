@@ -1074,10 +1074,10 @@ abi_static_awakening_bridge :: struct
 	user_context: rawptr,
 }
 
-abi_static_awakening_filter :: proc "contextless" (raw: rawptr, body: entasis.Body_Handle) -> bool
+abi_static_awakening_filter :: proc "contextless" (raw: rawptr, body: entasis.Body_Handle) -> entasis.Collision_Testing_State
 {
 	bridge := cast(^abi_static_awakening_bridge)raw;
-	return bridge.callback(bridge.user_context, abi_body_handle_from_core(body)) != 0;
+	return .Allow if bridge.callback(bridge.user_context, abi_body_handle_from_core(body)) != 0 else .Reject;
 }
 
 abi_static_add_filtered :: proc "contextless" (

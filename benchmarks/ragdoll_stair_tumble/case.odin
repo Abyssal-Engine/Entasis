@@ -20,6 +20,8 @@ AUTHORED_CONSTRAINT_COUNT :: RAGDOLL_COUNT * LINK_COUNT;
 WARMUP_STEP_COUNT :: 30;
 MEASURED_STEP_COUNT :: 600;
 FINAL_WORLD_STEP_COUNT :: MEASURED_STEP_COUNT;
+VELOCITY_ITERATION_COUNT :: 1;
+SUBSTEP_COUNT :: 4;
 TIMESTEP_DURATION :: f32(1.0 / 60.0);
 POOL_MINIMUM_BLOCK_SIZE :: 65_536;
 COLUMN_SPACING :: f32(2.8);
@@ -173,7 +175,7 @@ benchmark_world_description :: proc(owner: ^Benchmark_Owner, worker_count: int) 
 		inactive_pairs=1,
 		pending_pairs_per_worker=4096,
 	};
-	description.solve = {velocity_iterations=4, substeps=1, fallback_batch_threshold=64};
+	description.solve = {velocity_iterations=VELOCITY_ITERATION_COUNT, substeps=SUBSTEP_COUNT, fallback_batch_threshold=64};
 	description.threading = {worker_count=i32(worker_count), worker_pool_block_size=65_536};
 	description.narrow_callbacks = entasis.narrow_policy_default(&owner.narrow_policy);
 	return description;

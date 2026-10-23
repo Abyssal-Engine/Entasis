@@ -891,6 +891,35 @@ narrow_phase_queue_candidate :: proc "contextless" (
 		continuity_b = collidable_b.continuity;
 	}
 
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		position_a: Global_Position;
+		position_b: Global_Position;
+		if mobility_a == .Static
+		{
+			position_a = narrow.statics.global_positions.memory[narrow.statics.handle_to_index.memory[collidable_reference_raw_handle(pair.a)]];
+		}
+		else
+		{
+			position_a = set_a.global_positions.memory[location_a.index];
+		}
+		if mobility_b == .Static
+		{
+			position_b = narrow.statics.global_positions.memory[narrow.statics.handle_to_index.memory[collidable_reference_raw_handle(pair.b)]];
+		}
+		else
+		{
+			position_b = set_b.global_positions.memory[location_b.index];
+		}
+		pose_a.position = {};
+		relative_status: Physics_Status;
+		pose_b.position, relative_status = world_precision_relative_position(position_a, position_b);
+		if relative_status != .Ok
+		{
+			return relative_status;
+		}
+	}
+
 	batcher := &narrow.batchers[worker_index];
 	if fused_route != .Predecessor
 	{

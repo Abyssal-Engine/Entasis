@@ -4,7 +4,9 @@ The `c-sdk` provides prebuilt runtime and cooking libraries for C, C++ and other
 
 ## Start here
 
-Run commands from the extracted SDK root. Both runners use CMake/Ninja in Release mode to build and run four consumers: C11 and C++20, each with shared and static linkage. Each checks library versions, initializes a world and destroys it. They link runtime and cooking libraries but do not cook geometry
+Run commands from the extracted SDK root. Both runners use CMake/Ninja in Release mode to build and run four consumers: C11 and C++20, each with shared and static linkage. The examples check library versions and world lifecycle. They link runtime and cooking libraries but do not cook geometry
+
+The SDK contains either float32 or mixed64 libraries. CMake and pkg-config apply the matching compile definitions. For manual compilation, see [profile configuration](share/doc/Entasis/BUILDING.md#profile-configuration)
 
 Output goes to `build/examples/<compiler>/`. Success reports four passing CTest tests per compiler and `SDK_EXAMPLES_OK`
 

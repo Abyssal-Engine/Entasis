@@ -1,5 +1,7 @@
 package entasis
 
+import util "entasis:entasis_utilities"
+
 import physics "entasis:entasis_physics"
 
 // Command_Kind identifies one facade structural operation. commands are applied
@@ -302,11 +304,20 @@ command_validate_and_count :: proc "contextless" (
 // another command in the same buffer
 // allocation: the initial capacity check may grow world storage
 // ownership: owner thread only while the world is idle
-world_apply_commands :: proc (
+world_apply_commands_internal :: proc (
 	world: ^World,
 	buffer: ^Command_Buffer,
+	positions: []Global_Position = nil,
+	position_input: Batch_Position_Input = .Float32,
 ) -> (processed: int, status: Status)
 {
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if position_input == .Global && (buffer == nil || len(positions) != len(buffer.commands))
+		{
+			return 0, .Invalid_Argument;
+		}
+	}
 	requirements, validation_status := command_validate_and_count(buffer);
 	if validation_status != .Ok
 	{
@@ -331,12 +342,33 @@ world_apply_commands :: proc (
 	{
 		command := &buffer.commands[command_index];
 		command_status := Status.Ok;
+		position_override: ^Global_Position;
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			if position_input == .Global && command.kind != .Body_Remove && command.kind != .Static_Remove
+			{
+				position_override = &positions[command_index];
+				command_status = physics.world_precision_position_validate(position_override^);
+				if command_status != .Ok
+				{
+					command_status_write(buffer, command_index, command_status);
+					return command_index, command_status;
+				}
+			}
+		}
 		switch command.kind
 		{
 			case .Body_Add:
-				description := command.body_add_data.description;
+				description: Body_Description = command.body_add_data.description;
+				when util.PRECISION_MODE == .Double_Coordinates
+				{
+					if position_override != nil
+					{
+						description.pose.position = physics.world_precision_position_cache(position_override^);
+					}
+				}
 				handle, add_status := physics.simulation_add_body(
-					simulation, &description,
+					simulation, &description, position_override,
 				);
 				command_status = add_status;
 				if add_status == .Ok
@@ -344,18 +376,32 @@ world_apply_commands :: proc (
 					buffer.body_results[command.result_index] = handle;
 				}
 			case .Body_Apply:
-				description := command.body_apply_data.description;
+				description: Body_Description = command.body_apply_data.description;
+				when util.PRECISION_MODE == .Double_Coordinates
+				{
+					if position_override != nil
+					{
+						description.pose.position = physics.world_precision_position_cache(position_override^);
+					}
+				}
 				command_status = physics.simulation_apply_body_description(
-					simulation, command.body_apply_data.handle, &description,
+					simulation, command.body_apply_data.handle, &description, position_override,
 				);
 			case .Body_Remove:
 				command_status = physics.simulation_remove_body(
 					simulation, command.body_remove_data.handle,
 				);
 			case .Static_Add:
-				description := command.static_add_data.description;
+				description: Static_Description = command.static_add_data.description;
+				when util.PRECISION_MODE == .Double_Coordinates
+				{
+					if position_override != nil
+					{
+						description.pose.position = physics.world_precision_position_cache(position_override^);
+					}
+				}
 				handle, add_status := batch_add_static_low_level(
-					simulation, &description, command.static_add_data.awakening,
+					simulation, &description, command.static_add_data.awakening, position_override,
 				);
 				command_status = add_status;
 				if add_status == .Ok
@@ -363,12 +409,19 @@ world_apply_commands :: proc (
 					buffer.static_results[command.result_index] = handle;
 				}
 			case .Static_Apply:
-				description := command.static_apply_data.description;
+				description: Static_Description = command.static_apply_data.description;
+				when util.PRECISION_MODE == .Double_Coordinates
+				{
+					if position_override != nil
+					{
+						description.pose.position = physics.world_precision_position_cache(position_override^);
+					}
+				}
 				command_status = batch_apply_static_low_level(
 					simulation,
 					command.static_apply_data.handle,
 					&description,
-					command.static_apply_data.awakening,
+					command.static_apply_data.awakening, position_override,
 				);
 			case .Static_Remove:
 				command_status = batch_remove_static_low_level(
@@ -386,4 +439,22 @@ world_apply_commands :: proc (
 		}
 	}
 	return len(buffer.commands), .Ok;
+}
+
+world_apply_commands :: proc (world: ^World, buffer: ^Command_Buffer) -> (int, Status)
+{
+	return world_apply_commands_internal(world, buffer);
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	// positions has one simulation-frame value per command ordinal. remove rows
+	// ignore their position, including nonfinite values. malformed stream counts
+	// reject before clearing results. admitted rows preserve the ordered prefix
+	world_apply_commands_global :: proc (
+		world: ^World, buffer: ^Command_Buffer, positions: []Global_Position,
+	) -> (int, Status)
+	{
+		return world_apply_commands_internal(world, buffer, positions, .Global);
+	}
 }

@@ -253,6 +253,17 @@ typedef entasis_status_t (ENTASIS_CALL *entasis_timestep_fn)(void * user_context
  * @return positive values select the iteration count. nonpositive values retain the configured fixed iteration count, matching Odin
  */
 typedef int32_t (ENTASIS_CALL *entasis_substep_iterations_fn)(void * user_context, int32_t substep_index);
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * integrates one borrowed eight-lane velocity bundle with f64 position inputs
+ *
+ * @param user_context caller-owned state valid through world disposal, with synchronization for concurrent workers
+ * @param view borrowed callback-local view. only active lanes of view->velocity are writable
+ *
+ * @return returns normally without retaining borrowed pointers or unwinding an exception through Entasis
+ */
+typedef void (ENTASIS_CALL *entasis_global_velocity_integrate_fn)(void * user_context, const entasis_global_pose_integration_view_t * view);
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 /**
  * versioned allocator callback table and caller context
@@ -561,6 +572,80 @@ struct entasis_world_extensions_t {
 };
 
 /**
+ * f64 position in the current simulation frame, or application coordinates in a frame conversion
+ *
+ * ordinary global APIs use the current simulation frame. application coordinates require an explicit origin-frame conversion
+ */
+struct entasis_global_position_t {
+    /* x coordinate in metres */
+    double x;
+    /* y coordinate in metres */
+    double y;
+    /* z coordinate in metres */
+    double z;
+};
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * borrowed eight-lane f64 positions and writable f32 velocities
+ *
+ * all pointers expire on callback return. one invocation handles eight lanes, not one invocation per body. do not call ordinary world/body getters during stepping. do not retain any view pointer or unwind a foreign exception through Entasis
+ */
+struct entasis_global_pose_integration_view_t {
+    /* eight stable body handles. inactive lanes contain invalid handles */
+    const entasis_body_handle_t * body_handles;
+    /* eight active-lane masks. never access inactive bodies */
+    const entasis_i32x8_t * active_mask;
+    /* eight authoritative simulation-frame double positions, read only for active lanes */
+    const entasis_global_position_t * position;
+    /* read-only orientations */
+    const entasis_quaternion_wide_t * orientation;
+    /* read-only world-space inertia */
+    const entasis_body_inertia_wide_t * inertia;
+    /* read-only per-lane timestep durations in seconds */
+    const entasis_f32x8_t * dt;
+    /* only active velocity lanes are writable. inactive lanes are restored after return */
+    entasis_body_velocity_wide_t * velocity;
+    /* calling worker index. callback state must support concurrent workers */
+    int32_t worker_index;
+    /* reserved output padding. do not modify */
+    uint32_t _reserved0;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copied velocity-integration descriptor with f64 position inputs
+ *
+ * all four function pointers are required. user_context and callback code remain valid through disposal. integrate calls may run concurrently on different workers. conflicts with a legacy pose policy or velocity descriptor are rejected. a failed initialize callback must clean up its own partial resources. dispose runs only after successful initialization
+ */
+struct entasis_global_velocity_callbacks_t {
+    /* initialize to sizeof this structure */
+    uint32_t struct_size;
+    /* initialize to 1 */
+    uint32_t struct_version;
+    /* angular integration policy for velocity and orientation updates */
+    entasis_angular_integration_mode_t angular_mode;
+    /* whether unconstrained bodies use substeps */
+    entasis_bool_t allow_substeps_for_unconstrained;
+    /* whether kinematic velocity is passed through integration */
+    entasis_bool_t integrate_kinematic_velocity;
+    /* initialize reserved storage to zero */
+    uint8_t _reserved0;
+    /* caller-owned callback state, borrowed for the registered lifetime */
+    void * user_context;
+    /* required initialization callback */
+    entasis_velocity_initialize_fn initialize;
+    /* required preparation callback */
+    entasis_velocity_prepare_fn prepare;
+    /* required eight-lane callback */
+    entasis_global_velocity_integrate_fn integrate;
+    /* required callback resource disposal */
+    entasis_velocity_dispose_fn dispose;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+/**
  * uniform gravity and damping policy
  */
 struct entasis_uniform_gravity_policy_t {
@@ -619,6 +704,28 @@ struct entasis_pose_policy_t {
     /* reserved for ABI compatibility */
     uint64_t reserved1;
 };
+
+/**
+ * caller-owned application origin, application position equals origin plus simulation position
+ *
+ * changing this value alone does not move the world. entasis_world_shift_origin commits the matching world and frame translation
+ */
+struct entasis_origin_frame_t {
+    /* application position of the simulation origin */
+    entasis_global_position_t origin;
+};
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * rigid pose with an f64 current-frame position and f32 orientation
+ */
+struct entasis_global_pose_t {
+    /* position in the current simulation frame */
+    entasis_global_position_t position;
+    /* world-oriented unit quaternion */
+    entasis_quaternion_t orientation;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 /**
  * complete versioned world initialization description
@@ -1204,6 +1311,117 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_optimize(entasis_st
  * @return returns the operation status. completed work is not rolled back on callback failure
  */
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_step_scope_report_completion(entasis_step_scope_t scope, entasis_timestep_completion_stage_t stage, float dt, entasis_diagnostic_t * diagnostic);
+
+/**
+ * constructs a caller-owned application origin after finite validation
+ *
+ * does not allocate or mutate a world. result is unchanged on failure
+ *
+ * @param origin required finite application position of the simulation origin
+ * @param result required caller-owned frame output
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_at(const entasis_global_position_t * origin, entasis_origin_frame_t * result, entasis_diagnostic_t * diagnostic);
+
+/**
+ * subtracts the application origin in f64 before narrowing the displacement to f32
+ *
+ * rejects nonfinite input and displacements outside the finite f32 range. result is unchanged on failure. does not allocate
+ *
+ * @param frame required application origin
+ * @param position required finite application position
+ * @param result required simulation-frame f32 position output
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_to_local(const entasis_origin_frame_t * frame, const entasis_global_position_t * position, entasis_vector3_t * result, entasis_diagnostic_t * diagnostic);
+
+/**
+ * adds an f32 simulation position to the application origin in f64
+ *
+ * rejects nonfinite input or reconstruction overflow. result is unchanged on failure. does not allocate
+ *
+ * @param frame required application origin
+ * @param position required finite simulation-frame f32 position
+ * @param result required application-coordinate f64 position output
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_to_global(const entasis_origin_frame_t * frame, const entasis_vector3_t * position, entasis_global_position_t * result, entasis_diagnostic_t * diagnostic);
+
+/**
+ * computes to - from in f64 before narrowing the displacement to f32
+ *
+ * both positions must use the same coordinate frame. rejects nonfinite input or a displacement outside the finite f32 range. result is unchanged on failure. does not allocate
+ *
+ * @param from required finite starting position
+ * @param to required finite ending position
+ * @param result required local displacement output
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_global_position_delta(const entasis_global_position_t * from, const entasis_global_position_t * to, entasis_vector3_t * result, entasis_diagnostic_t * diagnostic);
+
+/**
+ * adds an f64 delta to the caller-owned application origin
+ *
+ * does not move simulation objects or allocate. nonfinite input or addition overflow leaves the frame unchanged
+ *
+ * @param frame required caller-owned frame, updated only on success
+ * @param delta required finite application-origin displacement
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or ENTASIS_STATUS_INVALID_ARGUMENT for invalid input or an unrepresentable result
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_origin_frame_translate(entasis_origin_frame_t * frame, const entasis_global_position_t * delta, entasis_diagnostic_t * diagnostic);
+
+/**
+ * subtracts a common f32 delta from live absolute positions and advances the application origin
+ *
+ * requires the owner thread and exclusive access to an idle world. validates the translated world and frame before committing either. a successful nonzero shift invalidates direct views. positions saved in caller-owned snapshots, query inputs or callback state remain in their previous frame and need translation before reuse
+ *
+ * @param world required idle world
+ * @param frame required caller-owned application origin, advanced only after the world shift succeeds
+ * @param delta required finite simulation-frame displacement to subtract
+ * @param diagnostic optional diagnostic output, or NULL
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_shift_origin(entasis_world_t * world, entasis_origin_frame_t * frame, const entasis_vector3_t * delta, entasis_diagnostic_t * diagnostic);
+
+/**
+ * constructs an f64 position without validation or allocation
+ *
+ * @param x x coordinate in metres
+ * @param y y coordinate in metres
+ * @param z z coordinate in metres
+ *
+ * @return returns the supplied coordinates unchanged
+ */
+ENTASIS_API entasis_global_position_t ENTASIS_CALL entasis_global_position(double x, double y, double z);
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * initializes a mixed64 world with f64-position velocity callbacks
+ *
+ * snapshots the input descriptors before allocator callbacks and copies the callback descriptor into world ownership. callback code and user_context must remain valid through disposal. description.use_pose_policy must be false and extensions.velocity_callbacks must be NULL. all four global callbacks are required. callback workers may run concurrently, so shared user state needs caller synchronization
+ *
+ * @param world target world
+ * @param description required world description without an explicitly selected legacy pose policy
+ * @param extensions optional world extensions, with velocity_callbacks set to NULL
+ * @param pool optional borrowed pool, or NULL for world-owned storage
+ * @param callbacks required version-1 descriptor with struct_size at least sizeof(entasis_global_velocity_callbacks_t)
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the initialization failure, including allocator or callback failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_init_global(entasis_world_t * world, const entasis_world_description_t * description, const entasis_world_extensions_t * extensions, entasis_buffer_pool_t * pool, const entasis_global_velocity_callbacks_t * callbacks, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 #ifdef __cplusplus
 } /* extern "C" */

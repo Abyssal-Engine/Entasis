@@ -1,6 +1,14 @@
 benchmark_binary() {
   local package="$1"
   local configuration="${2:-release}"
+  if [[ "$package" == large_world_precision ]]; then
+    printf '%s/build/benchmarks/large_world_precision/%s/%s/entasis_large_world_precision' "$ROOT" "$configuration" "${6:-}"
+    return
+  fi
+  if [[ "${5:-float32}" == mixed64 ]]; then
+    printf '%s/build/benchmarks/mixed64/%s/entasis_%s' "$ROOT" "$configuration" "$package"
+    return
+  fi
   if [[ "$package" == contact_islands && "${4:-all}" == common ]]; then package+="_common"; fi
   if [[ "${3:-off}" == on ]]; then
     printf '%s/build/benchmarks/recorded/%s/%s' "$ROOT" "$configuration" "$package"
@@ -37,13 +45,14 @@ invoke_benchmark_build() {
 }
 
 build_benchmark() {
-  local package="$1" configuration="${2:-release}" record="${3:-off}" components="${4:-all}" output revision
+  local package="$1" configuration="${2:-release}" record="${3:-off}" components="${4:-all}" precision="${5:-float32}" candidate="${6:-}" output revision
   benchmark_exists "$package" || fail_usage "unknown benchmark package: $package"
-  output="$(benchmark_binary "$package" "$configuration" "$record" "$components")"
+  output="$(benchmark_binary "$package" "$configuration" "$record" "$components" "$precision" "$candidate")"
   set_odin_profile "$configuration"
   local -a arguments=(build "$ROOT/benchmarks/$package" "-out:$output"
     "-collection:entasis=$ROOT/src" "-target:$ODIN_TARGET" "-microarch:$ODIN_MICROARCH"
-    "${ODIN_PROFILE_ARGUMENTS[@]}")
+    "${ODIN_PROFILE_ARGUMENTS[@]}" "-define:ENTASIS_PRECISION=$precision")
+  if [[ "$package" == large_world_precision ]]; then arguments+=("-define:ENTASIS_PRECISION_CANDIDATE=$candidate"); fi
   if [[ "$package" == contact_islands ]]; then arguments+=("-define:ENTASIS_BENCHMARK_COMPONENTS=$components"); fi
   if [[ "$record" == on ]]; then
     revision="$(git -C "$ROOT" rev-parse HEAD)"

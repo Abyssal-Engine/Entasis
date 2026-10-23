@@ -74,6 +74,25 @@ Reference: [WORLD.md](WORLD.md)
 | [`dispatcher_from_thread_pool`](WORLD.md) | procedure | Exposes an included caller-owned Thread_Pool through the stable external interface |
 | [`world_step_external`](WORLD.md) | procedure | Advances one timestep through a caller-owned blocking dispatcher interface |
 
+### [world_precision.odin](../../../src/entasis/world_precision.odin)
+
+Available in both precision profiles
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Precision_Mode`](WORLD.md#precision-profiles-and-origin-frames) | type alias | Compile-time coordinate profile |
+| [`PRECISION_MODE`](WORLD.md#precision-profiles-and-origin-frames) | constant | Selected coordinate profile enum |
+| [`PRECISION_NAME`](WORLD.md#precision-profiles-and-origin-frames) | constant | Selected float32 or mixed64 build label |
+| [`Global_Position`](WORLD.md#precision-profiles-and-origin-frames) | type alias | Three f64 position coordinates |
+| [`Origin_Frame`](WORLD.md#precision-profiles-and-origin-frames) | type alias | Caller-owned application origin |
+| [`global_position`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Construct an f64 position |
+| [`origin_frame_at`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Create a frame after finite-origin validation |
+| [`origin_frame_to_local`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Subtract the application origin before narrowing to f32 |
+| [`origin_frame_to_global`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Widen a local position and add the application origin |
+| [`global_position_delta`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Subtract f64 positions before narrowing their displacement |
+| [`origin_frame_translate`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Translate only the caller-owned frame |
+| [`world_shift_origin`](WORLD.md#precision-profiles-and-origin-frames) | procedure | Translate engine coordinates and advance the frame after a successful commit |
+
 ## Bodies and statics
 
 Reference: [BODIES-STATICS.md](BODIES-STATICS.md)
@@ -164,6 +183,49 @@ Reference: [BODIES-STATICS.md](BODIES-STATICS.md#optional-body-controls). Source
 
 `Body_Lock_Axis`, `Body_Lock_Axes`, `Body_Axis_Lock` and `body_axis_lock_default(reference)` describe selected physical rows. `body_set_axis_lock`, `body_get_axis_lock` and `body_clear_axis_lock` configure, inspect and remove the owned joint. See [physical axis locks](BODIES-STATICS.md#physical-axis-locks)
 
+### [global_body_mutations.odin](../../../src/entasis/global_body_mutations.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`body_add_global`](BODIES-STATICS.md#high-positional-authoring) | procedure | Add a body with a simulation-frame f64 position |
+| [`body_apply_global`](BODIES-STATICS.md#high-positional-authoring) | procedure | Replace a complete body description and f64 position |
+| [`body_set_global_pose`](BODIES-STATICS.md#high-positional-authoring) | procedure | Replace body position and orientation |
+
+### [global_static_mutations.odin](../../../src/entasis/global_static_mutations.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`static_add_global`](BODIES-STATICS.md#high-positional-authoring) | procedure | Add a static with an f64 position and wake policy |
+| [`static_apply_global`](BODIES-STATICS.md#high-positional-authoring) | procedure | Replace a complete static description and f64 position |
+| [`static_set_global_pose`](BODIES-STATICS.md#high-positional-authoring) | procedure | Replace static position and orientation |
+| [`static_add_global_filtered`](BODIES-STATICS.md#high-positional-authoring) | procedure | Add a static with caller-filtered awakening |
+| [`static_apply_global_filtered`](BODIES-STATICS.md#high-positional-authoring) | procedure | Replace a static with caller-filtered awakening |
+
+### [global_poses.odin](../../../src/entasis/global_poses.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Pose`](DATA-ACCESS.md#global-authoring-snapshots) | type alias | Simulation-frame f64 position with f32 orientation |
+| [`body_get_global_pose`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy an authoritative body pose without awakening |
+| [`static_get_global_pose`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy an authoritative static pose |
+| [`world_export_global_poses`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Export poses in reference order with an optional application origin |
+
+### [global_body_control.odin](../../../src/entasis/global_body_control.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`body_add_force_at_global_position`](BODIES-STATICS.md#high-positional-authoring) | procedure | Queue force and torque using an f64 simulation-frame point |
+| [`body_set_global_kinematic_target`](BODIES-STATICS.md#high-positional-authoring) | procedure | Queue a kinematic pose with an f64 position |
+| [`body_get_global_kinematic_target`](BODIES-STATICS.md#high-positional-authoring) | procedure | Copy the queued target or return Not_Found |
+
 ## Structural operations
 
 Reference: [STRUCTURAL-OPERATIONS.md](STRUCTURAL-OPERATIONS.md)
@@ -197,6 +259,18 @@ Reference: [STRUCTURAL-OPERATIONS.md](STRUCTURAL-OPERATIONS.md)
 | [`command_static_apply`](STRUCTURAL-OPERATIONS.md) | procedure | Constructs a static-apply command with awakening policy |
 | [`command_static_remove`](STRUCTURAL-OPERATIONS.md) | procedure | Constructs a static-remove command with awakening policy |
 | [`world_apply_commands`](STRUCTURAL-OPERATIONS.md) | procedure | Applies caller-owned structural commands in exact input order |
+| [`world_apply_commands_global`](STRUCTURAL-OPERATIONS.md#global-position-streams) | procedure | Mixed64 command execution with one f64 position per command ordinal |
+
+### [global_batch.odin](../../../src/entasis/global_batch.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`body_add_batch_global`](STRUCTURAL-OPERATIONS.md#global-position-streams) | procedure | Add body descriptions with a parallel f64 position stream |
+| [`body_apply_batch_global`](STRUCTURAL-OPERATIONS.md#global-position-streams) | procedure | Apply body descriptions and positions in input order |
+| [`static_add_batch_global`](STRUCTURAL-OPERATIONS.md#global-position-streams) | procedure | Add static descriptions with a parallel f64 position stream |
+| [`static_apply_batch_global`](STRUCTURAL-OPERATIONS.md#global-position-streams) | procedure | Apply static descriptions and positions in input order |
 
 ## Shapes
 
@@ -464,7 +538,8 @@ Reference: [CONSTRAINTS.md](CONSTRAINTS.md)
 | [`Symmetric3x3_Wide`](CONSTRAINTS.md) | type alias | Stores eight symmetric matrices in structure-of-arrays form |
 | [`Constraint_Description_Validate_Proc`](CONSTRAINTS.md) | type alias | Validates one scalar custom constraint description |
 | [`Custom_Constraint_Registration`](CONSTRAINTS.md) | struct | Describes one caller-defined constraint type and its SIMD kernels |
-| [`custom_constraint_registration`](CONSTRAINTS.md) | procedure | Infers the scalar description, wide prestep, and accumulated-impulse storage sizes |
+| [`Constraint_Position_Space`](CONSTRAINTS.md#absolute-targets-and-position-space) | type alias | Mixed64 custom-kernel absolute-float or body-A-relative position contract |
+| [`custom_constraint_registration`](CONSTRAINTS.md#absolute-targets-and-position-space) | procedure | Infer description/kernel storage sizes and select position space in mixed64 |
 | [`custom_constraint_next_type_id`](CONSTRAINTS.md) | procedure | Returns the first unused caller constraint type ID |
 | [`custom_constraint_register`](CONSTRAINTS.md) | procedure | Installs one caller-defined constraint type before simulation starts |
 | [`custom_constraint_add`](CONSTRAINTS.md) | procedure | Creates one registered custom constraint from raw description bytes |
@@ -473,6 +548,18 @@ Reference: [CONSTRAINTS.md](CONSTRAINTS.md)
 | [`custom_constraint_get_typed`](CONSTRAINTS.md) | procedure | Returns one typed custom constraint description |
 | [`custom_constraint_apply`](CONSTRAINTS.md) | procedure | Replaces one custom constraint description from raw bytes |
 | [`custom_constraint_apply_typed`](CONSTRAINTS.md) | procedure | Replaces one custom constraint with a typed description |
+
+### [contextual_constraints.odin](../../../src/entasis/contextual_constraints.odin)
+
+Available in both profiles, with position-space selection in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Contextual_Constraint_Validate_Proc`](CONSTRAINTS.md#absolute-targets-and-position-space) | type alias | Validate custom descriptions with caller context |
+| [`Contextual_Constraint_Kernel_Proc`](CONSTRAINTS.md#absolute-targets-and-position-space) | type alias | Execute custom constraint kernels with caller context |
+| [`Contextual_Custom_Constraint_Registration`](CONSTRAINTS.md#absolute-targets-and-position-space) | struct | Contextual kernels, storage sizes and mixed64 position-space selection |
+| [`custom_constraint_registration_contextual`](CONSTRAINTS.md#absolute-targets-and-position-space) | procedure | Build contextual registration with optional mixed64 position space |
+| [`custom_constraint_register_contextual`](CONSTRAINTS.md#absolute-targets-and-position-space) | procedure | Install contextual constraint kernels before simulation starts |
 
 ### Joint reactions and breaking
 
@@ -709,17 +796,17 @@ Reference: [QUERIES.md](QUERIES.md)
 | [`query_context_init`](QUERIES.md#independently-owned-query-contexts) | procedure | Attaches a context to a live world and creates private scratch or exclusively borrows its pool |
 | [`query_context_reserve`](QUERIES.md#independently-owned-query-contexts) | procedure | Reserves context-local scratch while the attached world is idle |
 | [`query_context_destroy`](QUERIES.md#independently-owned-query-contexts) | procedure | Returns scratch to its owner, detaches the world and preserves a borrowed pool |
-| [`ray_cast_any_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast any using caller-exclusive context scratch and the existing query semantics |
-| [`ray_cast_closest_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast closest using caller-exclusive context scratch and the existing query semantics |
-| [`ray_cast_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast all using caller-exclusive context scratch and the existing query semantics |
-| [`sweep_any_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep any using caller-exclusive context scratch and the existing query semantics |
-| [`sweep_closest_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep closest using caller-exclusive context scratch and the existing query semantics |
-| [`sweep_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep all using caller-exclusive context scratch and the existing query semantics |
-| [`overlap_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes overlap all using caller-exclusive context scratch and the existing query semantics |
-| [`volume_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes volume all using caller-exclusive context scratch and the existing query semantics |
-| [`collision_query_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes collision query using caller-exclusive context scratch and the existing query semantics |
-| [`collision_query_batch_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes collision query batch using caller-exclusive context scratch and the existing query semantics |
-| [`query_batch_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes query batch using caller-exclusive context scratch and the existing query semantics |
+| [`ray_cast_any_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast any using caller-exclusive context scratch |
+| [`ray_cast_closest_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast closest using caller-exclusive context scratch |
+| [`ray_cast_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes ray cast all using caller-exclusive context scratch |
+| [`sweep_any_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep any using caller-exclusive context scratch |
+| [`sweep_closest_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep closest using caller-exclusive context scratch |
+| [`sweep_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes sweep all using caller-exclusive context scratch |
+| [`overlap_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes overlap all using caller-exclusive context scratch |
+| [`volume_all_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes volume all using caller-exclusive context scratch |
+| [`collision_query_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes collision query using caller-exclusive context scratch |
+| [`collision_query_batch_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes collision query batch using caller-exclusive context scratch |
+| [`query_batch_with_context`](QUERIES.md#independently-owned-query-contexts) | procedure | Executes query batch using caller-exclusive context scratch |
 | [`query_batch_read_only_status`](QUERIES.md#independently-owned-query-contexts) | procedure | Check whether a closest-ray batch can run without shared scratch or callbacks |
 
 ### Distance and separation
@@ -748,6 +835,97 @@ geometric overlap](QUERIES.md#early-out-geometric-overlap). A successful miss is
 | Declaration | Kind | Purpose |
 | --- | --- | --- |
 | [`ray_query`](QUERIES.md) | procedure | Traverse world geometry with an application ray collector |
+
+### [global_queries.odin](../../../src/entasis/global_queries.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`World_Precision_Segment`](QUERIES.md#high-query-coordinates) | type alias | Closed ray segment with f64 start and end coordinates |
+| [`Global_Ray_Hit`](QUERIES.md#high-query-coordinates) | struct | Ray fraction, f64 location, normal and collidable identity |
+| [`global_ray_stack_requirement`](QUERIES.md#high-query-coordinates) | procedure | Get the required caller-owned i32 traversal-stack length |
+| [`ray_cast_global_any_with_context`](QUERIES.md#high-query-coordinates) | procedure | Report whether the segment has an accepted hit |
+| [`ray_cast_global_closest_with_context`](QUERIES.md#high-query-coordinates) | procedure | Return the closest accepted hit or Not_Found |
+| [`ray_cast_global_all_with_context`](QUERIES.md#high-query-coordinates) | procedure | Write accepted hits and retain the valid prefix on failure |
+
+### [global_sweep_queries.odin](../../../src/entasis/global_sweep_queries.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Sweep_Result`](QUERIES.md#high-query-coordinates) | type alias | Local-float sweep result with an f64 contact location |
+| [`Global_Sweep_Hit`](QUERIES.md#high-query-coordinates) | struct | Sweep result and collidable identity |
+| [`sweep_global_any_with_context`](QUERIES.md#high-query-coordinates) | procedure | Report whether a moving shape has an accepted impact |
+| [`sweep_global_closest_with_context`](QUERIES.md#high-query-coordinates) | procedure | Return the closest impact or Not_Found |
+| [`sweep_global_all_with_context`](QUERIES.md#high-query-coordinates) | procedure | Write the first impact per accepted collidable |
+
+### [global_overlap_queries.odin](../../../src/entasis/global_overlap_queries.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`overlap_global_any_with_context`](QUERIES.md#high-query-coordinates) | procedure | Stop after an accepted nonnegative-depth contact |
+| [`overlap_global_all_with_context`](QUERIES.md#high-query-coordinates) | procedure | Write overlap manifolds relative to the f64 query pose |
+
+### [global_volume_queries.odin](../../../src/entasis/global_volume_queries.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Bounds`](QUERIES.md#high-query-coordinates) | type alias | Axis-aligned bounds with f64 endpoints |
+| [`global_bounds_stack_requirement`](QUERIES.md#high-query-coordinates) | procedure | Get the required stack length for global scene queries |
+| [`volume_global_all_with_context`](QUERIES.md#high-query-coordinates) | procedure | Write conservative broad-phase candidates |
+
+### [global_distance_queries.odin](../../../src/entasis/global_distance_queries.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Distance_Query_Geometry`](QUERIES.md#high-query-coordinates) | struct | Local distance/depth result with two f64 witnesses |
+| [`Global_Shape_Distance_Result`](QUERIES.md#high-query-coordinates) | struct | Distance geometry and child identities |
+| [`shape_closest_point_global_with_context`](QUERIES.md#high-query-coordinates) | procedure | Find the closest point using f64 point/pose coordinates |
+| [`shape_distance_global_with_context`](QUERIES.md#high-query-coordinates) | procedure | Find two f64 witnesses and their local-float distance |
+| [`shape_penetration_global_with_context`](QUERIES.md#high-query-coordinates) | procedure | Resolve convex-pair separation with f64 witness locations |
+| [`shape_depenetrate_global_with_context`](QUERIES.md#high-query-coordinates) | procedure | Compute a local-float correction for an f64 input pose |
+
+### [global_distance_targets.odin](../../../src/entasis/global_distance_targets.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`collidable_shape_global_pose_with_context`](QUERIES.md#high-query-coordinates) | procedure | Copy a collidable shape and authoritative pose without awakening |
+
+### [global_query_batch.odin](../../../src/entasis/global_query_batch.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Query_Kind`](QUERIES.md#global-batches) | enum | Select a global ray, sweep, overlap or volume operation |
+| [`Global_Ray_Query`](QUERIES.md#global-batches) | struct | Segment, filter and selected all-hit output range |
+| [`Global_Sweep_Query`](QUERIES.md#global-batches) | struct | Shape, global pose, motion, settings and output range |
+| [`Global_Overlap_Query`](QUERIES.md#global-batches) | struct | Shape, global pose, filter and output range |
+| [`Global_Volume_Query`](QUERIES.md#global-batches) | struct | Global bounds, filter and output range |
+| [`Global_Query`](QUERIES.md#global-batches) | struct | Tagged global scene-query input |
+| [`Global_Query_Result`](QUERIES.md#global-batches) | struct | Per-input status, hit state, count and closest-hit payload |
+| [`Global_Query_Scratch`](QUERIES.md#global-batches) | struct | Caller-owned result spans and reused traversal stack |
+| [`query_batch_global_with_context`](QUERIES.md#global-batches) | procedure | Attempt every spatial query in order and return the first failure |
+
+### [global_distance_batch.odin](../../../src/entasis/global_distance_batch.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Distance_Query`](QUERIES.md#global-batches) | struct | Global point or shape-pair query with explicit settings |
+| [`Global_Distance_Query_Result`](QUERIES.md#global-batches) | struct | Per-input status and distance or correction result |
+| [`distance_query_batch_global_with_context`](QUERIES.md#global-batches) | procedure | Attempt every distance-family query without implicit reservation |
 
 ## Data access
 
@@ -874,6 +1052,55 @@ Reference: [DATA-ACCESS.md](DATA-ACCESS.md)
 | [`buffer_pool_clear`](DATA-ACCESS.md) | procedure | Releases native blocks while retaining ready pool metadata |
 | [`buffer_pool_destroy`](DATA-ACCESS.md) | procedure | Releases a caller-owned pool after all attached worlds are destroyed |
 
+### [global_state_types.odin](../../../src/entasis/global_state_types.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Body_State`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Body authoring fields with an authoritative global pose |
+| [`Global_Static_State`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Static authoring fields with an authoritative global pose |
+| [`Global_Constraint_Target_Kind`](DATA-ACCESS.md#global-authoring-snapshots) | enum | Identify a built-in absolute constraint target |
+| [`Global_Constraint_Target_State`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Constraint target kind and f64 position |
+| [`Global_Target_Presence`](DATA-ACCESS.md#global-authoring-snapshots) | enum | Distinguish absent and present kinematic targets |
+| [`Global_Kinematic_Target_State`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Kinematic target presence and global pose |
+| [`Global_State_Selection`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Caller-owned body, static and target handle spans |
+| [`Global_State_Snapshot`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Caller-owned authoring-value spans |
+| [`Global_State_Counts`](DATA-ACCESS.md#global-authoring-snapshots) | struct | Successful prefix count for each snapshot stream |
+
+### [global_body_states.odin](../../../src/entasis/global_body_states.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`body_get_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy body authoring values without awakening |
+| [`body_add_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Add a body from a global authoring state |
+| [`body_apply_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Replace a complete body authoring state |
+| [`static_get_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy static authoring values |
+| [`static_add_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Add a static from a global authoring state |
+| [`static_apply_global_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Replace a complete static authoring state |
+
+### [global_target_states.odin](../../../src/entasis/global_target_states.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`constraint_get_global_target_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy a supported built-in absolute constraint target |
+| [`constraint_apply_global_target_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Replace a target of the matching constraint kind |
+| [`body_get_global_target_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Copy a kinematic target with explicit absent/present state |
+| [`body_apply_global_target_state`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Clear an absent target or queue a new present target |
+
+### [global_state_snapshots.odin](../../../src/entasis/global_state_snapshots.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`world_export_global_states`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Capture selected authoring values in four ordered streams |
+| [`world_apply_global_states`](DATA-ACCESS.md#global-authoring-snapshots) | procedure | Apply selected authoring values and return committed prefix counts |
+
 ## Callbacks and stages
 
 Reference: [CALLBACKS-STAGES.md](CALLBACKS-STAGES.md)
@@ -928,6 +1155,18 @@ Reference: [CALLBACKS-STAGES.md](CALLBACKS-STAGES.md)
 | [`world_stage_collision_detection`](CALLBACKS-STAGES.md) | procedure | Updates the broad phase and narrow phase |
 | [`world_stage_solve`](CALLBACKS-STAGES.md) | procedure | Solves constraints and integrates bodies |
 | [`world_stage_optimize`](CALLBACKS-STAGES.md) | procedure | Executes incremental solver/tree maintenance |
+
+### [global_gravity.odin](../../../src/entasis/global_gravity.odin)
+
+Available in mixed64
+
+| Declaration | Kind | Purpose |
+| --- | --- | --- |
+| [`Global_Position_Bundle`](CALLBACKS-STAGES.md#position-aware-callbacks) | type alias | Eight authoritative f64 callback positions |
+| [`Global_Pose_Velocity_Proc`](CALLBACKS-STAGES.md#position-aware-callbacks) | type alias | Velocity callback receiving global position lanes |
+| [`Global_Planetary_Gravity_Policy`](CALLBACKS-STAGES.md#position-aware-callbacks) | struct | Caller-owned radial-gravity policy with an f64 center |
+| [`planetary_gravity_policy_global`](CALLBACKS-STAGES.md#position-aware-callbacks) | procedure | Construct a global radial-gravity policy |
+| [`pose_policy_planetary_global`](CALLBACKS-STAGES.md#position-aware-callbacks) | procedure | Build the global velocity callback table around the policy |
 
 ## Profiling and inspection
 

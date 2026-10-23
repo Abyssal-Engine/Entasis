@@ -3,6 +3,9 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 source "$ROOT/scripts/linux/benchmarks/build_support.sh"
 
+precision="float32"
+precision_candidate=""
+declare -A precision_seen=()
 odin=""
 odin_count=0
 configuration="release"
@@ -15,6 +18,14 @@ components="all"
 components_count=0
 while (($# > 0)); do
   case "$1" in
+    --precision|--precision-candidate)
+      option="$1"
+      [[ -z "${precision_seen[$option]:-}" ]] || fail_usage "repeated option: $option"
+      precision_seen[$option]=1
+      (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "$option requires a value"
+      if [[ "$option" == --precision ]]; then precision="$2"; else precision_candidate="$2"; fi
+      shift 2
+      ;;
     --components)
       ((components_count += 1))
       ((components_count == 1)) || fail_usage "--components may be supplied only once"
@@ -54,6 +65,15 @@ while (($# > 0)); do
     *) fail_usage "unknown option: $1" ;;
   esac
 done
+case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
+if [[ "$package" == large_world_precision ]]; then
+  case "$precision_candidate" in baseline|origin) selected_precision=float32 ;; mixed64) selected_precision=mixed64 ;; *) fail_usage "precision package requires a supported candidate" ;; esac
+  [[ -z "${precision_seen[--precision]:-}" || "$precision" == "$selected_precision" ]] || fail_usage "precision conflicts with candidate"
+  precision="$selected_precision"
+  ((components_count == 0)) || fail_usage "precision package does not accept components"
+else
+  [[ -z "$precision_candidate" ]] || fail_usage "--precision-candidate requires large_world_precision"
+fi
 case "$record" in
   off|on) ;;
   *) fail_usage "--record must be off or on" ;;
@@ -77,7 +97,7 @@ packages=("${BENCHMARK_PACKAGES[@]}")
 if ((package_count > 0)); then packages=("$package"); fi
 printf 'BENCHMARK_BUILD_CONFIG configuration=%s packages=%s\n' "$configuration" "$(IFS=,; printf '%s' "${packages[*]}")"
 for selected_package in "${packages[@]}"; do
-  build_benchmark "$selected_package" "$configuration" "$record" "$components"
+  build_benchmark "$selected_package" "$configuration" "$record" "$components" "$precision" "$precision_candidate"
 done
 build_benchmark_reporter "$configuration"
 printf 'BUILD_BENCHMARKS_OK\n'

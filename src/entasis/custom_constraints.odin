@@ -58,53 +58,112 @@ Symmetric3x3_Wide :: util.Symmetric3x3_Wide;
 Constraint_Description_Validate_Proc :: physics.Constraint_Description_Validate_Proc;
 
 // Custom_Constraint_Registration describes one caller-defined constraint type and its SIMD kernels
-Custom_Constraint_Registration :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	type_id:              Constraint_Type_ID,
-	body_count:           i32,
-	description_size:     i32,
-	prestep_bundle_size:  i32,
-	impulse_bundle_size:  i32,
-	initial_access:       [4]Body_Access_Mask,
-	solve_access:         [4]Body_Access_Mask,
-	validate_description: Constraint_Description_Validate_Proc,
-	kernel:               Constraint_Kernel_Proc,
-	incremental_kernel:   Constraint_Kernel_Proc,
+	Custom_Constraint_Registration :: struct
+	{
+		type_id:              Constraint_Type_ID,
+		body_count:           i32,
+		description_size:     i32,
+		prestep_bundle_size:  i32,
+		impulse_bundle_size:  i32,
+		initial_access:       [4]Body_Access_Mask,
+		solve_access:         [4]Body_Access_Mask,
+		position_space:       Constraint_Position_Space,
+		validate_description: Constraint_Description_Validate_Proc,
+		kernel:               Constraint_Kernel_Proc,
+		incremental_kernel:   Constraint_Kernel_Proc,
+	}
+}
+else
+{
+	Custom_Constraint_Registration :: struct
+	{
+		type_id:              Constraint_Type_ID,
+		body_count:           i32,
+		description_size:     i32,
+		prestep_bundle_size:  i32,
+		impulse_bundle_size:  i32,
+		initial_access:       [4]Body_Access_Mask,
+		solve_access:         [4]Body_Access_Mask,
+		validate_description: Constraint_Description_Validate_Proc,
+		kernel:               Constraint_Kernel_Proc,
+		incremental_kernel:   Constraint_Kernel_Proc,
+	}
 }
 
 // custom_constraint_registration infers the scalar description, wide prestep,
 // and accumulated-impulse storage sizes. description must be a tightly packed
 // sequence of f32 fields whose wide equivalent has one F32x8 per scalar field
-custom_constraint_registration :: #force_inline proc "contextless" (
-	$Description: typeid,
-	$Prestep_Wide: typeid,
-	$Accumulated_Impulses_Wide: typeid,
-	type_id: Constraint_Type_ID,
-	body_count: int,
-	initial_access: [4]Body_Access_Mask,
-	solve_access: [4]Body_Access_Mask,
-	validate_description: Constraint_Description_Validate_Proc,
-	kernel: Constraint_Kernel_Proc,
-	incremental_kernel: Constraint_Kernel_Proc = nil,
-) -> Custom_Constraint_Registration
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	resolved_incremental_kernel := incremental_kernel;
-	if resolved_incremental_kernel == nil
+	custom_constraint_registration :: #force_inline proc "contextless" (
+		$Description: typeid,
+		$Prestep_Wide: typeid,
+		$Accumulated_Impulses_Wide: typeid,
+		type_id: Constraint_Type_ID,
+		body_count: int,
+		initial_access: [4]Body_Access_Mask,
+		solve_access: [4]Body_Access_Mask,
+		validate_description: Constraint_Description_Validate_Proc,
+		kernel: Constraint_Kernel_Proc,
+		incremental_kernel: Constraint_Kernel_Proc = nil,
+		position_space: Constraint_Position_Space = .Absolute_Float,
+	) -> Custom_Constraint_Registration
 	{
-		resolved_incremental_kernel = kernel;
+		resolved_incremental_kernel := incremental_kernel;
+		if resolved_incremental_kernel == nil
+		{
+			resolved_incremental_kernel = kernel;
+		}
+		return {
+			type_id=type_id,
+			body_count=i32(body_count),
+			description_size=i32(size_of(Description)),
+			prestep_bundle_size=i32(size_of(Prestep_Wide)),
+			impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
+			initial_access=initial_access,
+			solve_access=solve_access,
+			position_space=position_space,
+			validate_description=validate_description,
+			kernel=kernel,
+			incremental_kernel=resolved_incremental_kernel,
+		};
 	}
-	return {
-		type_id=type_id,
-		body_count=i32(body_count),
-		description_size=i32(size_of(Description)),
-		prestep_bundle_size=i32(size_of(Prestep_Wide)),
-		impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
-		initial_access=initial_access,
-		solve_access=solve_access,
-		validate_description=validate_description,
-		kernel=kernel,
-		incremental_kernel=resolved_incremental_kernel,
-	};
+}
+else
+{
+	custom_constraint_registration :: #force_inline proc "contextless" (
+		$Description: typeid,
+		$Prestep_Wide: typeid,
+		$Accumulated_Impulses_Wide: typeid,
+		type_id: Constraint_Type_ID,
+		body_count: int,
+		initial_access: [4]Body_Access_Mask,
+		solve_access: [4]Body_Access_Mask,
+		validate_description: Constraint_Description_Validate_Proc,
+		kernel: Constraint_Kernel_Proc,
+		incremental_kernel: Constraint_Kernel_Proc = nil,
+	) -> Custom_Constraint_Registration
+	{
+		resolved_incremental_kernel := incremental_kernel;
+		if resolved_incremental_kernel == nil
+		{
+			resolved_incremental_kernel = kernel;
+		}
+		return {
+			type_id=type_id,
+			body_count=i32(body_count),
+			description_size=i32(size_of(Description)),
+			prestep_bundle_size=i32(size_of(Prestep_Wide)),
+			impulse_bundle_size=i32(size_of(Accumulated_Impulses_Wide)),
+			initial_access=initial_access,
+			solve_access=solve_access,
+			validate_description=validate_description,
+			kernel=kernel,
+			incremental_kernel=resolved_incremental_kernel,
+		};
+	}
 }
 
 // custom_constraint_next_type_id returns the first unused caller constraint type ID
@@ -159,7 +218,14 @@ custom_constraint_register :: proc "contextless" (
 	{
 		return .Invalid_Description;
 	}
-	record := physics.Constraint_Type_Record{
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if physics.constraint_position_space_validate(registration.position_space) != .Ok
+		{
+			return .Invalid_Description;
+		}
+	}
+	record: physics.Constraint_Type_Record = {
 		type_id=i32(type_id),
 		body_count=registration.body_count,
 		description_size=registration.description_size,
@@ -175,6 +241,10 @@ custom_constraint_register :: proc "contextless" (
 		move_record=physics.constraint_storage_move_lane,
 		remove_record=physics.constraint_storage_remove_lane,
 	};
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		record.position_space = registration.position_space;
+	}
 	return physics.solver_register_constraint_type(&simulation.solver, record);
 }
 
@@ -342,4 +412,9 @@ custom_constraint_apply_typed :: #force_inline proc (
 	return custom_constraint_apply(
 		world, handle, type_id, description, size_of(T),
 	);
+}
+
+when util.PRECISION_MODE == .Double_Coordinates
+{
+	Constraint_Position_Space :: physics.Constraint_Position_Space;
 }

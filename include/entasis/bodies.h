@@ -14,7 +14,7 @@ extern "C" {
  * @param user_context caller-owned callback state, borrowed until the static mutation returns
  * @param body sleeping dynamic body whose island overlaps the changed static
  *
- * @return returns true to allow waking the body island
+ * @return returns nonzero to allow waking the body island, zero to reject
  */
 typedef entasis_bool_t (ENTASIS_CALL *entasis_static_awakening_filter_fn)(void * user_context, entasis_body_handle_t body);
 
@@ -115,6 +115,56 @@ struct entasis_body_axis_lock_t {
     /* finite positive angular frequency and nonnegative damping. existing constraint softness semantics */
     entasis_spring_settings_t spring_settings;
 };
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * body authoring settings with an authoritative f64 pose
+ *
+ * shape identities remain borrowed from their world. this value does not capture sleep counters, contacts, solver impulses or pending kinematic targets
+ */
+struct entasis_global_body_state_t {
+    /* pose in the current simulation frame */
+    entasis_global_pose_t pose;
+    /* linear and angular velocity */
+    entasis_body_velocity_t velocity;
+    /* body-local inverse inertia and inverse mass */
+    entasis_body_inertia_t local_inertia;
+    /* shape identity and collision settings */
+    entasis_collidable_description_t collidable;
+    /* sleep threshold and minimum under-threshold timestep settings */
+    entasis_activity_description_t activity;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * static authoring pose, shape and continuity settings
+ *
+ * shape identity remains borrowed from its world. positions use the current simulation frame
+ */
+struct entasis_global_static_state_t {
+    /* pose in the current simulation frame */
+    entasis_global_pose_t pose;
+    /* shape handle owned by the destination world */
+    entasis_shape_handle_t shape;
+    /* continuous collision detection settings */
+    entasis_continuous_detection_t continuity;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * pending kinematic target presence and f64 pose
+ *
+ * does not record target execution phase history. applying a present state queues a new target
+ */
+struct entasis_global_kinematic_target_state_t {
+    /* current-frame target pose, ignored when presence is absent */
+    entasis_global_pose_t pose;
+    /* whether a pending target exists */
+    entasis_global_target_presence_t presence;
+};
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 /**
  * pointer-free copy of one body state with the same layout as entasis_body_description_t
@@ -952,6 +1002,463 @@ ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_axis_lock(entasis_wor
  * @return returns ENTASIS_STATUS_OK or the original failure status
  */
 ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_clear_axis_lock(entasis_world_t * world, entasis_body_handle_t body, entasis_diagnostic_t * diagnostic);
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates a body at an f64 simulation-frame position
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+ *
+ * @param world target world
+ * @param description required complete description, with its pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param out_handle required handle output, initialized to the invalid handle and published only on success
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_global(entasis_world_t * world, const entasis_body_description_t * description, const entasis_global_position_t * position, entasis_body_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces the complete body description at an f64 simulation-frame position
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning. applying a body description wakes the body and cancels its pending kinematic target
+ *
+ * @param world target world
+ * @param handle target body handle
+ * @param description required complete description, with its pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global(entasis_world_t * world, entasis_body_handle_t handle, const entasis_body_description_t * description, const entasis_global_position_t * position, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * sets the body position and orientation while retaining its other description fields
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. wakes the body and cancels its pending kinematic target
+ *
+ * @param world target world
+ * @param handle target body handle
+ * @param value required finite current-frame position and valid orientation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_global_pose(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_pose_t * value, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies the current f64 position and orientation of a body
+ *
+ * requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. clears out_state before world admission and publishes the pose only on success
+ *
+ * @param world target world
+ * @param handle target body handle
+ * @param out_state required caller-owned pose output, zero on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_pose(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_pose_t * out_state, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates a static at an f64 simulation-frame position
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+ *
+ * @param world target world
+ * @param description required complete description, with its pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param awakening static mutation awakening policy
+ * @param out_handle required handle output, initialized to the invalid handle and published only on success
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global(entasis_world_t * world, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_awakening_policy_t awakening, entasis_static_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces the complete static description at an f64 simulation-frame position
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position and the remaining description fields retain their ordinary meaning
+ *
+ * @param world target world
+ * @param handle target static handle
+ * @param description required complete description, with its pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param awakening static mutation awakening policy
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global(entasis_world_t * world, entasis_static_handle_t handle, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * sets the static position and orientation while retaining its other description fields
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. retains the shape and continuous collision settings
+ *
+ * @param world target world
+ * @param handle target static handle
+ * @param value required finite current-frame position and valid orientation
+ * @param awakening static mutation awakening policy
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_set_global_pose(entasis_world_t * world, entasis_static_handle_t handle, const entasis_global_pose_t * value, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies the current f64 position and orientation of a static
+ *
+ * requires an idle world or an active read phase. does not wake objects or allocate. clears out_state before world admission and publishes the pose only on success
+ *
+ * @param world target world
+ * @param handle target static handle
+ * @param out_state required caller-owned pose output, zero on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get_global_pose(entasis_world_t * world, entasis_static_handle_t handle, entasis_global_pose_t * out_state, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates a static with caller-selected sleeping-body awakening
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position. the filter receives stable sleeping-body handles on the calling thread and must not reenter world mutation. description validation precedes filter calls, but awakening side effects can remain if later storage growth fails
+ *
+ * @param world caller-owned initialized world handle
+ * @param description required complete static description, with pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param filter optional sleeping-body awakening filter, NULL uses ordinary overlapping-body awakening
+ * @param user_context caller-owned filter state borrowed only until this call returns
+ * @param out_handle required handle output, initialized to the invalid handle and published only on success
+ * @param diagnostic optional output diagnostic
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global_filtered(entasis_world_t * world, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_static_awakening_filter_fn filter, void * user_context, entasis_static_handle_t * out_handle, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces a static description with caller-selected sleeping-body awakening
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. position replaces description.pose.position. the filter receives stable sleeping-body handles on the calling thread and must not reenter world mutation. description validation precedes filter calls, but awakening side effects can remain if later storage growth fails
+ *
+ * @param world caller-owned initialized world handle
+ * @param handle existing static handle
+ * @param description required complete static description, with pose.position replaced by position
+ * @param position required finite f64 position in the current simulation frame
+ * @param filter optional sleeping-body awakening filter, NULL uses ordinary overlapping-body awakening
+ * @param user_context caller-owned filter state borrowed only until this call returns
+ * @param diagnostic optional output diagnostic
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global_filtered(entasis_world_t * world, entasis_static_handle_t handle, const entasis_static_description_t * description, const entasis_global_position_t * position, entasis_static_awakening_filter_fn filter, void * user_context, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * queues an f64 target pose for the next kinematic integration
+ *
+ * requires the owner thread and exclusive access to an idle world, enabled body control and a kinematic body. derives linear and shortest-arc angular velocity for ordinary integration. the queued target expires after a successful or failed step
+ *
+ * @param world idle live world. mutations reject read phases and callback reentry
+ * @param body live body handle
+ * @param target required target pose in the current simulation frame
+ * @param wake whether to wake a sleeping body when queuing the target
+ * @param diagnostic optional diagnostic output
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_set_global_kinematic_target(entasis_world_t * world, entasis_body_handle_t body, const entasis_global_pose_t * target, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies a kinematic body's pending f64 target pose
+ *
+ * requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. requires enabled body control. out_target is unchanged on failure
+ *
+ * @param world live world with body control enabled, idle or within an explicit read phase
+ * @param body live body handle
+ * @param out_target required caller-owned pose output, unchanged on failure
+ * @param diagnostic optional diagnostic output
+ *
+ * @return returns ENTASIS_STATUS_NOT_FOUND when no pending target remains, otherwise ENTASIS_STATUS_OK or the validation or state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_kinematic_target(entasis_world_t * world, entasis_body_handle_t body, entasis_global_pose_t * out_target, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * queues a force and the torque induced at an f64 application point
+ *
+ * requires the owner thread and exclusive access to an idle world and enabled body control. subtracts the body center in f64 before narrowing the lever arm to f32. the resulting local wrench is fixed at submission. nonfinite or unrepresentable lever arms reject before queuing input
+ *
+ * @param world idle live world. mutations reject read phases and callback reentry
+ * @param body live body handle
+ * @param force finite world-oriented force vector
+ * @param position required force application point in the current simulation frame
+ * @param wake explicit wake policy. choose ENTASIS_BODY_CONTROL_WAKE for the native default
+ * @param diagnostic optional diagnostic output
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_force_at_global_position(entasis_world_t * world, entasis_body_handle_t body, entasis_vector3_t force, const entasis_global_position_t * position, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates bodies from parallel description and position arrays
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. admits total addition capacity before row execution
+ *
+ * @param world target world
+ * @param descriptions count complete descriptions, required when count is nonzero
+ * @param count number of rows in each parallel input array
+ * @param positions count f64 positions in the current simulation frame, required when count is nonzero
+ * @param position_count must equal count
+ * @param out_handles caller-owned space for count handles, required when count is nonzero. only the completed prefix contains created handles
+ * @param out_completed optional completed-row count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_batch_global(entasis_world_t * world, const entasis_body_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_body_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces complete body descriptions from parallel description and position arrays
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. repeated handles are applied in order
+ *
+ * @param world target world
+ * @param handles count existing handles in application order, required when count is nonzero
+ * @param descriptions count complete descriptions, required when count is nonzero
+ * @param count number of rows in each parallel input array
+ * @param positions count f64 positions in the current simulation frame, required when count is nonzero
+ * @param position_count must equal count
+ * @param out_completed optional completed-row count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_batch_global(entasis_world_t * world, const entasis_body_handle_t * handles, const entasis_body_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates statics from parallel description and position arrays
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. admits total addition capacity before row execution
+ *
+ * @param world target world
+ * @param descriptions count complete descriptions, required when count is nonzero
+ * @param count number of rows in each parallel input array
+ * @param positions count f64 positions in the current simulation frame, required when count is nonzero
+ * @param position_count must equal count
+ * @param awakening static mutation awakening policy
+ * @param out_handles caller-owned space for count handles, required when count is nonzero. only the completed prefix contains created handles
+ * @param out_completed optional completed-row count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_batch_global(entasis_world_t * world, const entasis_static_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_awakening_policy_t awakening, entasis_static_handle_t * out_handles, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces complete static descriptions from parallel description and position arrays
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. positions must contain one current-frame f64 position per description and replace each description.pose.position. input and output spans remain caller-owned and must not overlap. rows execute in order and stop at the first failure, preserving the successful prefix. repeated handles are applied in order
+ *
+ * @param world target world
+ * @param handles count existing handles in application order, required when count is nonzero
+ * @param descriptions count complete descriptions, required when count is nonzero
+ * @param count number of rows in each parallel input array
+ * @param positions count f64 positions in the current simulation frame, required when count is nonzero
+ * @param position_count must equal count
+ * @param awakening static mutation awakening policy
+ * @param out_completed optional completed-row count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when all rows succeed or the first failure, with out_completed reporting the successful prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_batch_global(entasis_world_t * world, const entasis_static_handle_t * handles, const entasis_static_description_t * descriptions, uint64_t count, const entasis_global_position_t * positions, uint64_t position_count, entasis_awakening_policy_t awakening, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies body and static poses in caller-selected reference order
+ *
+ * requires an idle world or an active read phase. does not wake objects or allocate. validates capacity and the optional frame before copying. a later invalid reference preserves the written prefix and leaves the remaining output unchanged. no handle remapping occurs
+ *
+ * @param world target world
+ * @param references count live collidable references, required when count is nonzero
+ * @param count number of selected references
+ * @param output caller-owned space for capacity poses, required when count is nonzero and disjoint from references
+ * @param capacity must cover count poses
+ * @param frame optional application origin added in f64, NULL keeps positions in the current simulation frame
+ * @param out_completed optional written-pose count, initialized to zero before validation
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK when every reference succeeds or the first failure, with out_completed reporting the written prefix
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_world_export_global_poses(entasis_world_t * world, const entasis_collidable_reference_t * references, uint64_t count, entasis_global_pose_t * output, uint64_t capacity, const entasis_origin_frame_t * frame, uint64_t * out_completed, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies the body's authoring description with its authoritative f64 pose
+ *
+ * requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. output is unchanged on failure. returned shape handles retain their world-owned lifetime
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param output required caller-owned authoring state, unchanged on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_state(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_body_state_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces a body's authoring description from an f64 state value
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame. wakes the body and cancels its pending kinematic target
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param state required complete authoring state, borrowed for this call
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global_state(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_body_state_t * state, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies the static's authoring description with its authoritative f64 pose
+ *
+ * requires an idle world or an active read phase. does not wake objects or allocate. output is unchanged on failure. returned shape handles retain their world-owned lifetime
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param output required caller-owned authoring state, unchanged on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_get_global_state(entasis_world_t * world, entasis_static_handle_t handle, entasis_global_static_state_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * replaces a static's authoring description from an f64 state value
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param state required complete authoring state, borrowed for this call
+ * @param awakening static awakening policy
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_apply_global_state(entasis_world_t * world, entasis_static_handle_t handle, const entasis_global_static_state_t * state, entasis_awakening_policy_t awakening, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * copies a kinematic body's target presence and pending f64 pose
+ *
+ * requires an idle world or an active read phase. reads sleeping bodies without waking them and does not allocate. an absent or expired target, including missing body-control storage, produces an absent state with ENTASIS_STATUS_OK. output is unchanged on failure
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param output required caller-owned target state, unchanged on failure
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle or world-state failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_get_global_target_state(entasis_world_t * world, entasis_body_handle_t handle, entasis_global_kinematic_target_state_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * sets or clears a kinematic body's pending f64 target
+ *
+ * requires the owner thread and exclusive access to an idle world and a kinematic body. a present state requires enabled body control and queues its current-frame pose. an absent state clears the target, ignores pose and succeeds without allocating missing control storage
+ *
+ * @param world target world
+ * @param handle live target handle
+ * @param state required target presence and, when present, current-frame pose
+ * @param wake whether to wake the body when applying a present target
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_apply_global_target_state(entasis_world_t * world, entasis_body_handle_t handle, const entasis_global_kinematic_target_state_t * state, entasis_body_control_wake_t wake, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates a body from an f64 authoring state value
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+ *
+ * @param world target world
+ * @param state required complete authoring state, borrowed for this call
+ * @param output required handle output, initialized to the invalid handle and published only on success
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_body_add_global_state(entasis_world_t * world, const entasis_global_body_state_t * state, entasis_body_handle_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
+
+#if ENTASIS_PRECISION_MIXED64
+/**
+ * creates a static from an f64 authoring state value
+ *
+ * requires the owner thread and exclusive access to an idle world. normal storage growth may allocate and successful mutation invalidates borrowed direct views. shape handles must belong to the destination world. the pose uses the current simulation frame
+ *
+ * @param world target world
+ * @param state required complete authoring state, borrowed for this call
+ * @param awakening static awakening policy
+ * @param output required handle output, initialized to the invalid handle and published only on success
+ * @param diagnostic optional diagnostic output, or NULL when detailed failure data is not needed
+ *
+ * @return returns ENTASIS_STATUS_OK on success or the validation, handle, state or capacity failure
+ */
+ENTASIS_API entasis_status_t ENTASIS_CALL entasis_static_add_global_state(entasis_world_t * world, const entasis_global_static_state_t * state, entasis_awakening_policy_t awakening, entasis_static_handle_t * output, entasis_diagnostic_t * diagnostic);
+#endif /* ENTASIS_PRECISION_MIXED64 */
 
 #ifdef __cplusplus
 } /* extern "C" */

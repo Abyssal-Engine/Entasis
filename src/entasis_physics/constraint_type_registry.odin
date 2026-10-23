@@ -32,28 +32,58 @@ Constraint_Storage_Move_Proc :: #type proc "contextless" (
 Constraint_Storage_Remove_Proc :: #type proc "contextless" (
 	prestep, impulses: rawptr, prestep_bundle_size, impulse_bundle_size, lane: int,
 );
-Constraint_Type_Record :: struct
+when util.PRECISION_MODE == .Double_Coordinates
 {
-	type_id:                 i32,
-	body_count:              i32,
-	description_size:        i32,
-	prestep_bundle_size:     i32,
-	impulse_bundle_size:     i32,
-	initial_access:          [4]Body_Access_Mask,
-	solve_access:            [4]Body_Access_Mask,
-	apply_description:       Constraint_Description_Transfer_Proc,
-	build_description:       Constraint_Description_Build_Proc,
-	using validation: struct #raw_union
+	Constraint_Type_Record :: struct
 	{
-		validate_description: Constraint_Description_Validate_Proc,
-		contextual: ^Contextual_Constraint_Binding,
-	},
-	prestep_warmstart_solve: Constraint_Kernel_Proc,
-	incrementally_update:    Constraint_Kernel_Proc,
-	move_record:             Constraint_Storage_Move_Proc,
-	remove_record:           Constraint_Storage_Remove_Proc,
-	registration:            Reference_State,
-	dispatch:                Constraint_Callback_Dispatch,
+		type_id:                 i32,
+		body_count:              i32,
+		description_size:        i32,
+		prestep_bundle_size:     i32,
+		impulse_bundle_size:     i32,
+		initial_access:          [4]Body_Access_Mask,
+		solve_access:            [4]Body_Access_Mask,
+		position_space:          Constraint_Position_Space,
+		apply_description:       Constraint_Description_Transfer_Proc,
+		build_description:       Constraint_Description_Build_Proc,
+		using validation: struct #raw_union
+		{
+			validate_description: Constraint_Description_Validate_Proc,
+			contextual: ^Contextual_Constraint_Binding,
+		},
+		prestep_warmstart_solve: Constraint_Kernel_Proc,
+		incrementally_update:    Constraint_Kernel_Proc,
+		move_record:             Constraint_Storage_Move_Proc,
+		remove_record:           Constraint_Storage_Remove_Proc,
+		registration:            Reference_State,
+		dispatch:                Constraint_Callback_Dispatch,
+	}
+}
+else
+{
+	Constraint_Type_Record :: struct
+	{
+		type_id:                 i32,
+		body_count:              i32,
+		description_size:        i32,
+		prestep_bundle_size:     i32,
+		impulse_bundle_size:     i32,
+		initial_access:          [4]Body_Access_Mask,
+		solve_access:            [4]Body_Access_Mask,
+		apply_description:       Constraint_Description_Transfer_Proc,
+		build_description:       Constraint_Description_Build_Proc,
+		using validation: struct #raw_union
+		{
+			validate_description: Constraint_Description_Validate_Proc,
+			contextual: ^Contextual_Constraint_Binding,
+		},
+		prestep_warmstart_solve: Constraint_Kernel_Proc,
+		incrementally_update:    Constraint_Kernel_Proc,
+		move_record:             Constraint_Storage_Move_Proc,
+		remove_record:           Constraint_Storage_Remove_Proc,
+		registration:            Reference_State,
+		dispatch:                Constraint_Callback_Dispatch,
+	}
 }
 
 Constraint_Type_Registry :: struct
@@ -258,15 +288,15 @@ constraint_storage_move_lane :: proc "contextless" (
 	prestep_bundle_size, impulse_bundle_size, source_lane, target_lane: int,
 )
 {
-	source_prestep_scalars := ([^]f32)(source_prestep);
-	target_prestep_scalars := ([^]f32)(target_prestep);
+	source_prestep_scalars: [^]u32 = ([^]u32)(source_prestep);
+	target_prestep_scalars: [^]u32 = ([^]u32)(target_prestep);
 	for field in 0 ..< prestep_bundle_size / size_of(util.F32x8)
 	{
 		target_prestep_scalars[field * util.PRODUCTION_LANE_COUNT + target_lane] =
 		source_prestep_scalars[field * util.PRODUCTION_LANE_COUNT + source_lane];
 	}
-	source_impulse_scalars := ([^]f32)(source_impulses);
-	target_impulse_scalars := ([^]f32)(target_impulses);
+	source_impulse_scalars: [^]u32 = ([^]u32)(source_impulses);
+	target_impulse_scalars: [^]u32 = ([^]u32)(target_impulses);
 	for field in 0 ..< impulse_bundle_size / size_of(util.F32x8)
 	{
 		target_impulse_scalars[field * util.PRODUCTION_LANE_COUNT + target_lane] =
@@ -278,12 +308,12 @@ constraint_storage_remove_lane :: proc "contextless" (
 	prestep, impulses: rawptr, prestep_bundle_size, impulse_bundle_size, lane: int,
 )
 {
-	prestep_scalars := ([^]f32)(prestep);
+	prestep_scalars: [^]u32 = ([^]u32)(prestep);
 	for field in 0 ..< prestep_bundle_size / size_of(util.F32x8)
 	{
 		prestep_scalars[field * util.PRODUCTION_LANE_COUNT + lane] = 0;
 	}
-	impulse_scalars := ([^]f32)(impulses);
+	impulse_scalars: [^]u32 = ([^]u32)(impulses);
 	for field in 0 ..< impulse_bundle_size / size_of(util.F32x8)
 	{
 		impulse_scalars[field * util.PRODUCTION_LANE_COUNT + lane] = 0;
@@ -406,6 +436,14 @@ constraint_type_registry_register :: proc "contextless" (
 	record.move_record == nil || record.remove_record == nil
 	{
 		return .Invalid_Argument;
+	}
+	when util.PRECISION_MODE == .Double_Coordinates
+	{
+		if constraint_position_space_validate(record.position_space) != .Ok ||
+			(record.type_id < FIRST_CALLER_CONSTRAINT_TYPE_ID && record.position_space != .Absolute_Float)
+		{
+			return .Invalid_Argument;
+		}
 	}
 	if registry.records[record.type_id].registration == .Present
 	{
@@ -573,7 +611,14 @@ constraint_type_layout :: proc "contextless" ($T: typeid) -> (prestep_bundle_siz
 	}
 	else when T == One_Body_Linear_Servo
 	{
-		return size_of(One_Body_Linear_Servo_Prestep), size_of(util.Vector3_Wide);
+		when util.PRECISION_MODE == .Double_Coordinates
+		{
+			return size_of(One_Body_Linear_Servo_Prestep) + size_of(Constraint_Global_Target_Wide), size_of(util.Vector3_Wide);
+		}
+		else
+		{
+			return size_of(One_Body_Linear_Servo_Prestep), size_of(util.Vector3_Wide);
+		}
 	}
 	else when T == Point_On_Line_Servo
 	{
@@ -616,6 +661,13 @@ constraint_type_registry_add_builtin :: proc "contextless" (
 ) -> Physics_Status
 {
 	prestep_bundle_size, impulse_bundle_size := constraint_type_layout(T);
+	apply: Constraint_Description_Transfer_Proc = constraint_description_transfer;
+	build: Constraint_Description_Build_Proc = constraint_description_build;
+	when util.PRECISION_MODE == .Double_Coordinates && T == One_Body_Linear_Servo
+	{
+		apply = constraint_global_target_apply_description;
+		build = constraint_global_target_build_description;
+	}
 	return constraint_type_registry_register(registry, {
 			type_id=constraint_description_type_id(T),
 			body_count=constraint_description_body_count(T),
@@ -624,8 +676,8 @@ constraint_type_registry_add_builtin :: proc "contextless" (
 			impulse_bundle_size=i32(impulse_bundle_size),
 			initial_access=initial_access,
 			solve_access=solve_access,
-			apply_description=constraint_description_transfer,
-			build_description=constraint_description_build,
+			apply_description=apply,
+			build_description=build,
 			validate_description=constraint_registry_validate_description,
 			prestep_warmstart_solve=kernel,
 			incrementally_update=kernel,
