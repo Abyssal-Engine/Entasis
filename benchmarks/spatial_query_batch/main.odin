@@ -32,9 +32,15 @@ main :: proc()
 		os.exit(2);
 	}
 	defer trace.benchmark_owner_destroy(&owner);
-	workers := make([]Worker, args.worker_count);
-	defer delete(workers);
-	job := Job{owner=&owner, workers=workers, mode=.Validate};
+	queries: []entasis.Query = make([]entasis.Query, trace.RAY_QUERY_COUNT);
+	defer delete(queries);
+	results: []entasis.Query_Result = make([]entasis.Query_Result, len(queries));
+	defer delete(results);
+	for &query, index in queries
+	{
+		query = entasis.query_ray_closest(owner.ray_inputs[index].ray);
+	}
+	job: Job = {owner=&owner, queries=queries, results=results, mode=.Validate};
 	hits, checksum, validation_status := execute(&job);
 	if validation_status != .Ok
 	{
@@ -44,8 +50,10 @@ main :: proc()
 	job.mode = .Timed;
 	for _ in 0 ..< args.warmup_batches
 	{
-		_, _, frame_status := execute(&job);
-		if frame_status != .Ok
+		frame_hits, frame_checksum: u64;
+		frame_status: trace.Case_Status;
+		frame_hits, frame_checksum, frame_status = execute(&job);
+		if frame_result_status(frame_hits, frame_checksum, frame_status, hits, checksum) != .Ok
 		{
 			os.exit(2);
 		}
@@ -54,9 +62,11 @@ main :: proc()
 	for _ in 0 ..< args.measured_batches
 	{
 		start := time.tick_now();
-		_, _, frame_status := execute(&job);
+		frame_hits, frame_checksum: u64;
+		frame_status: trace.Case_Status;
+		frame_hits, frame_checksum, frame_status = execute(&job);
 		elapsed += time.tick_since(start);
-		if frame_status != .Ok
+		if frame_result_status(frame_hits, frame_checksum, frame_status, hits, checksum) != .Ok
 		{
 			os.exit(2);
 		}
@@ -76,8 +86,8 @@ main :: proc()
 	defer os.close(file);
 	if err != nil
 	{
-		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status,precision,ray_pattern");
+		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status,precision,ray_pattern,query_execution");
 	}
-	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok,%s,%s", args.worker_count, BATCH_SIZE,
-		trace.RAY_QUERY_COUNT, args.warmup_batches, args.measured_batches, hits, checksum, f64(elapsed) / 1e6, entasis.PRECISION_NAME, trace.ray_pattern_name(args.ray_pattern));
+	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok,%s,%s,%s", args.worker_count, BATCH_SIZE,
+		trace.RAY_QUERY_COUNT, args.warmup_batches, args.measured_batches, hits, checksum, f64(elapsed) / 1e6, entasis.PRECISION_NAME, trace.ray_pattern_name(args.ray_pattern), QUERY_EXECUTION);
 }

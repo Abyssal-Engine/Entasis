@@ -11,6 +11,8 @@ param(
         "contact_islands", "ragdoll_stair_tumble", "pyramid", "pyramid_wall", "scene_stability", "large_world_precision"
     )]
     [string]$Package,
+    [ValidateSet("Caller", "Mailbox")]
+    [string]$QueryExecution = "Caller",
     [string]$Precision = "Float32",
     [string]$PrecisionCandidate = "",
     [string]$Components = "All",
@@ -24,6 +26,11 @@ param(
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if ($PSBoundParameters.ContainsKey("QueryExecution") -and $Package -ne "spatial_query_batch")
+{
+    [Console]::Error.WriteLine("QueryExecution requires spatial_query_batch")
+    exit 2
+}
 if ($Precision -notin @("Float32", "Mixed64"))
 {
     [Console]::Error.WriteLine("Precision must be Float32 or Mixed64")
@@ -121,7 +128,7 @@ Write-Host "BENCHMARK_BUILD_CONFIG configuration=$($Configuration.ToLowerInvaria
 
 foreach ($selectedPackage in $packages)
 {
-    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols $Precision $PrecisionCandidate
+    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols $Precision $PrecisionCandidate $QueryExecution
 }
 if ($Emit -eq "Executable")
 {

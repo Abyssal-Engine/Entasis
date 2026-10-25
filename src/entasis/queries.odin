@@ -884,7 +884,7 @@ query_output_range_valid :: #force_inline proc "contextless" (
 
 @(private)
 query_batch_ray_run :: proc "contextless" (
-	data: ^world_data, queries: []Query, results: []Query_Result,
+	data: ^world_data, queries: []Query, results: []Query_Result, pool: ^Buffer_Pool,
 ) -> Status
 {
 	QUERY_RAY_RUN_CAPACITY :: int(32);
@@ -901,7 +901,7 @@ query_batch_ray_run :: proc "contextless" (
 		{
 			rays[lane] = queries[start + lane].ray_data.ray;
 		}
-		physics.simulation_ray_query_batch(&data.simulation, rays[:count], completions[:count], callbacks, data.pool);
+		physics.simulation_ray_query_batch(&data.simulation, rays[:count], completions[:count], callbacks, pool);
 		// the outer range admits only nonempty chunks
 		remaining: int = count;
 		for
@@ -942,6 +942,8 @@ query_batch_ray_run :: proc "contextless" (
 
 // query_batch combines compatible pure ray work and writes one result per input
 // in input order. queries are read-only. internal query scratch may grow.
+// large callback-free closest-ray batches may use the world's included workers.
+// other batches execute on their caller
 // all-hit queries write to the caller-owned Query_Scratch range selected by their
 // Query_Output, preserving the low-level collector traversal order without
 // canonicalization. every query is attempted. the return value is the first
@@ -957,24 +959,29 @@ query_batch :: proc "contextless" (
 	{
 		return .Invalid_Argument;
 	}
-	data, world_status := query_world_data(world);
-	ray_run_eligibility := physics.Reference_State.Present;
-	if world_status != .Ok
+	data, _ := query_world_data(world);
+	if data != nil && data.dispatcher == &data.owned_dispatcher.boundary &&
+	data.dispatcher.worker_count > 1 &&
+	len(queries) >= data.dispatcher.worker_count * QUERY_BATCH_DISPATCH_SUBMISSION_SIZE
 	{
-		ray_run_eligibility = .Missing;
-	}
-	else
-	{
-		shapes := physics.simulation_shape_registry(&data.simulation);
-		for type_id in physics.BUILT_IN_SHAPE_TYPE_COUNT ..< shapes.registered_type_count
+		status: Status;
+		execution: Query_Batch_Dispatch_State;
+		status, execution = query_batch_try_dispatch(world, data, queries, results);
+		if execution == .Completed
 		{
-			if shapes.batches[type_id].active_count != 0
-			{
-				ray_run_eligibility = .Missing;
-				break;
-			}
+			return status;
 		}
 	}
+	return query_batch_execute(world, data, queries, results, scratch, data.pool if data != nil else nil);
+}
+
+@(private)
+query_batch_execute :: #force_no_inline proc "contextless" (
+	world: ^World, data: ^world_data, queries: []Query, results: []Query_Result,
+	scratch: ^Query_Scratch, pool: ^Buffer_Pool,
+) -> Status
+{
+	ray_run_eligibility: physics.Reference_State = query_batch_ray_run_eligibility(data);
 	overall := Status.Ok;
 	for query_index := 0; query_index < len(queries);
 	{
@@ -1004,7 +1011,7 @@ query_batch :: proc "contextless" (
 					}
 					end += 1;
 				}
-				status := query_batch_ray_run(data, queries[query_index:end], results[query_index:end]);
+				status := query_batch_ray_run(data, queries[query_index:end], results[query_index:end], pool);
 				if overall == .Ok && status != .Ok
 				{
 					overall = status;
@@ -1323,4 +1330,27 @@ overlap_any :: proc "contextless" (
 	filter_context: query_filter_context = {filter=filter};
 	return physics.simulation_overlap_any_query(&data.simulation, shape, pose_value,
 		query_filter_low_level(filter), &filter_context, data.pool, batcher);
+}
+
+@(private)
+query_batch_ray_run_eligibility :: proc "contextless" (data: ^world_data) -> physics.Reference_State
+{
+	ray_run_eligibility := physics.Reference_State.Present;
+	if data == nil
+	{
+		ray_run_eligibility = .Missing;
+	}
+	else
+	{
+		shapes := physics.simulation_shape_registry(&data.simulation);
+		for type_id in physics.BUILT_IN_SHAPE_TYPE_COUNT ..< shapes.registered_type_count
+		{
+			if shapes.batches[type_id].active_count != 0
+			{
+				ray_run_eligibility = .Missing;
+				break;
+			}
+		}
+	}
+	return ray_run_eligibility;
 }

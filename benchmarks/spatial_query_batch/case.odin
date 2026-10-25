@@ -8,65 +8,23 @@ import physics "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
 import trace "../spatial_query_trace"
 
-// public closest-hit batch queries, including timed submission and dispatch
+QUERY_EXECUTION :: #config(ENTASIS_QUERY_EXECUTION, "caller");
+#assert(QUERY_EXECUTION == "caller" || QUERY_EXECUTION == "mailbox");
 BATCH_SIZE :: 256;
 
-Output :: struct
+Batch_Execution :: enum
 {
-	hit: physics.Reference_State,
-	value: physics.Ray_Query_Hit,
+	Caller, Mailbox,
 }
-
-Worker :: struct #align(128)
-{
-	queries: [BATCH_SIZE]entasis.Query,
-	results: [BATCH_SIZE]entasis.Query_Result,
-	output: [BATCH_SIZE]Output,
-	hits: u64,
-	checksum: u64,
-	status: physics.Physics_Status,
-}
+SELECTED_EXECUTION :: Batch_Execution.Mailbox when QUERY_EXECUTION == "mailbox" else Batch_Execution.Caller;
 
 Job :: struct
 {
 	owner: ^trace.Benchmark_Owner,
-	workers: []Worker,
+	queries: []entasis.Query,
+	results: []entasis.Query_Result,
 	mode: trace.Execution_Mode,
-}
-
-execute_block :: proc "contextless" (
-	owner: ^trace.Benchmark_Owner, worker: ^Worker,
-	begin, count: int,
-) -> physics.Physics_Status
-{
-	for lane in 0 ..< count
-	{
-		worker.output[lane] = {};
-	}
-	for lane in 0 ..< count
-	{
-		worker.queries[lane] = entasis.query_ray_closest(owner.ray_inputs[begin + lane].ray);
-	}
-	// Not_Found is a per-query miss, not a failed frame
-	_ = entasis.query_batch(&owner.world, worker.queries[:count], worker.results[:count]);
-	for lane in 0 ..< count
-	{
-		result := &worker.results[lane];
-		if result.status != .Ok && result.status != .Not_Found
-		{
-			return result.status;
-		}
-		hit := result.ray_hit;
-		worker.output[lane] = {hit=.Missing, value={
-			t=hit.t, location=hit.location, normal=hit.normal,
-			target_id=i32(hit.collidable.packed), child_index=hit.child_index,
-		}};
-		if result.hit
-		{
-			worker.output[lane].hit = .Present;
-		}
-	}
-	return .Ok;
+	dispatch_status: util.Threading_Status,
 }
 
 close :: proc "contextless" (a, b: f32) -> util.Comparison_Status
@@ -78,65 +36,16 @@ close :: proc "contextless" (a, b: f32) -> util.Comparison_Status
 	return .Different;
 }
 
-execute_lane :: proc "contextless" (job: ^Job, index: int, pool: ^util.Buffer_Pool)
+execute_lane :: proc "contextless" (job: ^Job, index: int)
 {
-	owner := job.owner;
-	worker := &job.workers[index];
-	worker.hits = 0;
-	worker.checksum = 0;
-	worker.status = .Ok;
-	begin := len(owner.ray_inputs) * index / owner.worker_count;
-	end := len(owner.ray_inputs) * (index + 1) / owner.worker_count;
-	for block := begin; block < end; block += BATCH_SIZE
+	owner: ^trace.Benchmark_Owner = job.owner;
+	begin: int = len(job.queries) * index / owner.worker_count;
+	end: int = len(job.queries) * (index + 1) / owner.worker_count;
+	for block: int = begin; block < end; block += BATCH_SIZE
 	{
-		count := min(BATCH_SIZE, end - block);
-		worker.status = execute_block(owner, worker, block, count);
-		if worker.status != .Ok
-		{
-			return;
-		}
-		for lane in 0 ..< count
-		{
-			output := worker.output[lane];
-			if output.hit == .Present
-			{
-				worker.hits += 1;
-			}
-			if job.mode == .Validate
-			{
-				if len(owner.observations.rays) > 0
-				{
-					owner.observations.rays[block+lane] = {state=.Hit if output.hit == .Present else .Miss,
-						hit=transmute(entasis.Ray_Hit)output.value};
-				}
-				hit, value, status := trace.ray_execute(owner.simulation, pool, owner.ray_inputs[block + lane]);
-				if status != .Ok || hit != (output.hit == .Present)
-				{
-					worker.status = .Invalid_Description;
-					return;
-				}
-				token := u64(block + lane + 1) * 0x9e37_79b9_7f4a_7c15;
-				if hit
-				{
-					if value.target_id != output.value.target_id || value.child_index != output.value.child_index ||
-						close(value.t, output.value.t) != .Equal ||
-						close(value.location.x, output.value.location.x) != .Equal || close(value.location.y, output.value.location.y) != .Equal || close(value.location.z, output.value.location.z) != .Equal ||
-						close(value.normal.x, output.value.normal.x) != .Equal || close(value.normal.y, output.value.normal.y) != .Equal || close(value.normal.z, output.value.normal.z) != .Equal
-					{
-						worker.status = .Invalid_Description;
-						return;
-					}
-					token ~= u64(u32(output.value.target_id)) << 32;
-					token ~= u64(transmute(u32)output.value.t);
-					token ~= 0x7261_795f_6869_7401;
-				}
-				else
-				{
-					token ~= 0x7261_795f_6d69_7373;
-				}
-				worker.checksum ~= trace.checksum_mix(token);
-			}
-		}
+		count: int = min(BATCH_SIZE, end - block);
+		// misses remain per-item results and all submissions are attempted
+		_ = entasis.query_batch(&owner.world, job.queries[block:block+count], job.results[block:block+count]);
 	}
 }
 
@@ -144,39 +53,102 @@ worker_proc :: proc "contextless" (index: int, dispatcher: ^util.Thread_Dispatch
 {
 	context = runtime.default_context();
 	job := (^Job)(dispatcher.unmanaged_context);
-	pool, status := dispatcher.worker_pool(dispatcher, index);
-	if status != .Ok
-	{
-		job.workers[index].status = .Invalid_Argument;
-		return;
-	}
-	execute_lane(job, index, pool);
+	execute_lane(job, index);
 }
 
-execute :: proc(job: ^Job) -> (u64, u64, trace.Case_Status)
+session_outer_worker :: proc "contextless" (index: int, dispatcher: ^util.Thread_Dispatcher_Boundary)
 {
-	owner := job.owner;
+	job: ^Job = cast(^Job)dispatcher.unmanaged_context;
+	job.dispatch_status = dispatcher.dispatch(dispatcher, worker_proc, job.owner.worker_count, job);
+}
+
+frame_result_status :: proc "contextless" (
+	hits, checksum: u64, status: trace.Case_Status, expected_hits, expected_checksum: u64,
+) -> trace.Case_Status
+{
+	if status != .Ok
+	{
+		return status;
+	}
+	if hits != expected_hits || checksum != expected_checksum
+	{
+		return .Validation_Failed;
+	}
+	return .Ok;
+}
+
+execute :: proc(job: ^Job, execution: Batch_Execution = SELECTED_EXECUTION) -> (u64, u64, trace.Case_Status)
+{
+	owner: ^trace.Benchmark_Owner = job.owner;
 	if owner.worker_count == 1
 	{
-		execute_lane(job, 0, owner.owner_pool);
+		execute_lane(job, 0);
 	}
-	else
+	else if execution == .Mailbox
 	{
-		if owner.dispatcher.dispatch(owner.dispatcher, worker_proc, owner.worker_count, job) != .Ok
+		job.dispatch_status = .Ok;
+		outer_status: util.Threading_Status = util.thread_dispatcher_session_entry(
+			owner.dispatcher, session_outer_worker, owner.worker_count, job);
+		if outer_status != .Ok || job.dispatch_status != .Ok
 		{
 			return 0, 0, .Query_Failed;
 		}
 	}
-	hits, checksum := u64(0), u64(0);
-	for &worker in job.workers
+	else if owner.dispatcher.dispatch(owner.dispatcher, worker_proc, owner.worker_count, job) != .Ok
 	{
-		if worker.status != .Ok
+		return 0, 0, .Query_Failed;
+	}
+	// identical post-join consumption is included in both timers
+	return consume_query_results(job);
+}
+
+consume_query_results :: #force_no_inline proc(job: ^Job) -> (u64, u64, trace.Case_Status)
+{
+	owner: ^trace.Benchmark_Owner = job.owner;
+	hits, checksum: u64;
+	for result, index in job.results
+	{
+		if result.status != .Ok && result.status != .Not_Found
 		{
-			fmt.eprintfln("query status=%v", worker.status);
+			fmt.eprintfln("query status=%v", result.status);
 			return 0, 0, .Query_Failed;
 		}
-		hits += worker.hits;
-		checksum ~= worker.checksum;
+		value: physics.Ray_Query_Hit = {
+			t=result.ray_hit.t, location=result.ray_hit.location, normal=result.ray_hit.normal,
+			target_id=i32(result.ray_hit.collidable.packed), child_index=result.ray_hit.child_index,
+		};
+		if result.hit
+		{
+			hits += 1;
+		}
+		if job.mode == .Validate
+		{
+			if len(owner.observations.rays) > 0
+			{
+				owner.observations.rays[index] = {state=.Hit if result.hit else .Miss, hit=result.ray_hit};
+			}
+			reference_hit, reference, status := trace.ray_execute(owner.simulation, owner.owner_pool, owner.ray_inputs[index]);
+			if status != .Ok || reference_hit != result.hit || (reference_hit &&
+				(reference.target_id != value.target_id || reference.child_index != value.child_index ||
+				close(reference.t, value.t) != .Equal ||
+				close(reference.location.x, value.location.x) != .Equal || close(reference.location.y, value.location.y) != .Equal || close(reference.location.z, value.location.z) != .Equal ||
+				close(reference.normal.x, value.normal.x) != .Equal || close(reference.normal.y, value.normal.y) != .Equal || close(reference.normal.z, value.normal.z) != .Equal))
+			{
+				return 0, 0, .Validation_Failed;
+			}
+		}
+		token: u64 = u64(index + 1) * 0x9e37_79b9_7f4a_7c15;
+		if result.hit
+		{
+			token ~= u64(u32(value.target_id)) << 32;
+			token ~= u64(transmute(u32)value.t);
+			token ~= 0x7261_795f_6869_7401;
+		}
+		else
+		{
+			token ~= 0x7261_795f_6d69_7373;
+		}
+		checksum ~= trace.checksum_mix(token);
 	}
 	if hits != trace.EXPECTED_RAY_HITS
 	{

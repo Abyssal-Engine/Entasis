@@ -28,6 +28,7 @@ Report_Status :: enum
 
 Query_Measurement :: struct
 {
+	execution, timer: string,
 	group, family, components: string,
 	case_name, operation, cell: string,
 	inputs, passes, queries: int,
@@ -280,6 +281,20 @@ query_measurement_read :: proc(records: [][]string, package_name: string, worker
 			return {}, report_error(.Csv_Invalid, "query column count mismatch");
 		}
 		current: Query_Measurement;
+		if package_name == "spatial_query_batch"
+		{
+			current.execution = "caller";
+			current.timer = "legacy-worker-construction";
+			if column, status := header_index(header, "query_execution"); status == .Ok
+			{
+				current.execution = row[column];
+				current.timer = "prepared-post-join";
+				if current.execution != "caller" && current.execution != "mailbox"
+				{
+					return {}, report_error(.Invalid_Measurement, "invalid query execution");
+				}
+			}
+		}
 		if package_name == "query_extensions"
 		{
 			current.case_name = "control";
@@ -598,7 +613,7 @@ summarize_records :: proc(records: [][]string, path: string, expected_rows, work
 	if package_name == "spatial_query_batch"
 	{
 		names: [7]string = {"worker_count", "batch_size", "ray_query_count", "warmup_batches", "measured_batches", "ray_hit_count", "ray_checksum"}
-		if len(records[0]) != len(names) + 2 + (1 if len(profile) > 0 else 0) + (1 if ray_pattern_column >= 0 else 0)
+		if len(records[0]) != len(names) + 2 + (1 if len(profile) > 0 else 0) + (1 if ray_pattern_column >= 0 else 0) + (1 if query.timer == "prepared-post-join" else 0)
 		{
 			return {}, report_error(.Invalid_Header, "unexpected ray CSV columns in %s", path)
 		}
@@ -821,7 +836,8 @@ collect_summaries :: proc(request: Report_Request) -> Report_Result
 			(request.query.warmup_repetitions > 0 && request.query.warmup_repetitions != summary.query.warmup_repetitions) ||
 			(request.query.warmup_batches > 0 && request.query.warmup_batches != summary.query.warmup_batches) ||
 			(request.query.measured_batches > 0 && request.query.measured_batches != summary.query.measured_batches) ||
-			(request.ray_pattern != "" && request.ray_pattern != summary.ray_pattern)
+			(request.ray_pattern != "" && request.ray_pattern != summary.ray_pattern) ||
+			(request.query.execution != "" && request.query.execution != summary.query.execution)
 		{
 			return report_error(.Invalid_Measurement, "emitted query settings differ from requested Run");
 		}
@@ -955,7 +971,14 @@ render_markdown :: proc(request: Report_Request, summaries: []Lane_Summary) -> s
 	{
 		report_line(&builder, "## Closest-ray time summary")
 		report_line(&builder)
-		report_line(&builder, "Public query_batch, batch size 256. Times are native totals divided by measured frames, in ms/frame (50,000 rays). Lower is better. Work counts are stated below. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
+		if summaries[0].query.timer == "prepared-post-join"
+		{
+			report_format_line(&builder, "Execution: %s | Timer: prepared-post-join. Prepared inputs and reservations are outside timing. Dispatch/session, query result writes and common caller validation/checksum are timed. Scalar reference validation runs before and after timing", summaries[0].query.execution);
+		}
+		else
+		{
+			report_line(&builder, "Public query_batch, batch size 256. Times are native totals divided by measured frames, in ms/frame (50,000 rays). Lower is better. Work counts are stated below. Scalar output validation runs before and after timing. Worker counts include the caller. Windows controls placement without affinity pinning")
+		}
 	}
 	else if request.package_name == "spatial_query_trace"
 	{

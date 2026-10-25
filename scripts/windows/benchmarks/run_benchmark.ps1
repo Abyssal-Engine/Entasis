@@ -18,6 +18,8 @@ param(
     [string]$ProcessorAffinity,
     [ValidateSet("Development", "Release")]
     [string]$Configuration = "Release",
+    [ValidateSet("Caller", "Mailbox")]
+    [string]$QueryExecution = "Caller",
     [string]$Precision = "Float32",
     [string]$RayPattern = "axial",
     [string]$QueryCase = "control",
@@ -71,6 +73,11 @@ param(
 $preparationClock = [Diagnostics.Stopwatch]::StartNew()
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if ($PSBoundParameters.ContainsKey("QueryExecution") -and $Package -ne "spatial_query_batch")
+{
+    [Console]::Error.WriteLine("QueryExecution requires spatial_query_batch")
+    exit 2
+}
 if ($RayPattern -cnotin @("axial", "oblique") -or
     ($PSBoundParameters.ContainsKey("RayPattern") -and $Package -notin @("spatial_query_batch", "spatial_query_trace")))
 {
@@ -429,6 +436,14 @@ foreach ($option in $queryOptionNames.Keys)
         $reportOptions += @("--$($queryOptionNames[$option])", [string]$PSBoundParameters[$option])
     }
 }
+if ($Package -eq "spatial_query_batch")
+{
+    $reportOptions += @("--query-execution", $QueryExecution.ToLowerInvariant())
+    if ($QueryExecution -eq "Mailbox")
+    {
+        $resultPackage += "/mailbox"
+    }
+}
 if ($Package -in @("spatial_query_batch", "spatial_query_trace"))
 {
     $nativeOptions += "--ray-pattern=$RayPattern"
@@ -626,12 +641,16 @@ catch
     exit 2
 }
 
-$binary = Get-BenchmarkBinary $Package $Configuration $Record $Components "Off" $Precision $PrecisionCandidate
+$binary = Get-BenchmarkBinary $Package $Configuration $Record $Components "Off" $Precision $PrecisionCandidate $QueryExecution
 $reporter = Get-BenchmarkReporterBinary $Configuration
 $buildCommand = "& .\scripts\windows\benchmarks\build_benchmarks.ps1 -Package $Package -Configuration $Configuration -Record $Record"
 if ($Package -in $script:BenchmarkComponentPackages)
 {
     $buildCommand += " -Components $Components"
+}
+if ($Package -eq "spatial_query_batch")
+{
+    $buildCommand += " -QueryExecution $QueryExecution -Precision $Precision"
 }
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf))
 {
@@ -739,6 +758,12 @@ foreach ($worker in $workerValues)
             }
             foreach ($sample in $samples)
             {
+                if ($Package -eq "spatial_query_batch" -and
+                    ($sample.query_execution -cne $QueryExecution.ToLowerInvariant() -or
+                    $sample.batch_size -ne "256"))
+                {
+                    throw "Query execution/submission identity mismatch. Output: $output"
+                }
                 if ($sample.ray_pattern -cne $RayPattern)
                 {
                     throw "Ray pattern mismatch: requested $RayPattern. Rebuild the selected producer. Output: $output"
@@ -858,6 +883,10 @@ $canonicalCommand = "& .\scripts\windows\benchmarks\run_benchmark.ps1 -Package $
 if ($Package -in @("spatial_query_batch", "spatial_query_trace"))
 {
     $canonicalCommand += " -RayPattern $RayPattern"
+    if ($Package -eq "spatial_query_batch")
+    {
+        $canonicalCommand += " -QueryExecution $QueryExecution"
+    }
 }
 $canonicalCommand += " -Record $($Record.ToLowerInvariant())"
 if ($Record -eq "On")

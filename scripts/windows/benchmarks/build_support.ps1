@@ -1,8 +1,12 @@
-function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "")
+function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller")
 {
     if ($Package -eq "large_world_precision")
     {
         return (Join-Path $script:Root "build/benchmarks/large_world_precision/$($Configuration.ToLowerInvariant())/$PrecisionCandidate/entasis_large_world_precision.exe")
+    }
+    if ($Package -eq "spatial_query_batch" -and $QueryExecution -eq "Mailbox")
+    {
+        $Package += "_mailbox"
     }
     if ($Precision -eq "Mixed64")
     {
@@ -162,11 +166,15 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
     Write-Host "BENCHMARK_BUILT package=$Package elapsed_ms=$($clock.ElapsedMilliseconds)"
 }
 
-function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "")
+function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller")
 {
     Assert-BenchmarkPackage $Package
-    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols $Precision $PrecisionCandidate
+    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols $Precision $PrecisionCandidate $QueryExecution
     [string[]]$profileArguments = @("-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())")
+    if ($Package -eq "spatial_query_batch")
+    {
+        $profileArguments += "-define:ENTASIS_QUERY_EXECUTION=$($QueryExecution.ToLowerInvariant())"
+    }
     switch ($Configuration)
     {
         'Development'
@@ -196,6 +204,10 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
         elseif ($Precision -eq "Mixed64")
         {
             $output = Join-Path $script:Root "build/inspection/$Package/release/mixed64/$Package.s"
+        }
+        if ($Package -eq "spatial_query_batch" -and $QueryExecution -eq "Mailbox")
+        {
+            $output = Join-Path (Split-Path -Parent $output) "${Package}_mailbox.s"
         }
         $profileArguments += '-build-mode:assembly'
     }

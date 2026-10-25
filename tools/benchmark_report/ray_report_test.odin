@@ -188,3 +188,63 @@ spatial_query_reports_reject_mixed_ray_patterns :: proc(t: ^testing.T)
 	test_directory_remove(path);
 	mem.dynamic_arena_destroy(&arena);
 }
+
+@(test)
+spatial_query_reports_reject_mixed_execution_modes :: proc(t: ^testing.T)
+{
+	original: mem.Allocator = context.allocator;
+	arena: mem.Dynamic_Arena;
+	mem.dynamic_arena_init(&arena);
+	context.allocator = mem.dynamic_arena_allocator(&arena);
+	path, status := test_directory("entasis-query-execution");
+	testing.expect_value(t, status, Report_Status.Ok);
+	request: Report_Request = test_request(path, {1, 2}, 1);
+	request.package_name = "spatial_query_batch";
+	header :: "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status";
+	dataset: Result_Dataset;
+	for mode in ([]string{"caller", "mailbox", "legacy"})
+	{
+		for worker in request.workers
+		{
+			identity: string = ",query_execution";
+			value: string = fmt.aprintf(",%s", mode);
+			if mode == "legacy"
+			{
+				identity = "";
+				value = "";
+			}
+			_ = write_lane(path, worker, fmt.aprintf("%s%s\n%d,%d,50000,10,100,25000,42,100,ok%s\n", header, identity,
+				worker, 256, value));
+		}
+		testing.expect_value(t, collect_summaries(request).status, Report_Status.Ok);
+		testing.expect_value(t, result_dataset_open(&dataset, path, request.package_name).status, Report_Status.Ok);
+		result_dataset_close(&dataset);
+	}
+	// historical caller and prepared caller have distinct timer identities
+	_ = write_lane(path, 2, header+",query_execution\n2,256,50000,10,100,25000,42,100,ok,caller\n");
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement);
+	testing.expect_value(t, result_dataset_open(&dataset, path, request.package_name).status, Report_Status.Invalid_Measurement);
+	result_dataset_close(&dataset);
+	_ = write_lane(path, 1, header+",query_execution\n1,256,50000,10,100,25000,42,100,ok,caller\n");
+	for execution in ([]string{"mailbox", "invalid", ""})
+	{
+		_ = write_lane(path, 2, fmt.aprintf("%s,query_execution\n2,256,50000,10,100,25000,42,100,ok,%s\n", header, execution));
+		testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement);
+		testing.expect_value(t, result_dataset_open(&dataset, path, request.package_name).status, Report_Status.Invalid_Measurement);
+		result_dataset_close(&dataset);
+	}
+	_ = write_lane(path, 2, header+",query_execution\n2,256,50000,10,100,25000,42,100,ok,caller\n");
+	request.query.execution = "mailbox";
+	testing.expect_value(t, collect_summaries(request).status, Report_Status.Invalid_Measurement);
+	args: []string = {"report", "--source", path, "--package", "spatial_query_batch", "--configuration", "release",
+		"--runs", "1", "--workers", "1,2", "--compiler-version", "test", "--operating-system", "test", "--processor", "test",
+		"--logical-processors", "2", "--command", "test", "--query-execution", "mailbox"};
+	_, cli_status := parse_cli(args);
+	testing.expect_value(t, cli_status, Report_Status.Ok);
+	args[len(args)-1] = "bad";
+	_, cli_status = parse_cli(args);
+	testing.expect_value(t, cli_status, Report_Status.Invalid_Arguments);
+	context.allocator = original;
+	test_directory_remove(path);
+	mem.dynamic_arena_destroy(&arena);
+}

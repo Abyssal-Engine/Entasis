@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
         "precision-bounds", "precision-broadphase", "precision-storage", "precision-collisions", "precision-constraints", "precision-targets", "precision-mutations", "precision-callbacks", "precision-queries", "precision-snapshots", "benchmark-precision",
-        "root", "scene-stability", "benchmark-support", "benchmark-report", "benchmark-query", "physics-visuals", "physics-viewer", "cooking", "bodies", "broadphase", "collections", "collision-batching",
+        "root", "scene-stability", "benchmark-support", "benchmark-report", "benchmark-query", "benchmark-spatial-query", "physics-visuals", "physics-viewer", "cooking", "bodies", "broadphase", "collections", "collision-batching",
         "collision-pairs", "contact-optimization", "constraints", "intrinsics", "islands", "layout",
         "narrowphase-integration", "queries", "public-api", "release-parity", "shapes",
         "simulation", "solver-kernels", "sweeps", "tasking-multi", "tasking-single",

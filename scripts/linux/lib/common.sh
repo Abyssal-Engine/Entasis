@@ -85,7 +85,7 @@ require_odin() {
 
 test_scope_to_package() {
   case "$1" in
-    precision-bounds|precision-broadphase|precision-storage|precision-collisions|precision-constraints|precision-targets|precision-mutations|precision-callbacks|precision-queries|precision-snapshots|benchmark-precision|root|scene-stability|benchmark-support|benchmark-report|benchmark-query|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
+    precision-bounds|precision-broadphase|precision-storage|precision-collisions|precision-constraints|precision-targets|precision-mutations|precision-callbacks|precision-queries|precision-snapshots|benchmark-precision|root|scene-stability|benchmark-support|benchmark-report|benchmark-query|benchmark-spatial-query|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
       printf '%s\n' "${1//-/_}"
       ;;
     *) return 1 ;;
@@ -103,6 +103,8 @@ test_package_path() {
     printf '%s/benchmarks/benchmark_support\n' "$ROOT"
   elif [[ "$1" == benchmark_query ]]; then
     printf '%s/benchmarks/query_extensions\n' "$ROOT"
+  elif [[ "$1" == benchmark_spatial_query ]]; then
+    printf '%s/benchmarks/spatial_query_batch\n' "$ROOT"
   elif [[ "$1" == benchmark_report ]]; then
     printf '%s/tools/benchmark_report\n' "$ROOT"
   elif [[ "$1" == physics_viewer ]]; then

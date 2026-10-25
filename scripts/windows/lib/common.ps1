@@ -45,6 +45,7 @@ $script:TestScopeToPackage = @{
     "benchmark-support" = "benchmark_support"
     "benchmark-report" = "benchmark_report"
     "benchmark-query" = "benchmark_query"
+    "benchmark-spatial-query" = "benchmark_spatial_query"
     "physics-visuals" = "physics_visuals"
     "physics-viewer" = "physics_viewer"
     "cooking" = "cooking"
@@ -271,6 +272,10 @@ function Get-TestPackagePath([string]$Package)
     if ($Package -eq "benchmark_query")
     {
         return (Join-Path $script:Root "benchmarks/query_extensions")
+    }
+    if ($Package -eq "benchmark_spatial_query")
+    {
+        return (Join-Path $script:Root "benchmarks/spatial_query_batch")
     }
     if ($Package.StartsWith("benchmark_precision"))
     {

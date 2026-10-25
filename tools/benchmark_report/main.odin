@@ -31,7 +31,7 @@ Cli_Values :: struct
 
 Query_Cli_Option :: enum
 {
-	Case, Operation, Cell, Group, Repetitions, Warmup_Repetitions, Family, Warmup_Batches, Measured_Batches, Components, Pattern,
+	Case, Operation, Cell, Group, Repetitions, Warmup_Repetitions, Family, Warmup_Batches, Measured_Batches, Components, Pattern, Execution,
 }
 
 cli_value :: proc(args: []string, index: ^int, option: string) -> (string, Report_Status)
@@ -54,7 +54,7 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 		status: Report_Status
 		switch args[index]
 		{
-		case "--query-case", "--query-operation", "--query-cell", "--query-group", "--query-repetitions", "--query-warmup-repetitions", "--query-family", "--warmup-batches", "--measured-batches", "--components", "--ray-pattern":
+		case "--query-case", "--query-operation", "--query-cell", "--query-group", "--query-repetitions", "--query-warmup-repetitions", "--query-family", "--warmup-batches", "--measured-batches", "--components", "--ray-pattern", "--query-execution":
 			option: Query_Cli_Option;
 			switch args[index]
 			{
@@ -69,6 +69,7 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 			case "--measured-batches": option = .Measured_Batches;
 			case "--components": option = .Components;
 			case "--ray-pattern": option = .Pattern;
+			case "--query-execution": option = .Execution;
 			}
 			if option in values.query_options
 			{
@@ -98,6 +99,7 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 			case .Measured_Batches: values.query.measured_batches = count;
 			case .Components: values.query.components = value;
 			case .Pattern: values.ray_pattern = value;
+			case .Execution: values.query.execution = value;
 			}
 		case "--precision", "--precision-candidate", "--precision-case", "--sampling-mode":
 			field: int;
@@ -236,10 +238,15 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 	{
 		if (option in (bit_set[Query_Cli_Option]{.Case, .Operation, .Cell, .Group, .Repetitions, .Warmup_Repetitions, .Components}) && values.package_name != "query_extensions") ||
 			(option in (bit_set[Query_Cli_Option]{.Warmup_Batches, .Measured_Batches, .Pattern}) && values.package_name != "spatial_query_trace" && values.package_name != "spatial_query_batch") ||
-			(option == .Family && values.package_name != "spatial_query_trace")
+			(option == .Family && values.package_name != "spatial_query_trace") ||
+			(option == .Execution && values.package_name != "spatial_query_batch")
 		{
 			return {}, .Invalid_Arguments;
 		}
+	}
+	if .Execution in values.query_options && values.query.execution != "caller" && values.query.execution != "mailbox"
+	{
+		return {}, .Invalid_Arguments;
 	}
 	if values.query.case_name != "" && values.query.case_name != "control"
 	{
