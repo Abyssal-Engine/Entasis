@@ -89,7 +89,7 @@ Thread_Dispatcher_Session_Publication :: enum u32
 	Invalid,
 }
 
-THREAD_DISPATCHER_SESSION_MINIMUM_WORKERS :: 10;
+THREAD_DISPATCHER_SESSION_MINIMUM_WORKERS :: 2;
 THREAD_DISPATCHER_SESSION_MAXIMUM_WORKERS :: 64;
 THREAD_DISPATCHER_SESSION_COUNT_MASK :: u32(0x3f);
 THREAD_DISPATCHER_SESSION_STATE_SHIFT :: 6;
@@ -101,23 +101,22 @@ Thread_Dispatcher_Session :: struct #align(128)
 	publication:       sync.Futex,
 	lifecycle:         u32,
 	owner_thread_id:   int,
-	publication_pad:   [112]u8,
+	resident_count:    int,
+	publication_pad:   [104]u8,
 	outer_worker:      Dispatcher_Worker_Proc,
 	outer_context:     rawptr,
 	phase_worker:      Dispatcher_Worker_Proc,
 	phase_context:     rawptr,
 	payload_pad:       [96]u8,
-	remaining:         sync.Futex,
-	remaining_pad:     [124]u8,
 }
-#assert(size_of(Thread_Dispatcher_Session) == 384);
+#assert(size_of(Thread_Dispatcher_Session) == 256);
 #assert(align_of(Thread_Dispatcher_Session) == 128);
 #assert(offset_of(Thread_Dispatcher_Session, publication) == 0);
 #assert(offset_of(Thread_Dispatcher_Session, lifecycle) == 4);
 #assert(offset_of(Thread_Dispatcher_Session, owner_thread_id) == 8);
 #assert(offset_of(Thread_Dispatcher_Session, outer_worker) == 128);
 #assert(offset_of(Thread_Dispatcher_Session, phase_worker) == 144);
-#assert(offset_of(Thread_Dispatcher_Session, remaining) == 256);
+
 Thread_Dispatcher_Session_Outer_Request :: struct
 {
 	worker:        Dispatcher_Worker_Proc,
@@ -208,72 +207,6 @@ thread_dispatcher_session_publication_count :: proc "contextless" (publication: 
 	return int(publication & THREAD_DISPATCHER_SESSION_COUNT_MASK) + 1;
 }
 
-thread_dispatcher_session_finish_worker :: proc "contextless" (session: ^Thread_Dispatcher_Session)
-{
-	previous_remaining := sync.atomic_sub_explicit(
-		&session.remaining, sync.Futex(1), .Acq_Rel,
-	);
-	if previous_remaining == 1
-	{
-		sync.futex_signal(&session.remaining);
-	}
-}
-
-thread_dispatcher_session_execute_worker :: proc "contextless" (
-	session: ^Thread_Dispatcher_Session, worker_index: int,
-	boundary: ^Thread_Dispatcher_Boundary,
-)
-{
-	worker := session.phase_worker;
-	worker(worker_index, boundary);
-	thread_dispatcher_session_finish_worker(session);
-}
-
-@(private)
-thread_dispatcher_session_wait :: #force_inline proc "contextless" (
-	publication: ^sync.Futex, expected: u32,
-)
-{
-	// give a short phase handoff time to complete before entering the OS wait
-	for _ in 0 ..< 128
-	{
-		if u32(sync.atomic_load_explicit(publication, .Acquire)) != expected
-		{
-			return;
-		}
-		sync.cpu_relax();
-	}
-	sync.futex_wait(publication, expected);
-}
-
-thread_dispatcher_session_resident_loop :: proc "contextless" (
-	session: ^Thread_Dispatcher_Session, worker_index: int,
-	boundary: ^Thread_Dispatcher_Boundary,
-)
-{
-	observed_generation := u32(0);
-	for
-	{
-		publication := u32(sync.atomic_load_explicit(&session.publication, .Acquire));
-		state := thread_dispatcher_session_publication_state(publication);
-		generation := thread_dispatcher_session_publication_generation(publication);
-		if state == .Stop
-		{
-			return;
-		}
-		if state == .Phase && generation != observed_generation
-		{
-			observed_generation = generation;
-			if worker_index < thread_dispatcher_session_publication_count(publication)
-			{
-				thread_dispatcher_session_execute_worker(session, worker_index, boundary);
-			}
-			continue;
-		}
-		thread_dispatcher_session_wait(&session.publication, publication);
-	}
-}
-
 thread_dispatcher_session_publish_stop :: proc "contextless" (session: ^Thread_Dispatcher_Session)
 {
 	sync.atomic_store_explicit(
@@ -283,7 +216,7 @@ thread_dispatcher_session_publish_stop :: proc "contextless" (session: ^Thread_D
 		.Stop, THREAD_DISPATCHER_SESSION_STOP_GENERATION, 1,
 	);
 	sync.atomic_store_explicit(&session.publication, sync.Futex(stop), .Release);
-	sync.futex_broadcast(&session.publication);
+	thread_dispatcher_mailbox_stop(session);
 }
 
 thread_dispatcher_session_outer_worker :: proc "contextless" (
@@ -304,7 +237,7 @@ thread_dispatcher_session_outer_worker :: proc "contextless" (
 		}
 		return;
 	}
-	thread_dispatcher_session_resident_loop(session, worker_index, boundary);
+	thread_dispatcher_mailbox_resident(session, worker_index, boundary);
 }
 
 thread_dispatcher_dispatch_session :: proc "contextless" (
@@ -348,23 +281,9 @@ thread_dispatcher_dispatch_session :: proc "contextless" (
 	session.phase_worker = worker_body;
 	session.phase_context = unmanaged_context;
 	boundary.unmanaged_context = unmanaged_context;
-	sync.atomic_store_explicit(&session.remaining, sync.Futex(admitted_count), .Release);
-	phase := thread_dispatcher_session_publication(.Phase, next_generation, admitted_count);
+	phase: u32 = thread_dispatcher_session_publication(.Phase, next_generation, admitted_count);
 	sync.atomic_store_explicit(&session.publication, sync.Futex(phase), .Release);
-	if admitted_count > 1
-	{
-		sync.futex_broadcast(&session.publication);
-	}
-	thread_dispatcher_session_execute_worker(session, 0, boundary);
-	for
-	{
-		remaining := u32(sync.atomic_load_explicit(&session.remaining, .Acquire));
-		if remaining == 0
-		{
-			break;
-		}
-		thread_dispatcher_session_wait(&session.remaining, remaining);
-	}
+	thread_dispatcher_mailbox_phase(session, boundary, worker_body, admitted_count, next_generation);
 	session.phase_worker = nil;
 	session.phase_context = nil;
 	boundary.unmanaged_context = nil;
@@ -523,12 +442,13 @@ thread_dispatcher_dispatch_boundary :: proc "contextless" (
 			sync.atomic_store_explicit(&dispatcher.dispatch_state, u32(Dispatch_State.Idle), .Release);
 			return .Invalid_Argument;
 		}
+		session.resident_count = boundary.worker_count;
+		thread_dispatcher_mailbox_reset(session);
 		session.outer_worker = request.worker;
 		session.outer_context = request.outer_context;
 		session.phase_worker = nil;
 		session.phase_context = nil;
 		sync.atomic_store_explicit(&session.publication, sync.Futex(0), .Relaxed);
-		sync.atomic_store_explicit(&session.remaining, sync.Futex(0), .Relaxed);
 		sync.atomic_store_explicit(&session.owner_thread_id, sync.current_thread_id(), .Relaxed);
 		sync.atomic_store_explicit(
 			&session.lifecycle, u32(Thread_Dispatcher_Session_Lifecycle.Active), .Release,
@@ -564,7 +484,7 @@ thread_dispatcher_dispatch_boundary :: proc "contextless" (
 		session.outer_context = nil;
 		session.phase_worker = nil;
 		session.phase_context = nil;
-		sync.atomic_store_explicit(&session.remaining, sync.Futex(0), .Release);
+		thread_dispatcher_mailbox_reset(session);
 		sync.atomic_store_explicit(&session.publication, sync.Futex(0), .Release);
 	}
 	sync.atomic_store_explicit(&dispatcher.dispatch_state, u32(Dispatch_State.Idle), .Release);
@@ -625,7 +545,7 @@ thread_dispatcher_release_workers :: proc (dispatcher: ^Thread_Dispatcher)
 	if worker_count >= THREAD_DISPATCHER_SESSION_MINIMUM_WORKERS &&
 	worker_count <= THREAD_DISPATCHER_SESSION_MAXIMUM_WORKERS
 	{
-		byte_count += 511;
+		byte_count += 127 + size_of(Thread_Dispatcher_Session) + size_of(Thread_Dispatcher_Mailbox) * dispatcher.background_count;
 		alignment = 128;
 	}
 	_ = allocation_free(dispatcher.background_workers, byte_count, alignment,
@@ -671,11 +591,12 @@ thread_dispatcher_initialize_internal :: proc (
 		if worker_count >= THREAD_DISPATCHER_SESSION_MINIMUM_WORKERS &&
 		worker_count <= THREAD_DISPATCHER_SESSION_MAXIMUM_WORKERS
 		{
-			if worker_record_bytes > max(int) - 511
+			session_bytes: int = 127 + size_of(Thread_Dispatcher_Session) + size_of(Thread_Dispatcher_Mailbox) * dispatcher.background_count;
+			if worker_record_bytes > max(int) - session_bytes
 			{
 				return .Capacity_Missing;
 			}
-			allocation_bytes = worker_record_bytes + 511;
+			allocation_bytes = worker_record_bytes + session_bytes;
 			allocation_alignment = 128;
 		}
 		memory, allocation_error := mem.alloc( // odin-contracts-allow: setup rule=ODIN_HOT_ALLOCATE_OR_REALLOC owner=Thread_Dispatcher phase=startup reason=persistent_worker_records

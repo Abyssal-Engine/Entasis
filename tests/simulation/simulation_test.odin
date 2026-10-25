@@ -630,15 +630,18 @@ default_stage_order_substeps_and_kinematics :: proc(t: ^testing.T)
 	)),
 		util.Thread_Dispatcher_Session_Lifecycle.Inactive,
 	);
-	testing.expect_value(
-		t, sync.atomic_load_explicit(&session.remaining, .Acquire), sync.Futex(0),
-	);
 	simulation.timestep_callbacks = {};
 	testing.expect_value(
 		t, physics.simulation_timestep(simulation, 0.1, dispatcher_boundary),
 		physics.Physics_Status.Ok,
 	);
 	step_index_before_busy_entry := simulation.step_index;
+	callback_state.completion_status = .Ok;
+	callback_state.completion_calls = 0;
+	simulation.timestep_callbacks = {
+		stage_completed=test_timestep_completion,
+		user_context=&callback_state,
+	};
 	sync.atomic_store_explicit(
 		&dispatcher.dispatch_state, u32(util.Dispatch_State.Running), .Release,
 	);
@@ -650,6 +653,8 @@ default_stage_order_substeps_and_kinematics :: proc(t: ^testing.T)
 		&dispatcher.dispatch_state, u32(util.Dispatch_State.Idle), .Release,
 	);
 	testing.expect_value(t, simulation.step_index, step_index_before_busy_entry);
+	testing.expect_value(t, callback_state.completion_calls, i32(0));
+	testing.expect_value(t, simulation.state, physics.Simulation_State.Ready);
 	sync.atomic_store_explicit(
 		&dispatcher.lifecycle, u32(util.Dispatcher_Lifecycle.Shutting_Down), .Release,
 	);
@@ -661,10 +666,15 @@ default_stage_order_substeps_and_kinematics :: proc(t: ^testing.T)
 		&dispatcher.lifecycle, u32(util.Dispatcher_Lifecycle.Ready), .Release,
 	);
 	testing.expect_value(t, simulation.step_index, step_index_before_busy_entry);
+	testing.expect_value(t, callback_state.completion_calls, i32(0));
+	testing.expect_value(t, simulation.state, physics.Simulation_State.Ready);
 	testing.expect_value(
 		t, physics.simulation_timestep(simulation, 0.1, dispatcher_boundary),
 		physics.Physics_Status.Ok,
 	);
+	testing.expect_value(t, simulation.step_index, step_index_before_busy_entry + 1);
+	testing.expect(t, callback_state.completion_calls > 0);
+	simulation.timestep_callbacks = {};
 	simulation.timestepper = {
 		step=test_custom_timestep,
 		user_context=&callback_state,
@@ -726,6 +736,29 @@ default_stage_order_substeps_and_kinematics :: proc(t: ^testing.T)
 		timestep_duration_before_clear,
 	);
 	simulation.timestepper = default_timestepper;
+	callback_state.completion_calls = 0;
+	simulation.timestep_callbacks = {
+		stage_completed=test_timestep_completion,
+		user_context=&callback_state,
+	};
+	empty_step_index: u64 = simulation.step_index;
+	sync.atomic_store_explicit(&dispatcher.dispatch_state, u32(util.Dispatch_State.Running), .Release);
+	testing.expect_value(t, physics.simulation_timestep(simulation, 0.1, dispatcher_boundary), physics.Physics_Status.Invalid_Argument);
+	testing.expect_value(t, callback_state.completion_calls, i32(0));
+	testing.expect_value(t, simulation.step_index, empty_step_index);
+	testing.expect_value(t, simulation.state, physics.Simulation_State.Ready);
+	sync.atomic_store_explicit(&dispatcher.dispatch_state, u32(util.Dispatch_State.Idle), .Release);
+	sync.atomic_store_explicit(&dispatcher.lifecycle, u32(util.Dispatcher_Lifecycle.Shutting_Down), .Release);
+	testing.expect_value(t, physics.simulation_timestep(simulation, 0.1, dispatcher_boundary), physics.Physics_Status.Invalid_Argument);
+	testing.expect_value(t, callback_state.completion_calls, i32(0));
+	testing.expect_value(t, simulation.step_index, empty_step_index);
+	testing.expect_value(t, simulation.state, physics.Simulation_State.Ready);
+	sync.atomic_store_explicit(&dispatcher.lifecycle, u32(util.Dispatcher_Lifecycle.Ready), .Release);
+	testing.expect_value(t, physics.simulation_timestep(simulation, 0.1, dispatcher_boundary), physics.Physics_Status.Ok);
+	testing.expect_value(t, simulation.step_index, empty_step_index + 1);
+	testing.expect(t, callback_state.completion_calls > 0);
+	testing.expect_value(t, simulation.state, physics.Simulation_State.Ready);
+	testing.expect_value(t, sync.atomic_load_explicit(&dispatcher.dispatch_state, .Acquire), u32(util.Dispatch_State.Idle));
 }
 
 @(test)

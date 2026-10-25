@@ -5,7 +5,7 @@ import "core:os"
 import "core:time"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "body_count,shape_type_count,invalid_bounds_count,mismatched_bounds_count,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "body_count,shape_type_count,invalid_bounds_count,mismatched_bounds_count,case_status,metric_status,physics_elapsed_ms,bounds_clustered_ms,precision";
 
 Argument_Status :: enum u8
 {
@@ -14,6 +14,12 @@ Argument_Status :: enum u8
 Arguments :: struct
 {
 	worker_count: int, output_path: string,
+}
+
+Argument_Presence :: enum u8
+{
+	Missing,
+	Present,
 }
 
 argument_value :: proc "contextless" (argument, prefix: string) -> (string, Argument_Status)
@@ -47,11 +53,6 @@ parse_positive_integer :: proc "contextless" (value: string) -> (int, Argument_S
 	return result, .Ok;
 }
 
-worker_count_valid :: proc "contextless" (worker_count: int) -> bool
-{
-	return worker_count > 0 && worker_count <= entasis.MAXIMUM_WORKER_COUNT;
-}
-
 parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argument_Status)
 {
 	if len(arguments) != 3
@@ -59,45 +60,45 @@ parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argum
 		return {}, .Invalid;
 	}
 	result: Arguments;
-	worker_set, output_set := false, false;
+	worker_set, output_set: Argument_Presence;
 	for argument in arguments[1:]
 	{
 		value, status := argument_value(argument, "--worker-count=");
 		if status == .Ok
 		{
-			if worker_set
+			if worker_set == .Present
 			{
 				return {}, .Invalid;
 			}
 			result.worker_count, status = parse_positive_integer(value);
-			if status != .Ok || !worker_count_valid(result.worker_count)
+			if status != .Ok || result.worker_count <= 0 || result.worker_count > entasis.MAXIMUM_WORKER_COUNT
 			{
 				return {}, .Invalid;
 			}
-			worker_set = true;
+			worker_set = .Present;
 			continue;
 		}
 		value, status = argument_value(argument, "--output=");
 		if status == .Ok
 		{
-			if output_set || len(value) == 0
+			if output_set == .Present || len(value) == 0
 			{
 				return {}, .Invalid;
 			}
 			result.output_path = value;
-			output_set = true;
+			output_set = .Present;
 			continue;
 		}
 		return {}, .Invalid;
 	}
-	if !worker_set || !output_set
+	if worker_set != .Present || output_set != .Present
 	{
 		return {}, .Invalid;
 	}
 	return result, .Ok;
 }
 
-write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms: f64) -> Case_Status
+write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms, clustered_ms: f64) -> Case_Status
 {
 	_, stat_error := os.stat(path, context.temp_allocator);
 	write_header := stat_error != nil;
@@ -112,14 +113,73 @@ write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms: f64) -
 		return .Validation_Failed;
 	}
 	if fmt.fprintfln(
-		file, "%d,%d,%d,%d,ok,ok,%.9f",
+		file, "%d,%d,%d,%d,ok,ok,%.9f,%.9f,%s",
 		counters.body_count, SHAPE_TYPE_COUNT, counters.invalid_bounds_count,
-		counters.mismatched_bounds_count, elapsed_ms,
+		counters.mismatched_bounds_count, elapsed_ms, clustered_ms, entasis.PRECISION_NAME,
 	) <= 0
 	{
 		return .Validation_Failed;
 	}
 	return .Ok;
+}
+
+benchmark_run_layout :: proc(
+	pool: ^entasis.Buffer_Pool, worker_count: int, layout: Bounds_Layout,
+) -> (Benchmark_Run_Result, Bounds_Counters, f64)
+{
+	status := Case_Status.Ok;
+
+	warmup: Benchmark_Simulation_Owner;
+	status = benchmark_owner_create(&warmup, pool, worker_count, layout);
+	if status != .Ok
+	{
+		return {status=status, layout=layout}, {}, 0;
+	}
+	result := benchmark_owner_predict(&warmup, WARMUP_STEP_COUNT, .Warmup);
+	if result.status != .Ok
+	{
+		_ = benchmark_owner_destroy(&warmup);
+		result.layout = layout;
+		return result, {}, 0;
+	}
+	if benchmark_owner_destroy(&warmup) != .Ok
+	{
+		return {status=.Release_Failed, layout=layout}, {}, 0;
+	}
+
+	measured: Benchmark_Simulation_Owner;
+	status = benchmark_owner_create(&measured, pool, worker_count, layout);
+	if status != .Ok
+	{
+		return {status=status, layout=layout}, {}, 0;
+	}
+	start := time.tick_now();
+	result = benchmark_owner_predict(&measured, MEASURED_STEP_COUNT, .Measured);
+	end := time.tick_now();
+	if result.status != .Ok
+	{
+		_ = benchmark_owner_destroy(&measured);
+		result.layout = layout;
+		return result, {}, 0;
+	}
+	counters: Bounds_Counters;
+	status = benchmark_validate_bounds(&measured, &counters);
+	if status != .Ok
+	{
+		_ = benchmark_owner_destroy(&measured);
+		return {status=status, layout=layout}, counters, 0;
+	}
+	elapsed_ms := f64(i64(time.tick_diff(start, end))) / 1_000_000;
+	if elapsed_ms <= 0
+	{
+		_ = benchmark_owner_destroy(&measured);
+		return {status=.Validation_Failed, layout=layout}, counters, elapsed_ms;
+	}
+	if benchmark_owner_destroy(&measured) != .Ok
+	{
+		return {status=.Release_Failed, layout=layout}, counters, elapsed_ms;
+	}
+	return {status=.Ok, layout=layout}, counters, elapsed_ms;
 }
 
 run_benchmark :: proc(arguments: Arguments) -> Benchmark_Run_Result
@@ -133,57 +193,17 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Run_Result
 	{
 		_ = entasis.buffer_pool_destroy(&pool);
 	}
-	status := Case_Status.Ok;
-
-	warmup: Benchmark_Simulation_Owner;
-	status = benchmark_owner_create(&warmup, &pool, arguments.worker_count);
-	if status != .Ok
-	{
-		return {status=status};
-	}
-	result := benchmark_owner_predict(&warmup, WARMUP_STEP_COUNT, .Warmup);
+	result, counters, elapsed_ms := benchmark_run_layout(&pool, arguments.worker_count, .Round_Robin);
 	if result.status != .Ok
 	{
-		_ = benchmark_owner_destroy(&warmup);
 		return result;
 	}
-	if benchmark_owner_destroy(&warmup) != .Ok
+	clustered_result, _, clustered_ms := benchmark_run_layout(&pool, arguments.worker_count, .Clustered);
+	if clustered_result.status != .Ok
 	{
-		return {status=.Release_Failed};
+		return clustered_result;
 	}
-
-	measured: Benchmark_Simulation_Owner;
-	status = benchmark_owner_create(&measured, &pool, arguments.worker_count);
-	if status != .Ok
-	{
-		return {status=status};
-	}
-	start := time.tick_now();
-	result = benchmark_owner_predict(&measured, MEASURED_STEP_COUNT, .Measured);
-	end := time.tick_now();
-	if result.status != .Ok
-	{
-		_ = benchmark_owner_destroy(&measured);
-		return result;
-	}
-	counters: Bounds_Counters;
-	status = benchmark_validate_bounds(&measured, &counters);
-	if status != .Ok
-	{
-		_ = benchmark_owner_destroy(&measured);
-		return {status=status};
-	}
-	elapsed_ms := f64(i64(time.tick_diff(start, end))) / 1_000_000;
-	if elapsed_ms <= 0
-	{
-		_ = benchmark_owner_destroy(&measured);
-		return {status=.Validation_Failed};
-	}
-	if benchmark_owner_destroy(&measured) != .Ok
-	{
-		return {status=.Release_Failed};
-	}
-	return {status=write_result(arguments.output_path, counters, elapsed_ms)};
+	return {status=write_result(arguments.output_path, counters, elapsed_ms, clustered_ms)};
 }
 
 main :: proc()
@@ -198,11 +218,12 @@ main :: proc()
 	if result.status != .Ok
 	{
 		fmt.eprintfln(
-			"benchmark_failed status=%v physics_status=%v phase=%v failed_step=%d",
+			"benchmark_failed status=%v physics_status=%v phase=%v failed_step=%d layout=%v",
 			result.status,
 			result.physics_status,
 			result.step_phase,
-			result.failed_step
+			result.failed_step,
+			result.layout,
 		);
 		os.exit(2);
 	}

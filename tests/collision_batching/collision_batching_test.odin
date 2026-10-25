@@ -1093,7 +1093,7 @@ all_repaired_builtin_wide_routes_execute_full_bundles_and_masked_tails :: proc(t
 		{1, 2}, {1, 3}, {1, 4}, {2, 2}, {2, 3}, {2, 4}, {2, 5},
 		{3, 3}, {3, 4}, {3, 5}, {4, 4}, {4, 5}, {5, 5},
 	};
-	pair_storage_data: [11]physics.Collision_Batcher_Pair;
+	pair_storage_data: [33]physics.Collision_Batcher_Pair;
 	pair_storage := util.Buffer(physics.Collision_Batcher_Pair){
 		memory=&pair_storage_data[0], length=i32(len(pair_storage_data)), id=-1,
 	};
@@ -1106,89 +1106,93 @@ all_repaired_builtin_wide_routes_execute_full_bundles_and_masked_tails :: proc(t
 
 	for route_index in 0 ..< len(repaired_routes)
 	{
-		baseline: [len(pair_storage_data)]physics.Manifold_Result;
-		for repetition in 0 ..< 2
+		counts: [20]int = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31, 32, 33};
+		for count in counts
 		{
-			expected_offsets: [len(pair_storage_data)]util.Vector3;
-			callback.result_count = 0;
-			for pair_index in 0 ..< len(pair_storage_data)
+			baseline: [len(pair_storage_data)]physics.Manifold_Result;
+			for repetition in 0 ..< 2
 			{
-				type_a := repaired_routes[route_index][0];
-				type_b := repaired_routes[route_index][1];
-				shape_a := indices[type_a];
-				shape_b := indices[type_b];
-				pose_a := identity;
-				pose_b := identity;
-				pose_b.position = {0.18 + f32(pair_index) * 0.015, 0.08, 0.12};
-				pose_b.orientation = util.quaternion_from_axis_angle({0, 1, 0}, f32(pair_index) * 0.01);
-				if type_a == physics.TRIANGLE_TYPE_ID && type_b == physics.TRIANGLE_TYPE_ID
+				expected_offsets: [len(pair_storage_data)]util.Vector3;
+				callback.result_count = 0;
+				for pair_index in 0 ..< count
 				{
-					pose_b.position.y = -0.04;
-					pose_b.orientation = util.quaternion_from_axis_angle({1, 0, 0}, 3.14159265);
+					type_a := repaired_routes[route_index][0];
+					type_b := repaired_routes[route_index][1];
+					shape_a := indices[type_a];
+					shape_b := indices[type_b];
+					pose_a := identity;
+					pose_b := identity;
+					pose_b.position = {0.18 + f32(pair_index) * 0.015, 0.08, 0.12};
+					pose_b.orientation = util.quaternion_from_axis_angle({0, 1, 0}, f32(pair_index) * 0.01);
+					if type_a == physics.TRIANGLE_TYPE_ID && type_b == physics.TRIANGLE_TYPE_ID
+					{
+						pose_b.position.y = -0.04;
+						pose_b.orientation = util.quaternion_from_axis_angle({1, 0, 0}, 3.14159265);
+					}
+					else if type_a == physics.TRIANGLE_TYPE_ID && type_b == physics.CONVEX_HULL_TYPE_ID
+					{
+						pose_b.position.y = -0.08;
+					}
+					if type_a != type_b && pair_index & 1 != 0
+					{
+						shape_a, shape_b = shape_b, shape_a;
+						pose_a, pose_b = pose_b, pose_a;
+					}
+					expected_offsets[pair_index] = util.vector3_subtract(pose_b.position, pose_a.position);
+					testing.expect_value(t, physics.collision_batcher_add(
+						&batcher, shape_a, shape_b, pose_a, pose_b, 0.1, i32(route_index*100+pair_index),
+					), physics.Physics_Status.Ok);
 				}
-				else if type_a == physics.TRIANGLE_TYPE_ID && type_b == physics.CONVEX_HULL_TYPE_ID
+				testing.expect_value(t, physics.collision_batcher_flush(&batcher), physics.Physics_Status.Ok);
+				testing.expect_value(t, callback.result_count, count);
+				for pair_index in 0 ..< count
 				{
-					pose_b.position.y = -0.08;
-				}
-				if type_a != type_b && pair_index & 1 != 0
-				{
-					shape_a, shape_b = shape_b, shape_a;
-					pose_a, pose_b = pose_b, pose_a;
-				}
-				expected_offsets[pair_index] = util.vector3_subtract(pose_b.position, pose_a.position);
-				testing.expect_value(t, physics.collision_batcher_add(
-					&batcher, shape_a, shape_b, pose_a, pose_b, 0.1, i32(route_index*100+pair_index),
-				), physics.Physics_Status.Ok);
-			}
-			testing.expect_value(t, physics.collision_batcher_flush(&batcher), physics.Physics_Status.Ok);
-			testing.expect_value(t, callback.result_count, len(pair_storage_data));
-			for pair_index in 0 ..< len(pair_storage_data)
-			{
-				actual := callback.results[pair_index];
-				testing.expect_value(t, callback.pair_ids[pair_index], i32(route_index*100+pair_index));
-				testing.expect_value(t, actual.kind, physics.Manifold_Kind.Convex);
-				testing.expectf(t, actual.convex.count >= 0 && actual.convex.count <= physics.MAXIMUM_MANIFOLD_CONTACT_COUNT,
-					"route %d-%d pair %d: expected a bounded manifold result, got %d contacts",
-					repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, actual.convex.count,
-				);
-				if actual.convex.count > 0
-				{
-					testing.expectf(t, util.vector3_distance(
-						actual.convex.offset_b,
-						expected_offsets[pair_index]
-					) < 2e-5,
-						"route %d-%d pair %d: offset_b expected %v, got %v",
-						repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index,
-						expected_offsets[pair_index], actual.convex.offset_b,
+					actual := callback.results[pair_index];
+					testing.expect_value(t, callback.pair_ids[pair_index], i32(route_index*100+pair_index));
+					testing.expect_value(t, actual.kind, physics.Manifold_Kind.Convex);
+					testing.expectf(t, actual.convex.count >= 0 && actual.convex.count <= physics.MAXIMUM_MANIFOLD_CONTACT_COUNT,
+						"route %d-%d pair %d: expected a bounded manifold result, got %d contacts",
+						repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, actual.convex.count,
 					);
-					normal_length_squared := util.vector3_length_squared(actual.convex.normal);
-					testing.expectf(t, normal_length_squared > 0.99 && normal_length_squared < 1.01,
-						"route %d-%d pair %d: expected a unit normal, got length squared %.7f",
-						repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, normal_length_squared,
-					);
-				}
-				for contact_index in 0 ..< int(actual.convex.count)
-				{
-					contact := actual.convex.contacts[contact_index];
-					testing.expectf(t, contact.depth >= -0.1001 && contact.depth == contact.depth,
-						"route %d-%d pair %d contact %d: invalid depth %.7f",
-						repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, contact_index, contact.depth,
-					);
-					testing.expectf(t,
-						contact.offset.x == contact.offset.x &&
-						contact.offset.y == contact.offset.y &&
-						contact.offset.z == contact.offset.z,
-						"route %d-%d pair %d contact %d: non-finite offset %v",
-						repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, contact_index, contact.offset,
-					);
-				}
-				if repetition == 0
-				{
-					baseline[pair_index] = actual;
-				}
-				else
-				{
-					testing.expect_value(t, actual, baseline[pair_index]);
+					if actual.convex.count > 0
+					{
+						testing.expectf(t, util.vector3_distance(
+							actual.convex.offset_b,
+							expected_offsets[pair_index]
+						) < 2e-5,
+							"route %d-%d pair %d: offset_b expected %v, got %v",
+							repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index,
+							expected_offsets[pair_index], actual.convex.offset_b,
+						);
+						normal_length_squared := util.vector3_length_squared(actual.convex.normal);
+						testing.expectf(t, normal_length_squared > 0.99 && normal_length_squared < 1.01,
+							"route %d-%d pair %d: expected a unit normal, got length squared %.7f",
+							repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, normal_length_squared,
+						);
+					}
+					for contact_index in 0 ..< int(actual.convex.count)
+					{
+						contact := actual.convex.contacts[contact_index];
+						testing.expectf(t, contact.depth >= -0.1001 && contact.depth == contact.depth,
+							"route %d-%d pair %d contact %d: invalid depth %.7f",
+							repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, contact_index, contact.depth,
+						);
+						testing.expectf(t,
+							contact.offset.x == contact.offset.x &&
+							contact.offset.y == contact.offset.y &&
+							contact.offset.z == contact.offset.z,
+							"route %d-%d pair %d contact %d: non-finite offset %v",
+							repaired_routes[route_index][0], repaired_routes[route_index][1], pair_index, contact_index, contact.offset,
+						);
+					}
+					if repetition == 0
+					{
+						baseline[pair_index] = actual;
+					}
+					else
+					{
+						testing.expect_value(t, actual, baseline[pair_index]);
+					}
 				}
 			}
 		}
@@ -1874,4 +1878,88 @@ u32_candidate_scratch_binds_smaller_worker_partition :: proc(t: ^testing.T)
 		t, batcher.candidate_refs.format,
 		physics.Collision_Reduction_Candidate_Format.Packed_U32,
 	);
+}
+
+@(test)
+convex_gather_preserves_payloads_for_all_tail_counts :: proc(t: ^testing.T)
+{
+	pairs: [16]physics.Collision_Batcher_Pair;
+	capsules: [16]physics.Capsule;
+	boxes: [16]physics.Box;
+	batch: physics.Collision_Task_Batch = {count=len(pairs)};
+	batcher: physics.Collision_Batcher = {
+		pairs={memory=&pairs[0], length=len(pairs), id=-1}, pair_count=len(pairs),
+	};
+	task: physics.Collision_Task = {shape_type_a=physics.CAPSULE_TYPE_ID, shape_type_b=physics.BOX_TYPE_ID};
+	negative_zero: f32 = transmute(f32)u32(0x8000_0000);
+	orders: [2]physics.Collision_Task_Route_Order = {.Expected, .Flipped};
+	for order in orders
+	{
+		for index in 0 ..< len(pairs)
+		{
+			capsules[index] = {radius=0.125 + f32(index) * 0.0625, half_length=0.5 + f32(index) * 0.125};
+			boxes[index] = {half_width=0.25, half_height=0.5 + f32(index) * 0.0625, half_length=0.75};
+			input: ^physics.Collision_Batcher_Input = &pairs[index].input;
+			input^ = {
+				shape_data_a=&capsules[index], shape_data_b=&boxes[index], order=order,
+				pose_a={position={negative_zero, f32(index) * 0.125, -f32(index)}, orientation={negative_zero, 0, 0.6, 0.8}},
+				pose_b={position={f32(index) + 0.5, negative_zero, f32(index) * 0.25}, orientation={0, negative_zero, -0.8, 0.6}},
+				speculative_margin=negative_zero if index % 2 == 0 else f32(index) * 0.0625,
+			};
+			if order == .Flipped
+			{
+				input.shape_data_a, input.shape_data_b = input.shape_data_b, input.shape_data_a;
+			}
+			batch.pair_indices[index] = i32((index * 5 + 3) % len(pairs));
+		}
+		starts: [2]int = {0, 3};
+		for start in starts
+		{
+			for count in 1 ..= util.PRODUCTION_LANE_COUNT
+			{
+				bundle: physics.Collision_Convex_Wide_Bundle;
+				testing.expect_value(t, physics.collision_batcher_gather_convex_bundle(
+					&batcher, &task, &batch, start, count, &bundle,
+				), physics.Physics_Status.Ok);
+				testing.expect_value(t, bundle.count, count);
+				for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+				{
+					pair_index: i32 = batch.pair_indices[start + min(lane, count - 1)];
+					input: ^physics.Collision_Batcher_Input = &pairs[pair_index].input;
+					pose_a, pose_b: physics.Rigid_Pose = input.pose_a, input.pose_b;
+					flip: i32;
+					if order == .Flipped
+					{
+						pose_a, pose_b = pose_b, pose_a;
+						flip = -1;
+					}
+					testing.expect_value(t, simd.extract(bundle.flip_mask, lane), flip);
+					testing.expect_value(t, bundle.pair_indices[lane], pair_index);
+					testing.expect_value(t, bundle.shape_a[lane], rawptr(&capsules[pair_index]));
+					testing.expect_value(t, bundle.shape_b[lane], rawptr(&boxes[pair_index]));
+					testing.expect_value(t, simd.extract(bundle.a.capsule.radius, lane), capsules[pair_index].radius);
+					testing.expect_value(t, simd.extract(bundle.a.capsule.half_length, lane), capsules[pair_index].half_length);
+					testing.expect_value(t, simd.extract(bundle.b.box.half_width, lane), boxes[pair_index].half_width);
+					testing.expect_value(t, simd.extract(bundle.b.box.half_height, lane), boxes[pair_index].half_height);
+					testing.expect_value(t, simd.extract(bundle.b.box.half_length, lane), boxes[pair_index].half_length);
+					expected: [12]f32 = {
+						pose_b.position.x - pose_a.position.x, pose_b.position.y - pose_a.position.y, pose_b.position.z - pose_a.position.z,
+						pose_a.orientation.x, pose_a.orientation.y, pose_a.orientation.z, pose_a.orientation.w,
+						pose_b.orientation.x, pose_b.orientation.y, pose_b.orientation.z, pose_b.orientation.w,
+						input.speculative_margin,
+					};
+					actual: [12]f32 = {
+						simd.extract(bundle.offset_b.x, lane), simd.extract(bundle.offset_b.y, lane), simd.extract(bundle.offset_b.z, lane),
+						simd.extract(bundle.orientation_a.x, lane), simd.extract(bundle.orientation_a.y, lane), simd.extract(bundle.orientation_a.z, lane), simd.extract(bundle.orientation_a.w, lane),
+						simd.extract(bundle.orientation_b.x, lane), simd.extract(bundle.orientation_b.y, lane), simd.extract(bundle.orientation_b.z, lane), simd.extract(bundle.orientation_b.w, lane),
+						simd.extract(bundle.speculative_margin, lane),
+					};
+					for field in 0 ..< len(expected)
+					{
+						testing.expect_value(t, transmute(u32)actual[field], transmute(u32)expected[field]);
+					}
+				}
+			}
+		}
+	}
 }

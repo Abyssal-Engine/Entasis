@@ -2,6 +2,7 @@ package contact_islands
 
 import "core:fmt"
 import "core:os"
+@(require) import "core:slice"
 import "core:time"
 import observation "../../tools/physics_observation"
 import replay "../../tools/physics_replay"
@@ -10,18 +11,29 @@ import entasis "entasis:entasis"
 import support "../benchmark_support"
 import observations "../scene_observation"
 
-measure_world :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification) -> (Benchmark_Result, Benchmark_Sample)
+Step_Latency :: struct
+{
+	p50_ms:     f64,
+	p95_ms:     f64,
+	p99_ms:     f64,
+	maximum_ms: f64,
+}
+
+measure_world :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification) -> (Benchmark_Result, Benchmark_Sample, Step_Latency)
 {
 	when support.RECORDING_ENABLED
 	{
-		return measure_recorded_world(owner, q);
+		result: Benchmark_Result;
+		sample: Benchmark_Sample;
+		result, sample = measure_recorded_world(owner, q);
+		return result, sample, {};
 	}
 	else
 	{
 	durations, allocation_error := make([]i64, owner.options.steps);
 	if allocation_error != nil
 	{
-		return {status=.Allocation_Failed}, {};
+		return {status=.Allocation_Failed}, {}, {};
 	}
 	defer delete(durations);
 	timestep := 1 / f32(owner.options.timestep_hz);
@@ -32,45 +44,53 @@ measure_world :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification) -
 		end := time.tick_now();
 		if status != .Ok
 		{
-			return {status=.Step_Failed, physics_status=status, phase=.Measured, failed_step=step_index + 1}, {};
+			return {status=.Step_Failed, physics_status=status, phase=.Measured, failed_step=step_index + 1}, {}, {};
 		}
 		durations[step_index] = i64(time.tick_diff(start, end));
 		if benchmark_assess(owner, q, .Measured, step_index+1) != .Ok
 		{
-			return {status=.Validation_Failed}, {}
+			return {status=.Validation_Failed}, {}, {}
 		}
 	}
 	sample: Benchmark_Sample;
-	for duration in durations
+	for duration, step_index in durations
 	{
 		if duration <= 0
 		{
-			return {status=.Validation_Failed, phase=.Measured}, {};
+			return {status=.Validation_Failed, phase=.Measured}, {}, {};
 		}
 		sample.elapsed_ms += f64(duration) / 1_000_000;
+		fmt.printfln("STEP_TIMING step=%d elapsed_ns=%d", step_index + 1, duration);
 	}
 	if sample.elapsed_ms <= 0 ||
 	transmute(u64)sample.elapsed_ms & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000
 	{
-		return {status=.Validation_Failed, phase=.Measured}, {};
+		return {status=.Validation_Failed, phase=.Measured}, {}, {};
 	}
+	slice.sort(durations);
+	latency: Step_Latency = {
+		p50_ms=f64(durations[(50 * len(durations) + 99) / 100 - 1]) / 1_000_000,
+		p95_ms=f64(durations[(95 * len(durations) + 99) / 100 - 1]) / 1_000_000,
+		p99_ms=f64(durations[(99 * len(durations) + 99) / 100 - 1]) / 1_000_000,
+		maximum_ms=f64(durations[len(durations) - 1]) / 1_000_000,
+	};
 	result := benchmark_validate(owner, &sample);
-	return result, sample;
+	return result, sample, latency;
 	}
 }
 
 execute_case :: proc(
 	owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options, q: ^observations.Qualification,
-) -> (Benchmark_Result, Benchmark_Sample)
+) -> (Benchmark_Result, Benchmark_Sample, Step_Latency)
 {
 	result := benchmark_owner_create(owner, pool, options);
 	if result.status != .Ok
 	{
-		return result, {};
+		return result, {}, {};
 	}
 	if benchmark_assess(owner, q, .Construction, 0) != .Ok
 	{
-		return {status=.Validation_Failed}, {}
+		return {status=.Validation_Failed}, {}, {}
 	}
 	timestep := 1 / f32(owner.options.timestep_hz);
 	for step_index in 0 ..< owner.options.warmup_steps
@@ -78,11 +98,11 @@ execute_case :: proc(
 		status := entasis.world_step(&owner.world, timestep);
 		if status != .Ok
 		{
-			return {status=.Step_Failed, physics_status=status, phase=.Warmup, failed_step=step_index + 1}, {};
+			return {status=.Step_Failed, physics_status=status, phase=.Warmup, failed_step=step_index + 1}, {}, {};
 		}
 		if benchmark_assess(owner, q, .Warmup, step_index+1) != .Ok
 		{
-			return {status=.Validation_Failed}, {}
+			return {status=.Validation_Failed}, {}, {}
 		}
 	}
 	// contact islands measures the already-warmed world
@@ -104,7 +124,10 @@ run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark
 		return {status=.Allocation_Failed, physics_status=pool_status};
 	}
 	owner: Benchmark_Owner;
-	result, sample := execute_case(&owner, &pool, options, &q);
+	result: Benchmark_Result;
+	sample: Benchmark_Sample;
+	latency: Step_Latency;
+	result, sample, latency = execute_case(&owner, &pool, options, &q);
 	if result.status == .Ok
 	{
 		observations.qualification_complete(&q)
@@ -129,6 +152,14 @@ run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark
 	}
 	if result.status == .Ok
 	{
+		latency_header :: ",step_p50_ms,step_p95_ms,step_p99_ms,step_max_ms";
+		latency_values: string = ",unavailable,unavailable,unavailable,unavailable";
+		when !support.RECORDING_ENABLED
+		{
+			latency_buffer: [256]byte;
+			latency_values = fmt.bprintf(latency_buffer[:], ",%.9f,%.9f,%.9f,%.9f",
+				latency.p50_ms, latency.p95_ms, latency.p99_ms, latency.maximum_ms);
+		}
 		when support.BENCHMARK_COMPONENTS == "all"
 		{
 			components: Restitution_Components;
@@ -161,15 +192,18 @@ run_benchmark :: proc(options: support.Options, parameters: string) -> Benchmark
 						component.parent_enters, component.parent_exits, component.part_enters, component.part_exits,
 						component.physical_responses, component.world_pool_bytes));
 			}
+			count += len(fmt.bprintf(values_buffer[count:], "%s", latency_values));
 			values = string(values_buffer[:count]);
 			result.status = support.write_result(options, parameters, sample,
-				",benchmark_components,restitution_state,restitution_bodies,restitution_measured_steps,restitution_0_ms,restitution_0_bounces,restitution_0_pairs,restitution_0_pool_bytes,restitution_10_ms,restitution_10_bounces,restitution_10_pairs,restitution_10_pool_bytes,restitution_100_ms,restitution_100_bounces,restitution_100_pairs,restitution_100_pool_bytes,tr01_state,tr01_collidables,tr01_measured_transitions,tr01_0_step_ms,tr01_0_consume_ms,tr01_0_sensors,tr01_0_enters,tr01_0_exits,tr01_0_final_constraints,tr01_0_world_pool_bytes,tr01_0_worker_pool_bytes,tr01_10_step_ms,tr01_10_consume_ms,tr01_10_sensors,tr01_10_enters,tr01_10_exits,tr01_10_final_constraints,tr01_10_world_pool_bytes,tr01_10_worker_pool_bytes,tr01_100_step_ms,tr01_100_consume_ms,tr01_100_sensors,tr01_100_enters,tr01_100_exits,tr01_100_final_constraints,tr01_100_world_pool_bytes,tr01_100_worker_pool_bytes" + MIXED_COLLIDER_HEADERS,
+				",benchmark_components,restitution_state,restitution_bodies,restitution_measured_steps,restitution_0_ms,restitution_0_bounces,restitution_0_pairs,restitution_0_pool_bytes,restitution_10_ms,restitution_10_bounces,restitution_10_pairs,restitution_10_pool_bytes,restitution_100_ms,restitution_100_bounces,restitution_100_pairs,restitution_100_pool_bytes,tr01_state,tr01_collidables,tr01_measured_transitions,tr01_0_step_ms,tr01_0_consume_ms,tr01_0_sensors,tr01_0_enters,tr01_0_exits,tr01_0_final_constraints,tr01_0_world_pool_bytes,tr01_0_worker_pool_bytes,tr01_10_step_ms,tr01_10_consume_ms,tr01_10_sensors,tr01_10_enters,tr01_10_exits,tr01_10_final_constraints,tr01_10_world_pool_bytes,tr01_10_worker_pool_bytes,tr01_100_step_ms,tr01_100_consume_ms,tr01_100_sensors,tr01_100_enters,tr01_100_exits,tr01_100_final_constraints,tr01_100_world_pool_bytes,tr01_100_worker_pool_bytes" + MIXED_COLLIDER_HEADERS + latency_header,
 				values);
 		}
 		else
 		{
+			values_buffer: [512]byte;
+			values: string = fmt.bprintf(values_buffer[:], ",common,Unavailable%s", latency_values);
 			result.status = support.write_result(options, parameters, sample,
-				",benchmark_components,restitution_state", ",common,Unavailable");
+				",benchmark_components,restitution_state" + latency_header, values);
 		}
 	}
 	if result.status == .Ok && q.result.status == .Fail

@@ -47,12 +47,19 @@ Benchmark_Step_Phase :: enum u8
 	Measured,
 }
 
+Bounds_Layout :: enum u8
+{
+	Round_Robin,
+	Clustered,
+}
+
 Benchmark_Run_Result :: struct
 {
 	status:         Case_Status,
 	physics_status: entasis.Status,
 	step_phase:     Benchmark_Step_Phase,
 	failed_step:    int,
+	layout:         Bounds_Layout,
 }
 
 Owner_State :: enum u8
@@ -67,6 +74,7 @@ Benchmark_Simulation_Owner :: struct
 	world:  entasis.World,
 	shapes: [SHAPE_TYPE_COUNT]entasis.Shape_Handle,
 	state:  Owner_State,
+	layout: Bounds_Layout,
 }
 
 Bounds_Counters :: struct
@@ -176,8 +184,8 @@ benchmark_world_description :: proc(worker_count: int) -> entasis.World_Descript
 		pending_pairs_per_worker=64,
 	};
 	description.solve = {
-		velocity_iterations=8,
-		substeps=1,
+		velocity_iterations=1,
+		substeps=4,
 		fallback_batch_threshold=PINNED_FALLBACK_BATCH_INDEX,
 	};
 	description.threading = {
@@ -365,8 +373,13 @@ benchmark_build_fixture :: proc(owner: ^Benchmark_Simulation_Owner) -> Case_Stat
 		entasis.body_activity(-1, 255),
 	);
 	body.collidable.maximum_speculative_margin = 4;
-	for body_index in 0 ..< BODY_COUNT
+	for insertion_index in 0 ..< BODY_COUNT
 	{
+		body_index: int = insertion_index;
+		if owner.layout == .Clustered
+		{
+			body_index = (insertion_index % 1024) * SHAPE_TYPE_COUNT + insertion_index / 1024;
+		}
 		type_id := body_index % SHAPE_TYPE_COUNT;
 		grid_x := body_index % 128;
 		grid_z := (body_index / 128) % 72;
@@ -412,6 +425,7 @@ benchmark_owner_create :: proc(
 	owner: ^Benchmark_Simulation_Owner,
 	pool: ^entasis.Buffer_Pool,
 	worker_count: int,
+	layout: Bounds_Layout,
 ) -> Case_Status
 {
 	if owner == nil || pool == nil || owner.state != .Empty ||
@@ -429,6 +443,7 @@ benchmark_owner_create :: proc(
 		return .Creation_Failed;
 	}
 	owner.state = .Ready;
+	owner.layout = layout;
 	fixture_status := benchmark_build_fixture(owner);
 	if fixture_status != .Ok
 	{
@@ -479,14 +494,22 @@ benchmark_owner_destroy :: proc(owner: ^Benchmark_Simulation_Owner) -> Case_Stat
 	return .Ok;
 }
 
-benchmark_f32_finite :: #force_inline proc "contextless" (value: f32) -> bool
+benchmark_f32_status :: #force_inline proc "contextless" (value: f32) -> Case_Status
 {
-	return transmute(u32)value & 0x7f80_0000 != 0x7f80_0000;
+	if transmute(u32)value & 0x7f80_0000 == 0x7f80_0000
+	{
+		return .Validation_Failed;
+	}
+	return .Ok;
 }
 
-benchmark_close :: #force_inline proc "contextless" (a, b: f32) -> bool
+benchmark_compare :: #force_inline proc "contextless" (a, b: f32) -> Case_Status
 {
-	return abs(a - b) <= BOUND_TOLERANCE * max(f32(1), max(abs(a), abs(b)));
+	if abs(a - b) <= BOUND_TOLERANCE * max(f32(1), max(abs(a), abs(b)))
+	{
+		return .Ok;
+	}
+	return .Validation_Failed;
 }
 
 benchmark_validate_bounds :: proc(
@@ -507,6 +530,10 @@ benchmark_validate_bounds :: proc(
 	for body_index in 0 ..< view.count
 	{
 		type_id := body_index % SHAPE_TYPE_COUNT;
+		if owner.layout == .Clustered
+		{
+			type_id = body_index / 1024;
+		}
 		collidable := &view.collidables[body_index];
 		if collidable.shape != owner.shapes[type_id]
 		{
@@ -519,9 +546,9 @@ benchmark_validate_bounds :: proc(
 		{
 			return .Validation_Failed;
 		}
-		if !benchmark_f32_finite(actual.min.x) || !benchmark_f32_finite(actual.min.y) ||
-			!benchmark_f32_finite(actual.min.z) || !benchmark_f32_finite(actual.max.x) ||
-			!benchmark_f32_finite(actual.max.y) || !benchmark_f32_finite(actual.max.z) ||
+		if benchmark_f32_status(actual.min.x) != .Ok || benchmark_f32_status(actual.min.y) != .Ok ||
+			benchmark_f32_status(actual.min.z) != .Ok || benchmark_f32_status(actual.max.x) != .Ok ||
+			benchmark_f32_status(actual.max.y) != .Ok || benchmark_f32_status(actual.max.z) != .Ok ||
 			actual.min.x > actual.max.x || actual.min.y > actual.max.y ||
 			actual.min.z > actual.max.z
 		{
@@ -573,13 +600,13 @@ benchmark_validate_bounds :: proc(
 			motion.pose.position.y + bounds.max.y + maximum_expansion.y,
 			motion.pose.position.z + bounds.max.z + maximum_expansion.z,
 		};
-		if !benchmark_close(actual.min.x, expected_min.x) ||
-			!benchmark_close(actual.min.y, expected_min.y) ||
-			!benchmark_close(actual.min.z, expected_min.z) ||
-			!benchmark_close(actual.max.x, expected_max.x) ||
-			!benchmark_close(actual.max.y, expected_max.y) ||
-			!benchmark_close(actual.max.z, expected_max.z) ||
-			!benchmark_close(collidable.speculative_margin, margin)
+		if benchmark_compare(actual.min.x, expected_min.x) != .Ok ||
+			benchmark_compare(actual.min.y, expected_min.y) != .Ok ||
+			benchmark_compare(actual.min.z, expected_min.z) != .Ok ||
+			benchmark_compare(actual.max.x, expected_max.x) != .Ok ||
+			benchmark_compare(actual.max.y, expected_max.y) != .Ok ||
+			benchmark_compare(actual.max.z, expected_max.z) != .Ok ||
+			benchmark_compare(collidable.speculative_margin, margin) != .Ok
 		{
 			counters.mismatched_bounds_count += 1;
 		}

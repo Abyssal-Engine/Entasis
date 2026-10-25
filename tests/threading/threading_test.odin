@@ -90,8 +90,9 @@ Parallel_Callback_State :: struct
 
 Fast_Dispatch_Session_State :: struct
 {
-	phase_calls:             [5][24]i32,
-	phase_statuses:          [5]util.Threading_Status,
+	phase_calls:             [7][24]i32,
+	phase_payloads:          [7][24]i32,
+	phase_statuses:          [7]util.Threading_Status,
 	recursive_owner_status:  util.Threading_Status,
 	recursive_worker_status: util.Threading_Status,
 	recursive_session_status: util.Threading_Status,
@@ -105,6 +106,7 @@ Fast_Dispatch_Session_Phase :: struct
 {
 	state:       ^Fast_Dispatch_Session_State,
 	phase_index: int,
+	payload:     i32,
 }
 
 Fast_Dispatch_Race_State :: struct
@@ -193,6 +195,7 @@ fast_dispatch_session_phase_worker :: proc "contextless" (
 		return;
 	}
 	phase.state.phase_calls[phase.phase_index][worker_index] += 1;
+	phase.state.phase_payloads[phase.phase_index][worker_index] = phase.payload;
 	if phase.phase_index == 1 && worker_index == 0
 	{
 		phase.state.recursive_owner_status = dispatcher.dispatch(
@@ -229,10 +232,10 @@ fast_dispatch_session_outer_worker :: proc "contextless" (
 	{
 		sync.futex_broadcast(&session.publication);
 	}
-	participant_counts := [5]int{1, 2, 8, 10, 24};
+	participant_counts: [7]int = {1, 24, 2, 10, 1, 24, 8};
 	for phase_index in 0 ..< len(participant_counts)
 	{
-		phase := Fast_Dispatch_Session_Phase{state, phase_index};
+		phase: Fast_Dispatch_Session_Phase = {state, phase_index, i32(phase_index * 37 - 91)};
 		state.phase_statuses[phase_index] = dispatcher.dispatch(
 			dispatcher, fast_dispatch_session_phase_worker,
 			participant_counts[phase_index], &phase,
@@ -348,7 +351,7 @@ ordinary_dispatch_preserves_wake_permits_context_and_shutdown :: proc(t: ^testin
 @(test)
 fast_dispatch_session_preserves_phase_order_varying_participants_errors_and_reentry :: proc(t: ^testing.T)
 {
-	allocation_worker_counts := [4]int{1, 8, 10, 64};
+	allocation_worker_counts := [5]int{1, 2, 8, 10, 64};
 	for worker_count in allocation_worker_counts
 	{
 		dispatcher: util.Thread_Dispatcher;
@@ -425,7 +428,7 @@ fast_dispatch_session_preserves_phase_order_varying_participants_errors_and_reen
 	),
 		util.Threading_Status.Invalid_Argument,
 	);
-	testing.expect_value(t, state.phase_calls, [5][24]i32{});
+	testing.expect_value(t, state.phase_calls, [7][24]i32{});
 	ordinary_race := Fast_Dispatch_Race_State{boundary=boundary, status=.Ok};
 	ordinary_contender := thread.create(fast_dispatch_ordinary_contender);
 	if !testing.expect(t, ordinary_contender != nil)
@@ -471,35 +474,57 @@ fast_dispatch_session_preserves_phase_order_varying_participants_errors_and_reen
 	testing.expect_value(t, session_race.status, util.Threading_Status.Ok);
 	testing.expect_value(t, session_race.worker_calls, i32(1));
 
-	testing.expect_value(
-		t, util.thread_dispatcher_session_entry(
-		boundary, fast_dispatch_session_outer_worker, 24, &state,
-	),
-		util.Threading_Status.Ok,
-	);
-	participant_counts := [5]int{1, 2, 8, 10, 24};
-	for phase_index in 0 ..< len(participant_counts)
+	for _ in 0 ..< 3
 	{
-		testing.expect_value(t, state.phase_statuses[phase_index], util.Threading_Status.Ok);
-		for worker_index in 0 ..< 24
+		state = {};
+		testing.expect_value(
+			t, util.thread_dispatcher_session_entry(
+			boundary, fast_dispatch_session_outer_worker, 24, &state,
+		),
+			util.Threading_Status.Ok,
+		);
+		participant_counts: [7]int = {1, 24, 2, 10, 1, 24, 8};
+		for phase_index in 0 ..< len(participant_counts)
 		{
-			expected := i32(0);
-			if worker_index < participant_counts[phase_index]
+			testing.expect_value(t, state.phase_statuses[phase_index], util.Threading_Status.Ok);
+			for worker_index in 0 ..< 24
 			{
-				expected = 1;
+				expected := i32(0);
+				if worker_index < participant_counts[phase_index]
+				{
+					expected = 1;
+				}
+				testing.expect_value(t, state.phase_calls[phase_index][worker_index], expected);
+				expected_payload: i32;
+				if expected != 0
+				{
+					expected_payload = i32(phase_index * 37 - 91);
+				}
+				testing.expect_value(t, state.phase_payloads[phase_index][worker_index], expected_payload);
 			}
-			testing.expect_value(t, state.phase_calls[phase_index][worker_index], expected);
 		}
+		testing.expect_value(t, state.recursive_owner_status, util.Threading_Status.Already_Running);
+		testing.expect_value(t, state.recursive_worker_status, util.Threading_Status.Already_Running);
+		testing.expect_value(t, state.recursive_session_status, util.Threading_Status.Already_Running);
+		testing.expect_value(t, state.live_shutdown_status, util.Threading_Status.Already_Running);
+		testing.expect_value(t, state.generation_limit_status, util.Threading_Status.Capacity_Missing);
+		testing.expect_value(t, state.context_clear_failures, i32(0));
+		testing.expect_value(t, state.unexpected_calls, i32(0));
+		testing.expect_value(t, boundary.unmanaged_context, rawptr(nil));
+		testing.expect_value(t, dispatcher.general_allocator_call_count, general_allocations);
 	}
-	testing.expect_value(t, state.recursive_owner_status, util.Threading_Status.Already_Running);
-	testing.expect_value(t, state.recursive_worker_status, util.Threading_Status.Already_Running);
-	testing.expect_value(t, state.recursive_session_status, util.Threading_Status.Already_Running);
-	testing.expect_value(t, state.live_shutdown_status, util.Threading_Status.Already_Running);
-	testing.expect_value(t, state.generation_limit_status, util.Threading_Status.Capacity_Missing);
-	testing.expect_value(t, state.context_clear_failures, i32(0));
-	testing.expect_value(t, state.unexpected_calls, i32(0));
-	testing.expect_value(t, boundary.unmanaged_context, rawptr(nil));
-	testing.expect_value(t, dispatcher.general_allocator_call_count, general_allocations);
+	empty_counts: [24]i32;
+	for _ in 0 ..< 3
+	{
+		testing.expect_value(t, util.thread_dispatcher_session_entry(
+			boundary, fast_dispatch_session_ordinary_worker, 24, &empty_counts,
+		), util.Threading_Status.Ok);
+	}
+	testing.expect_value(t, empty_counts[0], i32(3));
+	for worker_index in 1 ..< len(empty_counts)
+	{
+		testing.expect_value(t, empty_counts[worker_index], i32(0));
+	}
 	ordinary_counts: [24]i32;
 	testing.expect_value(
 		t, boundary.dispatch(boundary, fast_dispatch_session_ordinary_worker, 24, &ordinary_counts),
@@ -764,11 +789,20 @@ task_stack_initialization_allocates_only_worker_metadata :: proc(t: ^testing.T)
 @(test)
 repeated_parallel_timesteps_use_only_startup_storage :: proc(t: ^testing.T)
 {
+	worker_counts: [8]int = {1, 2, 3, 4, 8, 10, 16, 24};
+	for worker_count in worker_counts
+	{
+		parallel_timesteps_startup_storage_case(t, worker_count);
+	}
+}
+
+parallel_timesteps_startup_storage_case :: proc(t: ^testing.T, worker_count: int)
+{
 	pool: util.Buffer_Pool;
 	prepare_pool(t, &pool);
 	defer util.buffer_pool_dispose(&pool);
 	dispatcher: util.Thread_Dispatcher;
-	testing.expect_value(t, util.thread_dispatcher_initialize(&dispatcher, 10, 65536), util.Threading_Status.Ok);
+	testing.expect_value(t, util.thread_dispatcher_initialize(&dispatcher, worker_count, 65536), util.Threading_Status.Ok);
 	defer util.thread_dispatcher_shutdown(&dispatcher);
 	memory, allocation_error := mem.alloc(size_of(physics.Simulation), align_of(physics.Simulation));
 	if !testing.expect(t, allocation_error == nil && memory != nil)
@@ -783,7 +817,7 @@ repeated_parallel_timesteps_use_only_startup_storage :: proc(t: ^testing.T)
 		bodies=32, statics=16, inactive_body_sets=8, shapes_per_type=8,
 		constraints=128, constraint_batches=8, initial_constraints_per_type_batch=16,
 		minimum_constraints_per_body=8, broad_phase_candidates=256, pairs=256,
-		inactive_pairs=128, pending_pairs_per_worker=128, workers=10,
+		inactive_pairs=128, pending_pairs_per_worker=128, workers=i32(worker_count),
 	};
 	description.default_pose_context.gravity = {};
 	callback_state: Parallel_Callback_State;
@@ -949,12 +983,213 @@ repeated_parallel_timesteps_use_only_startup_storage :: proc(t: ^testing.T)
 			testing.expect(t, location.set_index > 0);
 		}
 	}
-	integration_call_count := i32(0);
-	for worker_index in 0 ..< 10
+	integration_call_count: i32;
+	overlap_call_count: i32;
+	for worker_index in 0 ..< worker_count
 	{
-		testing.expect(t, callback_state.overlap_calls[worker_index] > 0);
+		overlap_call_count += callback_state.overlap_calls[worker_index];
 		testing.expect_value(t, callback_state.payload_invalid[worker_index], i32(0));
 		integration_call_count += callback_state.integration_calls[worker_index];
 	}
 	testing.expect(t, integration_call_count > 0);
+	testing.expect(t, overlap_call_count > 0);
+	for worker_index in worker_count ..< len(callback_state.overlap_calls)
+	{
+		testing.expect_value(t, callback_state.overlap_calls[worker_index], i32(0));
+		testing.expect_value(t, callback_state.integration_calls[worker_index], i32(0));
+		testing.expect_value(t, callback_state.payload_invalid[worker_index], i32(0));
+	}
+}
+
+Prediction_Callback_Record :: struct
+{
+	visits: [10][81]u32,
+	invalid_payload: [10]u32,
+	invalid_worker: i32,
+	body_count: int,
+	worker_count: int,
+}
+
+prediction_test_integrate_velocity :: proc "contextless" (
+	user_context: rawptr, body_indices: util.I32x8,
+	position: util.Vector3_Wide, orientation: util.Quaternion_Wide, inertia: physics.Body_Inertia_Wide,
+	integration_mask: util.I32x8, worker_index: int, dt: util.F32x8, velocity: ^physics.Body_Velocity_Wide,
+)
+{
+	_, _, _, _ = position, orientation, inertia, dt;
+	record: ^Prediction_Callback_Record = (^Prediction_Callback_Record)(user_context);
+	if worker_index < 0 || worker_index >= record.worker_count
+	{
+		sync.atomic_add_explicit(&record.invalid_worker, i32(1), .Relaxed);
+		return;
+	}
+	for lane in 0 ..< util.PRODUCTION_LANE_COUNT
+	{
+		index: int = int(simd.extract(body_indices, lane));
+		if simd.extract(integration_mask, lane) == 0
+		{
+			if index != -1
+			{
+				record.invalid_payload[worker_index] += 1;
+			}
+			continue;
+		}
+		if index < 0 || index >= record.body_count
+		{
+			record.invalid_payload[worker_index] += 1;
+			continue;
+		}
+		record.visits[worker_index][index] += 1;
+		linear: util.Vector3 = util.vector3_wide_read_slot(velocity.linear, lane);
+		util.vector3_wide_write_slot(&velocity.linear, lane, {linear.x + 2, linear.y - 1, linear.z + 0.5});
+	}
+}
+
+prediction_compare_serial_and_parallel :: proc(
+	t: ^testing.T, pool: ^util.Buffer_Pool, simulation: ^physics.Simulation,
+	dispatcher_three, dispatcher_ten: ^util.Thread_Dispatcher, count: int,
+)
+{
+	original_callbacks: physics.Pose_Integrator_Callbacks = simulation.integrator.callbacks;
+	defer simulation.integrator.callbacks = original_callbacks;
+	record: Prediction_Callback_Record;
+	simulation.integrator.callbacks.integrate_velocity = prediction_test_integrate_velocity;
+	simulation.integrator.callbacks.user_context = &record;
+	reference: [81]physics.Tree_Bounds;
+	reference_margins: [81]f32;
+	main_blocks: int = pool_block_count(pool);
+	worker_blocks: int = worker_pool_block_count(dispatcher_three) + worker_pool_block_count(dispatcher_ten);
+	general_allocations: u64 = dispatcher_three.general_allocator_call_count + dispatcher_ten.general_allocator_call_count;
+	for iteration in 0 ..< 3
+	{
+		selected: ^util.Thread_Dispatcher_Boundary;
+		workers: int = 1;
+		if iteration == 1
+		{
+			selected = util.thread_dispatcher_boundary(dispatcher_three);
+			workers = 3;
+		}
+		else if iteration == 2
+		{
+			selected = util.thread_dispatcher_boundary(dispatcher_ten);
+			workers = 10;
+		}
+		record = {body_count=count, worker_count=workers};
+		testing.expect_value(t, physics.broad_phase_predict_bounds(
+			&simulation.broad_phase, 0.125, &simulation.integrator, selected,
+		), physics.Physics_Status.Ok);
+		active: ^physics.Body_Set = &simulation.bodies.sets.memory[0];
+		for index in 0 ..< len(reference)
+		{
+			visits: u32;
+			for worker_index in 0 ..< len(record.visits)
+			{
+				visits += record.visits[worker_index][index];
+				if worker_index >= workers
+				{
+					testing.expect_value(t, record.visits[worker_index][index], u32(0));
+				}
+			}
+			testing.expect_value(t, visits, u32(1) if index < count else u32(0));
+			if index >= count
+			{
+				continue;
+			}
+			testing.expect_value(t, active.dynamics_state.memory[index].motion.velocity, physics.Body_Velocity{linear={8 + f32(index) * 0.125, -4, 2}});
+			collidable: ^physics.Collidable = &active.collidables.memory[index];
+			if iteration == 0
+			{
+				reference_margins[index] = collidable.speculative_margin;
+			}
+			else
+			{
+				testing.expect_value(t, collidable.speculative_margin, reference_margins[index]);
+			}
+			if index % 13 == 0
+			{
+				continue;
+			}
+			leaf: physics.Tree_Leaf = simulation.broad_phase.active_tree.leaves.memory[collidable.broad_phase_index];
+			child: ^physics.Tree_Node_Child = physics.tree_child(
+				&simulation.broad_phase.active_tree.nodes.memory[physics.tree_leaf_node_index(leaf)], physics.tree_leaf_child_index(leaf),
+			);
+			bounds: physics.Tree_Bounds = {min=child.min, max=child.max};
+			if iteration == 0
+			{
+				reference[index] = bounds;
+			}
+			else
+			{
+				testing.expect_value(t, bounds, reference[index]);
+			}
+		}
+		testing.expect_value(t, record.invalid_payload, [10]u32{});
+		testing.expect_value(t, record.invalid_worker, i32(0));
+		testing.expect_value(t, pool_block_count(pool), main_blocks);
+		testing.expect_value(t, worker_pool_block_count(dispatcher_three) + worker_pool_block_count(dispatcher_ten), worker_blocks);
+		testing.expect_value(t, dispatcher_three.general_allocator_call_count + dispatcher_ten.general_allocator_call_count, general_allocations);
+	}
+}
+
+@(test)
+parallel_prediction_matches_serial_with_holes_callbacks_and_uneven_ranges :: proc(t: ^testing.T)
+{
+	dispatcher_three, dispatcher_ten: util.Thread_Dispatcher;
+	testing.expect_value(t, util.thread_dispatcher_initialize(&dispatcher_three, 3), util.Threading_Status.Ok);
+	defer util.thread_dispatcher_shutdown(&dispatcher_three);
+	testing.expect_value(t, util.thread_dispatcher_initialize(&dispatcher_ten, 10), util.Threading_Status.Ok);
+	defer util.thread_dispatcher_shutdown(&dispatcher_ten);
+	counts: [17]int = {0, 1, 7, 8, 9, 15, 16, 17, 25, 26, 27, 28, 29, 30, 31, 32, 81};
+	for count in counts
+	{
+		pool: util.Buffer_Pool;
+		prepare_pool(t, &pool);
+		storage: util.Buffer(physics.Simulation);
+		memory_status: util.Memory_Status;
+		storage, memory_status = util.buffer_pool_take_at_least(&pool, physics.Simulation, 1);
+		testing.expect_value(t, memory_status, util.Memory_Status.Ok);
+		simulation: ^physics.Simulation = &storage.memory[0];
+		simulation^ = {};
+		description: physics.Simulation_Create_Description = physics.simulation_create_description_default(&pool);
+		description.allocation_sizes = {
+			bodies=81, statics=1, inactive_body_sets=1, shapes_per_type=2,
+			constraints=128, constraint_batches=8, initial_constraints_per_type_batch=16,
+			minimum_constraints_per_body=4, broad_phase_candidates=256, pairs=256,
+			inactive_pairs=1, pending_pairs_per_worker=32, workers=10,
+		};
+		description.default_pose_context = {};
+		testing.expect_value(t, physics.simulation_create(simulation, &description).status, physics.Physics_Status.Ok);
+		sphere: physics.Sphere = {0.25};
+		box: physics.Box = {0.25, 0.5, 0.75};
+		shapes: [2]physics.Typed_Index;
+		status: physics.Physics_Status;
+		shapes[0], status = physics.shape_registry_add(&simulation.shapes, physics.SPHERE_TYPE_ID, &sphere);
+		testing.expect_value(t, status, physics.Physics_Status.Ok);
+		shapes[1], status = physics.shape_registry_add(&simulation.shapes, physics.BOX_TYPE_ID, &box);
+		testing.expect_value(t, status, physics.Physics_Status.Ok);
+		for index in 0 ..< count
+		{
+			body: physics.Body_Description = {
+				pose={position={f32(index) * 2, -f32(index), f32(index) * 0.5}, orientation={0.5, 0.5, 0.5, 0.5}},
+				velocity={linear={8 + f32(index) * 0.125, -4, 2}},
+				local_inertia={inverse_inertia_tensor={1, 0, 1, 0, 0, 1}, inverse_mass=1},
+				collidable={shape=shapes[index % 2], minimum_speculative_margin=0.0625, maximum_speculative_margin=0.0625},
+				activity={sleep_threshold=-1, minimum_timestep_count_under_threshold=255},
+			};
+			if index % 13 == 0
+			{
+				body.collidable.shape = {};
+			}
+			if index & 1 != 0
+			{
+				body.pose.orientation = {0, 0, 1, 0};
+			}
+			_, status = physics.simulation_add_body(simulation, &body);
+			testing.expect_value(t, status, physics.Physics_Status.Ok);
+		}
+		prediction_compare_serial_and_parallel(t, &pool, simulation, &dispatcher_three, &dispatcher_ten, count);
+		testing.expect_value(t, physics.simulation_destroy(simulation), physics.Physics_Status.Ok);
+		testing.expect_value(t, util.buffer_pool_return(&pool, &storage), util.Memory_Status.Ok);
+		testing.expect_value(t, util.buffer_pool_dispose(&pool), util.Memory_Status.Ok);
+	}
 }
