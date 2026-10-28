@@ -2,7 +2,49 @@ package entasis_physics
 
 import util "entasis:entasis_utilities"
 import "core:sync"
+import "core:simd"
 import "base:runtime"
+
+// reference mobility is stable during a solve, including fallback batches
+@(private)
+solver_constrained_kinematics_present :: proc "contextless" (solver: ^Solver) -> Reference_State
+{
+	for batch_index in 0 ..< int(solver.active_set.batch_count)
+	{
+		batch: ^Constraint_Batch = &solver.active_set.batches.memory[batch_index];
+		for type_index in 0 ..< int(batch.type_batch_count)
+		{
+			type_batch: ^Type_Batch = &batch.type_batches.memory[type_index];
+			count: int = int(type_batch.count);
+			body_count: int = int(type_batch.body_count);
+			full_count: int = count / util.PRODUCTION_LANE_COUNT;
+			flags: util.I32x8;
+			for bundle in 0 ..< full_count
+			{
+				references: [^]util.I32x8 = type_batch_body_bundle(type_batch, bundle * util.PRODUCTION_LANE_COUNT);
+				for body in 0 ..< body_count
+				{
+					flags |= references[body];
+				}
+			}
+			first_tail: int = full_count * util.PRODUCTION_LANE_COUNT;
+			if first_tail < count
+			{
+				active: util.I32x8 = solver_active_mask(first_tail, count);
+				references: [^]util.I32x8 = type_batch_body_bundle(type_batch, first_tail);
+				for body in 0 ..< body_count
+				{
+					flags |= references[body] & active;
+				}
+			}
+			if u32(simd.reduce_or(flags)) >= BODY_REFERENCE_KINEMATIC_MASK
+			{
+				return .Present;
+			}
+		}
+	}
+	return .Missing;
+}
 
 solver_prepare_contact_coefficient_cache :: proc "contextless" (
 	job: ^Solver_Substep_Job,
@@ -151,6 +193,7 @@ solver_solve_main_response :: proc "contextless" (job: ^Solver_Substep_Job,
 			solver_job_set_status(job, prepare_status);
 		}
 	}
+	kinematics: Reference_State = solver_constrained_kinematics_present(job.solver);
 	for substep_index in 0 ..< job.substep_count
 	{
 		if job.solve_description != nil
@@ -177,8 +220,8 @@ solver_solve_main_response :: proc "contextless" (job: ^Solver_Substep_Job,
 				solver_execute_fallback_response(job, .Incremental_Update, response);
 			}
 		}
-		if phase == .Continuation ||
-		job.solver.integrator.callbacks.integrate_kinematic_velocity == .Enabled
+		if kinematics == .Present && (phase == .Continuation ||
+			job.solver.integrator.callbacks.integrate_kinematic_velocity == .Enabled)
 		{
 			for batch_index in 0 ..< synchronized_batch_count
 			{

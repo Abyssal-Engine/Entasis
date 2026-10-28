@@ -656,6 +656,13 @@ solver_execute_direct_noncontact_bundle_integration :: proc "contextless" (
 	return .Ok;
 }
 
+@(private)
+Solver_Bundle_Coverage :: enum u8
+{
+	Full,
+	Partial,
+}
+
 solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 	solver: ^Solver, type_batch: ^Type_Batch, bundle_index: int,
 	dt, inverse_dt: f32, phase: Solver_Substep_Phase,
@@ -663,11 +670,16 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 	$stage: Solver_Execution_Stage,
 	$body_count, $contact_count: int,
 	$integration_mode: Solver_Integration_Mode,
+	$coverage: Solver_Bundle_Coverage,
 ) -> Physics_Status
 {
-	first_index := bundle_index * util.PRODUCTION_LANE_COUNT;
-	active_mask := solver_active_mask(first_index, int(type_batch.count));
-	body_bundles := type_batch_body_bundle(type_batch, first_index);
+	first_index: int = bundle_index * util.PRODUCTION_LANE_COUNT;
+	active_mask: util.I32x8 = util.I32x8(-1);
+	when coverage == .Partial
+	{
+		active_mask = solver_active_mask(first_index, int(type_batch.count));
+	}
+	body_bundles: [^]util.I32x8 = type_batch_body_bundle(type_batch, first_index);
 	kernel_bodies: [body_count]Constraint_Contact_Body_Wide = ---
 
 	when stage == .Incremental_Update
@@ -676,9 +688,11 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 		active := &solver.bodies.sets.memory[BODIES_ACTIVE_SET_INDEX];
 		for body_index in 0 ..< body_count
 		{
-			encoded := solver_mask_unused_body_lanes(
-				body_bundles[body_index], first_index, int(type_batch.count),
-			);
+			encoded: util.I32x8 = body_bundles[body_index];
+			when coverage == .Partial
+			{
+				encoded = solver_mask_unused_body_lanes(encoded, first_index, int(type_batch.count));
+			}
 			velocity: Body_Velocity_Wide = ---
 			bodies_gather_velocity_kernel(
 				active.dynamics_state.memory, encoded, &velocity,
@@ -700,9 +714,11 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 		body_accesses: [body_count]Body_Access_Mask = ---
 		for body_index in 0 ..< body_count
 		{
-			encoded := solver_mask_unused_body_lanes(
-				body_bundles[body_index], first_index, int(type_batch.count),
-			);
+			encoded: util.I32x8 = body_bundles[body_index];
+			when coverage == .Partial
+			{
+				encoded = solver_mask_unused_body_lanes(encoded, first_index, int(type_batch.count));
+			}
 			encoded_references[body_index] = encoded;
 			access := BODY_ACCESS_NO_POSE;
 			bundle_integration_mode := Solver_Bundle_Integration_Mode.None;
@@ -787,9 +803,11 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 		encoded_references: [body_count]util.I32x8 = ---
 		for body_index in 0 ..< body_count
 		{
-			encoded := solver_mask_unused_body_lanes(
-				body_bundles[body_index], first_index, int(type_batch.count),
-			);
+			encoded: util.I32x8 = body_bundles[body_index];
+			when coverage == .Partial
+			{
+				encoded = solver_mask_unused_body_lanes(encoded, first_index, int(type_batch.count));
+			}
 			encoded_references[body_index] = encoded;
 			velocity: Body_Velocity_Wide = ---
 			inertia: Body_Inertia_Wide = ---
@@ -832,11 +850,23 @@ solver_execute_convex_contact_work_block_stage_mode :: #force_no_inline proc "co
 	$integration_mode: Solver_Integration_Mode,
 ) -> Physics_Status
 {
-	for bundle_index in int(block.start_bundle) ..< int(block.end_bundle)
+	full_end: int = min(int(block.end_bundle), int(type_batch.count) / util.PRODUCTION_LANE_COUNT);
+	for bundle_index in int(block.start_bundle) ..< full_end
 	{
-		status := solver_execute_convex_contact_bundle_stage(
+		status: Physics_Status = solver_execute_convex_contact_bundle_stage(
 			job.solver, type_batch, bundle_index, job.dt, job.inverse_dt,
-			job.phase, worker_index, stage, body_count, contact_count, integration_mode,
+			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Full,
+		);
+		if status != .Ok
+		{
+			return status;
+		}
+	}
+	for bundle_index in max(int(block.start_bundle), full_end) ..< int(block.end_bundle)
+	{
+		status: Physics_Status = solver_execute_convex_contact_bundle_stage(
+			job.solver, type_batch, bundle_index, job.dt, job.inverse_dt,
+			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Partial,
 		);
 		if status != .Ok
 		{
