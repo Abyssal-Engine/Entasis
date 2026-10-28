@@ -620,41 +620,42 @@ constraint_contact_penetration_solve :: #force_inline proc "contextless" (
 )
 {
 	_ = dt;
-	angular_a := util.vector3_wide_cross(offset_a, normal);
-	inverse_effective_mass := simd.add(
-		bodies[0].inverse_mass,
-		util.symmetric3x3_wide_vector_sandwich(angular_a, bodies[0].inverse_inertia)
-	);
-	csv := simd.add(
-		util.vector3_wide_dot(bodies[0].linear_velocity, normal),
-		util.vector3_wide_dot(bodies[0].angular_velocity, angular_a)
-	);
+	ja: util.Vector3_Wide = util.vector3_wide_cross(offset_a, normal);
+	ra: util.Vector3_Wide = util.symmetric3x3_wide_transform(ja, bodies[0].inverse_inertia);
+	rb: util.Vector3_Wide;
+	_ = rb;
+	w: util.F32x8 = simd.add(bodies[0].inverse_mass, util.vector3_wide_dot(ra, ja));
+	csv: util.F32x8 = simd.add(util.vector3_wide_dot(bodies[0].linear_velocity, normal),
+		util.vector3_wide_dot(bodies[0].angular_velocity, ja));
 	when body_count == 2
 	{
-		angular_b := util.vector3_wide_cross(normal, offset_b);
-		inverse_effective_mass = simd.add(
-			inverse_effective_mass,
-			simd.add(
-				bodies[1].inverse_mass,
-				util.symmetric3x3_wide_vector_sandwich(angular_b, bodies[1].inverse_inertia)
-			)
-		);
-		csv = simd.add(
-			simd.sub(csv, util.vector3_wide_dot(bodies[1].linear_velocity, normal)),
-			util.vector3_wide_dot(bodies[1].angular_velocity, angular_b)
-		);
+		jb: util.Vector3_Wide = util.vector3_wide_cross(normal, offset_b);
+		rb = util.symmetric3x3_wide_transform(jb, bodies[1].inverse_inertia);
+		w = simd.add(w, simd.add(bodies[1].inverse_mass, util.vector3_wide_dot(rb, jb)));
+		csv = simd.add(simd.sub(csv, util.vector3_wide_dot(bodies[1].linear_velocity, normal)),
+			util.vector3_wide_dot(bodies[1].angular_velocity, jb));
 	}
-	effective_mass := simd.div(effective_mass_scale, inverse_effective_mass);
-	bias := simd.min(
-		simd.mul(depth, util.F32x8(inverse_dt)),
-		simd.min(simd.mul(depth, position_error_to_velocity), maximum_recovery_velocity)
-	);
-	negated_csi := simd.add(simd.mul(accumulated^, softness), simd.mul(simd.sub(csv, bias), effective_mass));
-	previous := accumulated^;
-	accumulated^ = simd.max(util.F32x8(0), simd.sub(accumulated^, negated_csi));
-	accumulated^ = constraint_kernel_mask_scalar(accumulated^, active_mask);
-	csi := constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
-	constraint_contact_penetration_apply(bodies, normal, offset_a, offset_b, csi, active_mask, body_count);
+	effective_mass: util.F32x8 = simd.div(effective_mass_scale, w);
+	bias: util.F32x8 = contact_response_bias(depth, position_error_to_velocity, maximum_recovery_velocity, inverse_dt);
+	negated_delta: util.F32x8 = simd.add(simd.mul(accumulated^, softness), simd.mul(simd.sub(csv, bias), effective_mass));
+	previous: util.F32x8 = accumulated^;
+	accumulated^ = constraint_kernel_mask_scalar(simd.max(util.F32x8(0), simd.sub(previous, negated_delta)), active_mask);
+	delta: util.F32x8 = constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
+	linear: util.Vector3_Wide = util.vector3_wide_scale(normal, delta);
+    proposed: [body_count]Body;
+    for body: int = 0; body < body_count; body += 1
+    {
+        proposed[body] = bodies[body];
+    }
+    contact_apply_velocity_change(&proposed[0], linear, util.vector3_wide_scale(ra, delta), active_mask);
+    when body_count == 2
+    {
+        contact_apply_velocity_change(&proposed[1], util.vector3_wide_negate(linear), util.vector3_wide_scale(rb, delta), active_mask);
+    }
+    if contact_response_commit_velocities(bodies, &proposed[0], active_mask, body_count) == .Missing
+    {
+        constraint_contact_penetration_apply(bodies, normal, offset_a, offset_b, delta, active_mask, body_count);
+    }
 }
 
 constraint_contact_update_depth :: #force_inline proc "contextless" (
@@ -712,53 +713,48 @@ constraint_contact_tangent_solve :: #force_inline proc "contextless" (
 	maximum_impulse: util.F32x8, accumulated: ^util.Vector2_Wide, active_mask: util.I32x8, $body_count: int,
 )
 {
-	linear_jacobian := util.Matrix2x3_Wide{tangent_x, tangent_y};
-	angular_a := util.Matrix2x3_Wide{
-		util.vector3_wide_cross(offset_a, tangent_x),
-		util.vector3_wide_cross(offset_a, tangent_y),
-	};
-	inverse_effective_mass := util.symmetric2x2_wide_add(
-		util.symmetric2x2_wide_sandwich_scale(linear_jacobian, bodies[0].inverse_mass),
-		util.symmetric3x3_wide_matrix_sandwich(angular_a, bodies[0].inverse_inertia),
-	);
-	csv_linear := util.vector2_wide_scale(
-		util.matrix2x3_wide_transform_by_transpose(bodies[0].linear_velocity, linear_jacobian),
-		-1
-	);
-	csv_angular := util.vector2_wide_scale(
-		util.matrix2x3_wide_transform_by_transpose(bodies[0].angular_velocity, angular_a),
-		-1
-	);
+	linear_j: util.Matrix2x3_Wide = util.Matrix2x3_Wide{tangent_x, tangent_y};
+	ja: util.Matrix2x3_Wide = util.Matrix2x3_Wide{util.vector3_wide_cross(offset_a, tangent_x), util.vector3_wide_cross(offset_a, tangent_y)};
+	ra: util.Matrix2x3_Wide = util.matrix2x3_wide_multiply_symmetric3x3(ja, bodies[0].inverse_inertia);
+	rb: util.Matrix2x3_Wide;
+	_ = rb;
+	w: util.Symmetric2x2_Wide = util.symmetric2x2_wide_add(
+		util.symmetric2x2_wide_sandwich_scale(linear_j, bodies[0].inverse_mass),
+		util.symmetric2x2_wide_complete_matrix_sandwich(ra, ja));
+	csv_linear: util.Vector2_Wide = util.vector2_wide_scale(util.matrix2x3_wide_transform_by_transpose(bodies[0].linear_velocity, linear_j), -1);
+	csv_angular: util.Vector2_Wide = util.vector2_wide_scale(util.matrix2x3_wide_transform_by_transpose(bodies[0].angular_velocity, ja), -1);
 	when body_count == 2
 	{
-		angular_b := util.Matrix2x3_Wide{
-			util.vector3_wide_cross(tangent_x, offset_b),
-			util.vector3_wide_cross(tangent_y, offset_b),
-		};
-		inverse_effective_mass = util.symmetric2x2_wide_add(inverse_effective_mass, util.symmetric2x2_wide_add(
-				util.symmetric2x2_wide_sandwich_scale(linear_jacobian, bodies[1].inverse_mass),
-				util.symmetric3x3_wide_matrix_sandwich(angular_b, bodies[1].inverse_inertia),
-		));
-		csv_linear = util.vector2_wide_add(
-			csv_linear,
-			util.matrix2x3_wide_transform_by_transpose(bodies[1].linear_velocity, linear_jacobian)
-		);
-		csv_angular = util.vector2_wide_subtract(
-			csv_angular,
-			util.matrix2x3_wide_transform_by_transpose(bodies[1].angular_velocity, angular_b)
-		);
+		jb: util.Matrix2x3_Wide = util.Matrix2x3_Wide{util.vector3_wide_cross(tangent_x, offset_b), util.vector3_wide_cross(tangent_y, offset_b)};
+		rb = util.matrix2x3_wide_multiply_symmetric3x3(jb, bodies[1].inverse_inertia);
+		w = util.symmetric2x2_wide_add(w, util.symmetric2x2_wide_add(
+				util.symmetric2x2_wide_sandwich_scale(linear_j, bodies[1].inverse_mass),
+				util.symmetric2x2_wide_complete_matrix_sandwich(rb, jb)));
+		csv_linear = util.vector2_wide_add(csv_linear, util.matrix2x3_wide_transform_by_transpose(bodies[1].linear_velocity, linear_j));
+		csv_angular = util.vector2_wide_subtract(csv_angular, util.matrix2x3_wide_transform_by_transpose(bodies[1].angular_velocity, jb));
 	}
-	csi := util.symmetric2x2_wide_transform(
-		util.vector2_wide_add(csv_linear, csv_angular),
-		util.symmetric2x2_wide_invert(inverse_effective_mass)
-	);
-	previous := accumulated^;
-	accumulated^ = util.vector2_wide_add(accumulated^, csi);
-	magnitude := util.vector2_wide_length(accumulated^);
-	scale := simd.min(util.F32x8(1), simd.div(maximum_impulse, simd.max(util.F32x8(1e-16), magnitude)));
+	delta: util.Vector2_Wide = util.symmetric2x2_wide_transform(util.vector2_wide_add(csv_linear, csv_angular), util.symmetric2x2_wide_invert(w));
+	previous: util.Vector2_Wide = accumulated^;
+	accumulated^ = util.vector2_wide_add(previous, delta);
+	magnitude: util.F32x8 = util.vector2_wide_length(accumulated^);
+	scale: util.F32x8 = simd.min(util.F32x8(1), simd.div(maximum_impulse, simd.max(util.F32x8(1e-16), magnitude)));
 	accumulated^ = constraint_kernel_mask_vector2(util.vector2_wide_scale(accumulated^, scale), active_mask);
-	csi = constraint_kernel_mask_vector2(util.vector2_wide_subtract(accumulated^, previous), active_mask);
-	constraint_contact_tangent_apply(bodies, tangent_x, tangent_y, offset_a, offset_b, csi, active_mask, body_count);
+	delta = constraint_kernel_mask_vector2(util.vector2_wide_subtract(accumulated^, previous), active_mask);
+	linear: util.Vector3_Wide = util.matrix2x3_wide_transform(delta, linear_j);
+    proposed: [body_count]Body;
+    for body: int = 0; body < body_count; body += 1
+    {
+        proposed[body] = bodies[body];
+    }
+    contact_apply_velocity_change(&proposed[0], linear, util.matrix2x3_wide_transform(delta, ra), active_mask);
+    when body_count == 2
+    {
+        contact_apply_velocity_change(&proposed[1], util.vector3_wide_negate(linear), util.matrix2x3_wide_transform(delta, rb), active_mask);
+    }
+    if contact_response_commit_velocities(bodies, &proposed[0], active_mask, body_count) == .Missing
+    {
+        constraint_contact_tangent_apply(bodies, tangent_x, tangent_y, offset_a, offset_b, delta, active_mask, body_count);
+    }
 }
 
 constraint_contact_twist_apply :: #force_inline proc "contextless" (
@@ -779,29 +775,39 @@ constraint_contact_twist_solve :: #force_inline proc "contextless" (
 	accumulated: ^util.F32x8, active_mask: util.I32x8, $body_count: int,
 )
 {
-	inverse_effective_mass := util.symmetric3x3_wide_vector_sandwich(normal, bodies[0].inverse_inertia);
-	csv := util.vector3_wide_dot(bodies[0].angular_velocity, normal);
+	ra: util.Vector3_Wide = util.symmetric3x3_wide_transform(normal, bodies[0].inverse_inertia);
+	rb: util.Vector3_Wide;
+	_ = rb;
+	w: util.F32x8 = util.vector3_wide_dot(ra, normal);
+	csv: util.F32x8 = util.vector3_wide_dot(bodies[0].angular_velocity, normal);
 	when body_count == 2
 	{
-		inverse_effective_mass = simd.add(
-			inverse_effective_mass,
-			util.symmetric3x3_wide_vector_sandwich(normal, bodies[1].inverse_inertia)
-		);
+		rb = util.symmetric3x3_wide_transform(normal, bodies[1].inverse_inertia);
+		w = simd.add(w, util.vector3_wide_dot(rb, normal));
 		csv = simd.sub(csv, util.vector3_wide_dot(bodies[1].angular_velocity, normal));
 	}
-	effective_mass := util.wide_select_f32(
-		transmute(util.I32x8)simd.lanes_eq(inverse_effective_mass, util.F32x8(0)),
-		util.F32x8(0),
-		simd.div(util.F32x8(1), inverse_effective_mass)
-	);
-	previous := accumulated^;
-	accumulated^ = simd.max(
-		simd.neg(maximum_impulse),
-		simd.min(maximum_impulse, simd.sub(accumulated^, simd.mul(csv, effective_mass)))
-	);
-	accumulated^ = constraint_kernel_mask_scalar(accumulated^, active_mask);
-	csi := constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
-	constraint_contact_twist_apply(bodies, normal, csi, active_mask, body_count);
+	mass: util.F32x8 = util.wide_select_f32(transmute(util.I32x8)simd.lanes_eq(w, util.F32x8(0)),
+		util.F32x8(0), simd.div(util.F32x8(1), w));
+	previous: util.F32x8 = accumulated^;
+	accumulated^ = constraint_kernel_mask_scalar(simd.max(simd.neg(maximum_impulse),
+			simd.min(maximum_impulse, simd.sub(previous, simd.mul(csv, mass)))), active_mask);
+	delta: util.F32x8 = constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
+    proposed: [body_count]Body;
+    for body: int = 0; body < body_count; body += 1
+    {
+        proposed[body] = bodies[body];
+    }
+    proposed[0].angular_velocity = constraint_kernel_select_vector3(active_mask,
+        util.vector3_wide_add(bodies[0].angular_velocity, util.vector3_wide_scale(ra, delta)), bodies[0].angular_velocity);
+    when body_count == 2
+    {
+        proposed[1].angular_velocity = constraint_kernel_select_vector3(active_mask,
+            util.vector3_wide_subtract(bodies[1].angular_velocity, util.vector3_wide_scale(rb, delta)), bodies[1].angular_velocity);
+    }
+    if contact_response_commit_velocities(bodies, &proposed[0], active_mask, body_count) == .Missing
+    {
+        constraint_contact_twist_apply(bodies, normal, delta, active_mask, body_count);
+    }
 }
 
 constraint_contact_friction_center :: #force_inline proc "contextless" (
@@ -901,6 +907,12 @@ constraint_contact_convex_kernel_response :: #force_inline proc "contextless" (
 	friction_center_b := util.vector3_wide_subtract(friction_center_a, offset_b);
 	if phase == .Warmstart
 	{
+        if contact_convex_warmstart_fast(bodies, contacts, normal, offset_b, tangent_x, tangent_y,
+            friction_center_a, tangent^, penetrations, twist^, active_mask, body_count, contact_count) == .Applied
+        {
+            return;
+        }
+
 		constraint_contact_tangent_apply(
 			bodies,
 			tangent_x,
