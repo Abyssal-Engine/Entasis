@@ -368,7 +368,7 @@ restitution_execute_contact_bundle :: proc "contextless" (
 		}
 		else
 		{
-			constraint_contact_convex_kernel_response(prestep, &bodies[0], job.dt, job.inverse_dt, impulses, active_mask, .Solve, body_count, contact_count, targets, .Restitution);
+			constraint_contact_convex_kernel_response(prestep, &bodies[0], job.dt, job.inverse_dt, impulses, active_mask, .Solve, body_count, contact_count, targets, .Restitution, .Serial);
 		}
 	}
 	else

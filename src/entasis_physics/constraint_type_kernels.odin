@@ -849,7 +849,7 @@ constraint_contact_convex_kernel :: #force_inline proc "contextless" (
 {
 	constraint_contact_convex_kernel_response(
 		prestep_raw, bodies, dt, inverse_dt, impulses_raw, active_mask, phase,
-		body_count, contact_count, nil, .Default,
+		body_count, contact_count, nil, .Default, .Serial,
 	);
 }
 
@@ -858,6 +858,7 @@ constraint_contact_convex_kernel_response :: #force_inline proc "contextless" (
 	impulses_raw: rawptr, active_mask: util.I32x8, phase: Constraint_Kernel_Phase,
 	$body_count, $contact_count: int,
 	targets: [^]Restitution_Target_Wide, $response: Solver_Response_Mode,
+	$pair_mode: Contact_Normal_Pair_Mode,
 )
 {
 	contacts := ([^]Convex_Contact_Wide)(prestep_raw);
@@ -943,31 +944,55 @@ constraint_contact_convex_kernel_response :: #force_inline proc "contextless" (
 		material.spring_settings,
 		dt
 	);
-	for contact_index in 0 ..< contact_count
+	when response == .Default && contact_count >= 2
 	{
-		contact_offset_b := util.vector3_wide_subtract(contacts[contact_index].offset_a, offset_b);
-		when response == .Restitution
+		for contact_index: int = 0; contact_index + 1 < contact_count; contact_index += 2
 		{
-			effective_mass, bias, normal_softness: util.F32x8;
-			effective_mass, bias, normal_softness = restitution_prepare_normal(
-				bodies, normal, contacts[contact_index].offset_a, contact_offset_b, contacts[contact_index].depth,
-				position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity,
-				softness, inverse_dt, &targets[contact_index], body_count,
-			);
-			constraint_contact_penetration_solve_cached(
-				bodies, normal, contacts[contact_index].offset_a, contact_offset_b, normal_softness,
-				&penetrations[contact_index], active_mask, body_count, &effective_mass, &bias,
+			contact_normal_pair_solve_fast(
+				bodies, normal, offset_b, contacts[contact_index], contacts[contact_index + 1],
+				position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity, softness,
+				inverse_dt, &penetrations[contact_index], &penetrations[contact_index + 1], active_mask, body_count, pair_mode,
 			);
 		}
-		else
+		when contact_count % 2 != 0
 		{
 			constraint_contact_penetration_solve(
-				bodies, normal, contacts[contact_index].offset_a, contact_offset_b, contacts[contact_index].depth,
+				bodies, normal, contacts[contact_count - 1].offset_a,
+				util.vector3_wide_subtract(contacts[contact_count - 1].offset_a, offset_b), contacts[contact_count - 1].depth,
 				position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity, softness,
-				dt, inverse_dt, &penetrations[contact_index], active_mask, body_count,
+				dt, inverse_dt, &penetrations[contact_count - 1], active_mask, body_count,
 			);
 		}
 	}
+	else
+	{
+		for contact_index in 0 ..< contact_count
+		{
+			contact_offset_b := util.vector3_wide_subtract(contacts[contact_index].offset_a, offset_b);
+			when response == .Restitution
+			{
+				effective_mass, bias, normal_softness: util.F32x8;
+				effective_mass, bias, normal_softness = restitution_prepare_normal(
+					bodies, normal, contacts[contact_index].offset_a, contact_offset_b, contacts[contact_index].depth,
+					position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity,
+					softness, inverse_dt, &targets[contact_index], body_count,
+				);
+				constraint_contact_penetration_solve_cached(
+					bodies, normal, contacts[contact_index].offset_a, contact_offset_b, normal_softness,
+					&penetrations[contact_index], active_mask, body_count, &effective_mass, &bias,
+				);
+			}
+			else
+			{
+				constraint_contact_penetration_solve(
+					bodies, normal, contacts[contact_index].offset_a, contact_offset_b, contacts[contact_index].depth,
+					position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity, softness,
+					dt, inverse_dt, &penetrations[contact_index], active_mask, body_count,
+				);
+			}
+		}
+	}
+
 	total_penetration := util.F32x8(0);
 	maximum_twist_radius_impulse := util.F32x8(0);
 	for contact_index in 0 ..< contact_count

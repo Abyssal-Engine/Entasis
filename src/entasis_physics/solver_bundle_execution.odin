@@ -671,6 +671,7 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 	$body_count, $contact_count: int,
 	$integration_mode: Solver_Integration_Mode,
 	$coverage: Solver_Bundle_Coverage,
+	$pair_mode: Contact_Normal_Pair_Mode,
 ) -> Physics_Status
 {
 	first_index: int = bundle_index * util.PRODUCTION_LANE_COUNT;
@@ -822,9 +823,9 @@ solver_execute_convex_contact_bundle_stage :: #force_inline proc "contextless" (
 		}
 		prestep := type_batch_prestep_bundle(type_batch, first_index);
 		impulses := type_batch_impulse_bundle(type_batch, first_index);
-		constraint_contact_convex_kernel(
+		constraint_contact_convex_kernel_response(
 			prestep, &kernel_bodies[0], dt, inverse_dt, impulses, active_mask,
-			.Solve, body_count, contact_count,
+			.Solve, body_count, contact_count, nil, .Default, pair_mode,
 		);
 		for body_index in 0 ..< body_count
 		{
@@ -848,6 +849,7 @@ solver_execute_convex_contact_work_block_stage_mode :: #force_no_inline proc "co
 	$stage: Solver_Execution_Stage,
 	$body_count, $contact_count: int,
 	$integration_mode: Solver_Integration_Mode,
+	$pair_mode: Contact_Normal_Pair_Mode,
 ) -> Physics_Status
 {
 	full_end: int = min(int(block.end_bundle), int(type_batch.count) / util.PRODUCTION_LANE_COUNT);
@@ -855,7 +857,7 @@ solver_execute_convex_contact_work_block_stage_mode :: #force_no_inline proc "co
 	{
 		status: Physics_Status = solver_execute_convex_contact_bundle_stage(
 			job.solver, type_batch, bundle_index, job.dt, job.inverse_dt,
-			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Full,
+			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Full, pair_mode,
 		);
 		if status != .Ok
 		{
@@ -866,7 +868,7 @@ solver_execute_convex_contact_work_block_stage_mode :: #force_no_inline proc "co
 	{
 		status: Physics_Status = solver_execute_convex_contact_bundle_stage(
 			job.solver, type_batch, bundle_index, job.dt, job.inverse_dt,
-			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Partial,
+			job.phase, worker_index, stage, body_count, contact_count, integration_mode, .Partial, pair_mode,
 		);
 		if status != .Ok
 		{
@@ -1257,7 +1259,7 @@ solver_execute_convex_contact_work_block_integration :: proc "contextless" (
 		return solver_execute_convex_contact_work_block_stage_mode(
 			job, type_batch, block, worker_index,
 			Solver_Execution_Stage.Incremental_Update,
-			body_count, contact_count, Solver_Integration_Mode.Never,
+			body_count, contact_count, Solver_Integration_Mode.Never, .Serial,
 		);
 		case .Warmstart:
 		if velocity_integration != .Never && block.batch_index == 0
@@ -1265,7 +1267,7 @@ solver_execute_convex_contact_work_block_integration :: proc "contextless" (
 			return solver_execute_convex_contact_work_block_stage_mode(
 				job, type_batch, block, worker_index,
 				Solver_Execution_Stage.Warmstart,
-				body_count, contact_count, Solver_Integration_Mode.Always,
+				body_count, contact_count, Solver_Integration_Mode.Always, .Serial,
 			);
 		}
 		if velocity_integration != .Never && type_batch.has_integration_responsibilities == .Present
@@ -1273,19 +1275,30 @@ solver_execute_convex_contact_work_block_integration :: proc "contextless" (
 			return solver_execute_convex_contact_work_block_stage_mode(
 				job, type_batch, block, worker_index,
 				Solver_Execution_Stage.Warmstart,
-				body_count, contact_count, Solver_Integration_Mode.Conditional,
+				body_count, contact_count, Solver_Integration_Mode.Conditional, .Serial,
 			);
 		}
 		return solver_execute_convex_contact_work_block_stage_mode(
 			job, type_batch, block, worker_index,
 			Solver_Execution_Stage.Warmstart,
-			body_count, contact_count, Solver_Integration_Mode.Never,
+			body_count, contact_count, Solver_Integration_Mode.Never, .Serial,
 		);
 		case .Solve:
+		when contact_count >= 2
+		{
+			if job.dispatched_worker_count > 1
+			{
+				return solver_execute_convex_contact_work_block_stage_mode(
+					job, type_batch, block, worker_index,
+					Solver_Execution_Stage.Solve,
+					body_count, contact_count, Solver_Integration_Mode.Never, .Parallel,
+				);
+			}
+		}
 		return solver_execute_convex_contact_work_block_stage_mode(
 			job, type_batch, block, worker_index,
 			Solver_Execution_Stage.Solve,
-			body_count, contact_count, Solver_Integration_Mode.Never,
+			body_count, contact_count, Solver_Integration_Mode.Never, .Serial,
 		);
 		case .Integrate_Constrained_Kinematics:
 		return solver_integrate_convex_contact_work_block_kinematics(
