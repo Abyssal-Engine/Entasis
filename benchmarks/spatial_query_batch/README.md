@@ -29,4 +29,4 @@ Build compiles the benchmark and reporter. Run uses those prepared binaries and 
 
 The recorded September 10 five-run matrices took about 10.4 seconds each for execution and reporting, excluding compilation. The 600-second timeout is a safety ceiling for that work. Success publishes CSVs and a report to `build/benchmark-results/windows_amd64/spatial_query_batch/release/<attempt>/`. Failure retains partial output in `<attempt>.pending/` and preserves earlier complete results. Save failed output before rerunning
 
-For Linux commands and result promotion, see [Benchmarks](../../BENCHMARK.md#linux-runs-and-result-promotion)
+For Linux commands and result promotion, see [Building Entasis](../../docs/BUILDING.md#linux-runs-and-result-promotion)

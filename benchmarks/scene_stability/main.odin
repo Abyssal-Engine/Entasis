@@ -4,13 +4,22 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import entasis "entasis:entasis"
+import container "../container"
 import islands "../contact_islands"
 import pyramid "../pyramid"
 import support "../benchmark_support"
 import observations "../scene_observation"
+import angular "../solver_joint_angular"
 
 main :: proc()
 {
+	for argument in os.args[1:]
+	{
+		if argument == "--package=solver_joint_angular"
+		{
+			os.exit(angular.run_quality(os.args[1:]));
+		}
+	}
 	arguments: [64]string
 	argument_count: int
 	workload: support.Workload = .Pyramid
@@ -37,6 +46,8 @@ main :: proc()
 			bit = 1
 			switch value
 			{
+				case "container":
+				workload = .Container
 				case "contact_islands":
 				workload = .Contact_Islands
 				case "pyramid":
@@ -88,13 +99,25 @@ main :: proc()
 		os.exit(1)
 	}
 	defer entasis.buffer_pool_destroy(&pool)
+	container_owner: container.Benchmark_Owner
 	island_owner: islands.Benchmark_Owner
 	pyramid_owner: pyramid.Benchmark_Owner
+	defer container.benchmark_owner_destroy(&container_owner)
 	defer islands.benchmark_owner_destroy(&island_owner)
 	defer pyramid.benchmark_owner_destroy(&pyramid_owner)
 	world: ^entasis.World
 	bodies: []entasis.Body_Handle
-	if workload == .Contact_Islands
+	if workload == .Container
+	{
+		result: container.Benchmark_Result = container.benchmark_owner_create(&container_owner, &pool, options)
+		if result.status != .Ok
+		{
+			os.exit(1)
+		}
+		world = &container_owner.world
+		bodies = container_owner.bodies
+	}
+	else if workload == .Contact_Islands
 	{
 		result: islands.Benchmark_Result = islands.benchmark_owner_create(&island_owner, &pool, options)
 		if result.status != .Ok
@@ -117,7 +140,11 @@ main :: proc()
 	q: observations.Qualification
 	defer observations.qualification_destroy(&q)
 	configuration: observations.Fixture_Configuration
-	if workload == .Contact_Islands
+	if workload == .Container
+	{
+		configuration = container.benchmark_qualification_configuration(options)
+	}
+	else if workload == .Contact_Islands
 	{
 		configuration = islands.benchmark_qualification_configuration(options)
 	}
@@ -232,6 +259,11 @@ observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.B
 {
 	group_count: int = 1
 	group_size: int = len(bodies)
+	floor_half_size: [2]f32 = {options.floor_size[0]/2, options.floor_size[2]/2}
+	if options.workload == .Container
+	{
+		floor_half_size = {options.container_size[0]/2, options.container_size[2]/2}
+	}
 	if options.workload == .Contact_Islands
 	{
 		group_count = options.island_grid[0] * options.island_grid[1]
@@ -273,7 +305,7 @@ observe_scene :: proc(file: ^os.File, world: ^entasis.World, bodies: []entasis.B
 				observation.initial_sum_y += f64(initial[index].y)
 				continue
 			}
-			observations.observe_body(&observation, state, initial[index], options.shape_size, floor_center, {options.floor_size[0]/2, options.floor_size[2]/2})
+			observations.observe_body(&observation, state, initial[index], options.shape_size, floor_center, floor_half_size)
 		}
 		status: support.Case_Status = write_observation(file, observation, step, options.timestep_hz, group, group_size, stats.active_bodies + stats.sleeping_bodies, q.result)
 		if status != .Ok

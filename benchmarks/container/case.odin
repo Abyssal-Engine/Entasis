@@ -133,6 +133,8 @@ benchmark_build_fixture :: proc(owner: ^Benchmark_Owner) -> entasis.Status
 
 benchmark_owner_create :: proc(
 owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
+	timestepper: entasis.Timestepper = {},
+	timestep_callbacks: entasis.Timestep_Callbacks = {},
 ) -> Benchmark_Result
 {
 	owner.options = options;
@@ -144,7 +146,10 @@ owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
 		return {status=.Allocation_Failed};
 	}
 	owner.narrow_policy = {material=entasis.contact_material(0.5, 2, entasis.spring_settings(30, 1))};
-	status := entasis.world_init_with_pool(&owner.world, benchmark_world_description(owner, options.worker_count), pool);
+	description: entasis.World_Description = benchmark_world_description(owner, options.worker_count);
+	description.timestepper = timestepper;
+	description.timestep_callbacks = timestep_callbacks;
+	status := entasis.world_init_with_pool(&owner.world, description, pool);
 	if status != .Ok
 	{
 		return {status=.Creation_Failed, physics_status=status};

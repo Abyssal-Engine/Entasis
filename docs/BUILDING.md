@@ -41,7 +41,7 @@ Build the optional [physics viewer](../tools/physics_viewer/README.md#build-and-
 
 Native Linux requires linkable/runtime `liblz4`, X11/OpenGL development libraries and a working desktop context for the viewer. Headless capture requires LZ4 but no display. Benchmark producers built with recording On also require LZ4. Recording-Off benchmarks and ordinary engine/headless example builds need no graphics or compression dependencies. Visual commands do not install these prerequisites
 
-Benchmark Build compiles the selected producers and reporter. Run uses prepared binaries and requires no compiler. Rebuild explicitly after source or toolchain changes. See [benchmark commands](../BENCHMARK.md#reproduction) or the viewer's [benchmark launch actions](../tools/physics_viewer/README.md#benchmark-launch-and-recordings)
+See [benchmark reproduction](#benchmark-reproduction) for command-line builds and measurements, or the viewer's [benchmark launch actions](../tools/physics_viewer/README.md#benchmark-launch-and-recordings)
 
 ## Toolchain selection
 
@@ -96,6 +96,82 @@ Ordinary builds replace their previous outputs. A successful build does not run 
 
 Creating packages requires a full Git checkout. Building an extracted Odin package does not require Git
 
+## Benchmark reproduction
+
+### Windows benchmark commands
+
+Run from the repository root in PowerShell 7 on an otherwise idle machine. Explicit Build uses the declared compiler selection described in [Toolchain selection](#toolchain-selection). Select the measured compiler and source to reproduce a dated baseline. Run uses the prepared producer and reporter without discovering a compiler
+
+The following commands measure five processes per worker for each solver profile, with explicit sleeping, recording, warmup and measured-step conditions
+
+```powershell
+$settings = @{
+    Configuration = 'Release'
+    Runs = 5
+    Workers = '1,2,3,4,5,6,8,10,12,14,16,24'
+    TimeoutSeconds = 900
+    Sleep = 'disabled'
+    Record = 'Off'
+    TimestepHz = 60
+}
+$profiles = @(
+    @{ Name = '4x1'; Iterations = 4; Substeps = 1 },
+    @{ Name = '2x2'; Iterations = 2; Substeps = 2 },
+    @{ Name = '1x4'; Iterations = 1; Substeps = 4 }
+)
+.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package container -Record Off
+.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package contact_islands -Components Common -Record Off
+.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package pyramid -Record Off
+foreach ($profile in $profiles)
+{
+    $solver = @{
+        Shape = 'box'
+        Variant = "box-$($profile.Name)-awake"
+        VelocityIterations = $profile.Iterations
+        Substeps = $profile.Substeps
+    }
+    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package container -Steps 300 -WarmupSteps 30
+    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package contact_islands -Components Common -Steps 300 -WarmupSteps 30
+    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package pyramid -Steps 600 -WarmupSteps 0
+}
+```
+
+The 900-second ceiling applies to each selected profile's measurement and reporting phase. Build is outside that clock. Successful runs write CSVs and a report under `build/benchmark-results/windows_amd64/`. Each attempt gets a fresh `<attempt>.pending/` directory and publishes as `<attempt>/` only after samples, recordings and reporting succeed. Failed attempts and earlier completed runs are retained
+
+Ragdoll and query workloads retain separate dated results. Their native Build/Run package names are `ragdoll_stair_tumble`, `spatial_query_batch` and `spatial_query_trace`. Solver-profile and sleeping overrides above apply to the three configurable simulation workloads
+
+### Linux runs and result promotion
+
+Linux Build uses the declared compiler selection by default, with an optional build-only `--odin <absolute-native-executable>` override. Linux Run requires prepared executables and no compiler
+
+```sh
+./scripts/linux/benchmarks/build_benchmarks.sh --package container --configuration release --record off
+./scripts/linux/benchmarks/run_benchmark.sh \
+    --package container --shape box --variant box-default \
+    --runs 5 \
+    --workers 1,2,3,4 \
+    --configuration release
+```
+
+Successful runs publish raw worker CSVs and `README.md` in a new `build/benchmark-results/linux_amd64/<package>/<variant>/<configuration>/<attempt>/`. Failed work remains in its unique `<attempt>.pending/` directory. Promote an accepted Release result explicitly:
+
+```sh
+./scripts/linux/benchmarks/promote_benchmark.sh --package container --variant box-default --name accepted-result-name \
+    --run-directory build/benchmark-results/linux_amd64/container/box-default/release/COMPLETED-ATTEMPT
+```
+
+PowerShell scripts provide the Windows equivalent. Explicit Build compiles the selected producer and matching reporter. Run uses the prepared binaries without checking source or toolchain freshness, so rebuild explicitly after either changes. Missing binaries name the required Build command before any result directory or workload is created. Compiler provenance in new reports is unavailable for the prepared binary, while source metadata embedded during Build is preserved
+
+Windows `contact_islands`, `custom_extensions` and `query_extensions` artifacts end in `_common.exe` or `_all.exe` in Release, Development and recorded paths. For example, `build/benchmarks/entasis_contact_islands_all.exe` and `build/benchmarks/recorded/release/contact_islands_common.exe`. Build and Run for the same selected artifacts must run sequentially
+
+`BENCHMARK_PREPARED` covers native script entry, shared initialization, admission and result preparation. `BENCHMARK_STAGE stage=report workload_ms=` covers the sample phase, including setup, warmup, recording and bookkeeping. `BENCHMARK_REPORT` covers reporting, while `BENCHMARK_ELAPSED` covers the sample and reporting phases. None is pure physics time. GUI Total elapsed also includes host startup and, for Build and benchmark, compilation
+
+Promotion copies `README.md`, `workers-*.csv` and their declared finalized recordings into `results/<package>/<variant>/<name>/`, leaving process logs in ignored build output. It never overwrites an existing destination
+
+Compare builds on the same machine with the same compiler, flags, affinity, workload, warmup and timed region
+
+Windows Run accepts `-ProcessorAffinity MASK`. MASK is a positive decimal UInt64 bitmask of logical processors, such as 4 for logical CPU 2. Supply `-TimeoutSeconds` with this option. The mask must be within the command process's current eligible processors, with at least one selected processor per requested worker. Systems above 64 logical processors are unsupported for this selector and reject before result creation. The producer inherits the selected mask at process creation; the command immediately restores its own mask and checks the child's effective mask. Requested/effective masks appear in normal process and invocation logs, and the report's reproduction command preserves the option. Reporters retain the command's original affinity. Omission preserves existing inheritance. This controls eligible logical CPUs without reserving them or changing power, priority or frequency policy
+
 ## Tests
 
 Tests require the full checkout, not an extracted Odin package or C SDK. Use the commands in your [platform guide](README.md#build-and-run). Odin test commands build their selected packages. C ABI consumer and semantic checks require matching libraries to be built first
@@ -143,4 +219,4 @@ Selection applies to all linked Entasis packages at compile time. Other values f
 
 Mixed64 examples, tests and C ABI libraries use a `mixed64/` child of the corresponding configuration output directory. Build runtime and cooking with the same profile. A prebuilt C SDK has a fixed profile, documented in its installed build guide, and its consumer runner does not switch profiles
 
-For commands, see the [large-world example](../examples/headless/large_world_precision/README.md) and [benchmark reproduction](../BENCHMARK.md#reproduction)
+For commands, see the [large-world example](../examples/headless/large_world_precision/README.md) and [benchmark reproduction](#benchmark-reproduction)

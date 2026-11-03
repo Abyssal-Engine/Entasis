@@ -15,10 +15,11 @@ threads_count=0
 precision="float32"
 math_checks="off"
 precision_candidate=""
+timeout_seconds=""
 declare -A precision_seen=()
 while (($# > 0)); do
   case "$1" in
-    --precision|--math-checks|--precision-candidate)
+    --precision|--math-checks|--precision-candidate|--timeout-seconds)
       [[ -z "${precision_seen[$1]:-}" ]] || fail_usage "$1 may be supplied only once"
       precision_seen[$1]=1
       (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail_usage "$1 requires a value"
@@ -26,6 +27,7 @@ while (($# > 0)); do
         --precision) precision="$2" ;;
         --math-checks) math_checks="$2" ;;
         --precision-candidate) precision_candidate="$2" ;;
+        --timeout-seconds) timeout_seconds="$2" ;;
       esac
       shift 2
       ;;
@@ -86,6 +88,7 @@ else
   validate_test_thread_count "$threads" || fail_usage "invalid test thread count: $threads"
 fi
 case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
+if [[ ( "$scope" == benchmark-stage-work || "$scope" == benchmark-fixed-work ) && "$precision" == mixed64 ]]; then fail_usage "new benchmark scopes require float32"; fi
 case "$math_checks" in off|on) ;; *) fail_usage "--math-checks must be off or on" ;; esac
 if [[ "$scope" == benchmark-precision ]]; then
   case "$precision_candidate" in
@@ -99,8 +102,11 @@ elif [[ -n "${precision_seen[--precision-candidate]:-}" ]]; then
   fail_usage "--precision-candidate is only valid for benchmark-precision"
 fi
 if [[ "$scope" == precision-* && "$precision" != mixed64 ]]; then fail_usage "precision scopes require mixed64"; fi
+if [[ -n "$timeout_seconds" ]]; then
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] && ((10#$timeout_seconds <= 3600)) || fail_usage "--timeout-seconds must be 1..3600"
+fi
 require_odin "$odin"
 test_display="${tests:-all}"
 printf 'TEST_CONFIG scope=%s tests=%s threads=%s\n' "$scope" "$test_display" "$threads"
-run_test_package "$package" "$configuration" "$tests" "$threads" "$precision" "$math_checks" "$precision_candidate"
+run_test_package "$package" "$configuration" "$tests" "$threads" "$precision" "$math_checks" "$precision_candidate" "$timeout_seconds"
 printf 'TEST_OK scope=%s\n' "$scope"

@@ -8,9 +8,11 @@ param(
         "awakening_duplicate_sets", "container", "contact_churn_grid_4k",
         "noncontact_constraint_mix", "noncontact_fallback_smoke", "shape_mixed_bounds", "spatial_query_trace", "spatial_query_batch",
         "custom_extensions", "query_extensions", "world_lifecycle",
-        "contact_islands", "ragdoll_stair_tumble", "pyramid", "pyramid_wall", "scene_stability", "large_world_precision"
+        "contact_islands", "ragdoll_stair_tumble", "pyramid", "pyramid_wall", "scene_stability", "large_world_precision", "solver_joint_angular", "solver_fixed_work", "solver_contact_capture", "solver_contact_work", "simulation_stage_work"
     )]
     [string]$Package,
+    [ValidateSet("conserving", "convex", "cached-convex", "nonconvex", "joints", "nonconserving", "pose", "constrained-final", "free-final", "kinematic", IgnoreCase = $false)]
+    [string]$Case,
     [ValidateSet("Caller", "Mailbox")]
     [string]$QueryExecution = "Caller",
     [string]$Precision = "Float32",
@@ -26,9 +28,27 @@ param(
 )
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+if (($Package -eq "solver_fixed_work" -and [string]::IsNullOrEmpty($Case)) -or
+    ($Package -ne "solver_fixed_work" -and $PSBoundParameters.ContainsKey("Case")))
+{
+    [Console]::Error.WriteLine("An explicit supported Case is required only for solver_fixed_work")
+    exit 2
+}
 if ($PSBoundParameters.ContainsKey("QueryExecution") -and $Package -ne "spatial_query_batch")
 {
     [Console]::Error.WriteLine("QueryExecution requires spatial_query_batch")
+    exit 2
+}
+if ($Package -in @("solver_contact_capture", "solver_contact_work", "simulation_stage_work") -and
+    ($Precision -ne "Float32" -or $Record -ne "Off"))
+{
+    [Console]::Error.WriteLine("Contact capture/work requires Float32 and Record Off")
+    exit 2
+}
+if ($Package -eq "solver_fixed_work" -and $Case -ne "conserving" -and
+    ($Precision -ne "Float32" -or $Record -ne "Off"))
+{
+    [Console]::Error.WriteLine("New domain workloads require Float32 and Record Off")
     exit 2
 }
 if ($Precision -notin @("Float32", "Mixed64"))
@@ -128,7 +148,7 @@ Write-Host "BENCHMARK_BUILD_CONFIG configuration=$($Configuration.ToLowerInvaria
 
 foreach ($selectedPackage in $packages)
 {
-    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols $Precision $PrecisionCandidate $QueryExecution
+    Build-Benchmark $odin $selectedPackage $Configuration $Emit $Components $Record $Symbols $Precision $PrecisionCandidate $QueryExecution $Case
 }
 if ($Emit -eq "Executable")
 {

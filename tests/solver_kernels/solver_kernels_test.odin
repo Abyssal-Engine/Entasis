@@ -764,8 +764,16 @@ verify_source_oracle :: proc(
 			oracle.warmstart_velocity[lane],
 			0.0002
 		);
-		expect_source_value(t, type_id, lane, oracle, "solve velocity", solve, oracle.solve_velocity[lane], 0.0002);
-		expect_source_value(t, type_id, lane, oracle, "solve impulse", impulse, oracle.solve_impulse[lane], 0.0002);
+		if type_id >= physics.CONTACT_2_ONE_BODY_TYPE_ID && type_id <= physics.CONTACT_4_TYPE_ID && type_id != physics.CONTACT_1_TYPE_ID
+		{
+			// coupled normal solves use the independent complementarity and body-wrench oracles
+			contact_normal_result_matches_body_wrench(t, record, result, lane);
+		}
+		else
+		{
+			expect_source_value(t, type_id, lane, oracle, "solve velocity", solve, oracle.solve_velocity[lane], 0.0002);
+			expect_source_value(t, type_id, lane, oracle, "solve impulse", impulse, oracle.solve_impulse[lane], 0.0002);
+		}
 	}
 }
 
@@ -1433,7 +1441,7 @@ restitution_test_selected_contact_kernel :: proc (
 				{
 					physics.constraint_contact_convex_kernel_response(
 						&prestep[0], &bodies[0], 1.0/60.0, 60, &impulses[0], mask, .Solve,
-						body_count, contact_count, &targets[0], .Restitution,
+						body_count, contact_count, &targets[0], .Restitution, .Serial,
 					);
 				}
 				else
@@ -1548,7 +1556,7 @@ restitution_test_cached_contact_response :: proc (
 					for _ in 0 ..< 8
 					{
 						physics.constraint_contact_convex_solve_cached_response(&prestep[0], &cached_bodies[0], &cached_impulses[0], mask, body_count, contact_count, &data, 60, &targets[0], .Restitution);
-						physics.constraint_contact_convex_kernel_response(&prestep[0], &bodies[0], 1.0/60, 60, &impulses[0], mask, .Solve, body_count, contact_count, &targets[0], .Restitution);
+						physics.constraint_contact_convex_kernel_response(&prestep[0], &bodies[0], 1.0/60, 60, &impulses[0], mask, .Solve, body_count, contact_count, &targets[0], .Restitution, .Serial);
 						restitution_expect_cached_state(t, &bodies, &cached_bodies, &impulses, &cached_impulses, body_count, contact_count+3);
 					}
 				}
@@ -1561,7 +1569,7 @@ restitution_test_cached_contact_response :: proc (
 					for _ in 0 ..< 8
 					{
 						physics.constraint_contact_convex_solve_cached_response(&prestep[0], &cached_bodies[0], &cached_impulses[0], mask, body_count, contact_count, &data, 60, &targets[0], .Restitution);
-						physics.constraint_contact_convex_kernel_response(&prestep[0], &bodies[0], 1.0/60, 60, &impulses[0], mask, .Solve, body_count, contact_count, &targets[0], .Restitution);
+						physics.constraint_contact_convex_kernel_response(&prestep[0], &bodies[0], 1.0/60, 60, &impulses[0], mask, .Solve, body_count, contact_count, &targets[0], .Restitution, .Serial);
 						restitution_expect_cached_state(t, &bodies, &cached_bodies, &impulses, &cached_impulses, body_count, contact_count+3);
 					}
 				}

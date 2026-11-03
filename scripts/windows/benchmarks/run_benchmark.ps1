@@ -6,7 +6,7 @@ param(
         "contact_churn_grid_4k", "noncontact_constraint_mix", "noncontact_fallback_smoke",
         "shape_mixed_bounds", "spatial_query_trace", "spatial_query_batch",
         "custom_extensions", "query_extensions", "world_lifecycle",
-        "contact_islands", "ragdoll_stair_tumble", "pyramid", "large_world_precision"
+        "contact_islands", "ragdoll_stair_tumble", "pyramid", "large_world_precision", "solver_joint_angular", "solver_fixed_work", "solver_contact_work", "simulation_stage_work"
     )]
     [string]$Package,
     [Parameter(Mandatory = $true)]
@@ -16,6 +16,11 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Workers,
     [string]$ProcessorAffinity,
+    [ValidateNotNullOrEmpty()]
+    [string]$BaselineRoot,
+    [string]$ContactInput,
+    [ValidateSet("Stop", "Continue")]
+    [string]$FailurePolicy = "Stop",
     [ValidateSet("Development", "Release")]
     [string]$Configuration = "Release",
     [ValidateSet("Caller", "Mailbox")]
@@ -66,6 +71,21 @@ param(
     [string]$ProjectileSpacing,
     [string]$ProjectileVelocity,
     [string]$Variant,
+    [ValidateSet("conserving", "convex", "cached-convex", "nonconvex", "joints", "nonconserving", "pose", "constrained-final", "free-final", "kinematic", IgnoreCase = $false)][string]$Case,
+    [ValidateSet("tree-update", "pair-traversal", "narrow-phase", "collision", IgnoreCase = $false)][string]$Stage,
+    [ValidateSet("container", "islands", IgnoreCase = $false)][string]$Fixture,
+    [ValidateSet("steady", "churn", IgnoreCase = $false)][string]$Motion,
+    [ValidateRange(8, 1000000)][int]$BodyCount,
+    [ValidateSet("enabled", "disabled", IgnoreCase = $false)][string]$UnconstrainedSubsteps,
+    [ValidateSet("full", "partial", "sparse", "isotropic", IgnoreCase = $false)][string]$Layout,
+    [ValidateRange(1, 100000)][int]$Passes = 512,
+    [ValidateRange(8, 65536)][int]$Bundles = 4096,
+    [ValidateRange(0, 1000)][int]$WarmupPasses = 4,
+    [string]$Scenario,
+    [string]$AngularMode,
+    [ValidateRange(1, 16384)][int]$Chains = 128,
+    [ValidateRange(1, 128)][int]$Links = 8,
+    [ValidateRange(1, 10000)][int]$MassRatio = 1,
     [ValidatePattern('^[1-9][0-9]{0,9}$')]
     [ValidateScript({ [long]$_ -le [int]::MaxValue })]
     [string]$TimeoutSeconds
@@ -73,6 +93,12 @@ param(
 $preparationClock = [Diagnostics.Stopwatch]::StartNew()
 . (Join-Path $PSScriptRoot "../lib/common.ps1")
 . (Join-Path $PSScriptRoot "build_support.ps1")
+. (Join-Path $PSScriptRoot "process_support.ps1")
+if ($FailurePolicy -eq "Continue" -and -not $PSBoundParameters.ContainsKey("TimeoutSeconds"))
+{
+    [Console]::Error.WriteLine("FailurePolicy Continue requires an explicit TimeoutSeconds")
+    exit 2
+}
 if ($PSBoundParameters.ContainsKey("QueryExecution") -and $Package -ne "spatial_query_batch")
 {
     [Console]::Error.WriteLine("QueryExecution requires spatial_query_batch")
@@ -229,161 +255,6 @@ if ($Record -notin @("Off", "On") -or $Compression -notin @("lz4", "lz4hc") -or 
     exit 2
 }
 
-function Invoke-BenchmarkChild(
-    [string]$FilePath, [string[]]$Arguments, [string]$OutputPrefix, [string]$Stage,
-    [Diagnostics.Stopwatch]$Clock, [long]$BudgetMilliseconds, [uint64]$AffinityMask = 0)
-{
-    if ($Clock.ElapsedMilliseconds -ge $BudgetMilliseconds)
-    {
-        [string]$message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) before_launch"
-        [Console]::Error.WriteLine($message)
-        [IO.File]::WriteAllText("$OutputPrefix.timeout.txt", $message)
-        return 124
-    }
-    [Diagnostics.ProcessStartInfo]$start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $FilePath
-    $start.UseShellExecute = $false
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    foreach ($argument in $Arguments)
-    {
-        $start.ArgumentList.Add($argument)
-    }
-    [Diagnostics.Stopwatch]$childClock = [Diagnostics.Stopwatch]::StartNew()
-    [Threading.CancellationTokenSource]$copyCancellation = [Threading.CancellationTokenSource]::new()
-    [IO.FileStream]$stdout = $null
-    [IO.FileStream]$stderr = $null
-    [Diagnostics.Process]$process = $null
-    [long]$observedPeak = 0
-    [int]$exitCode = 124
-    try
-    {
-        $stdout = [IO.File]::Create("$OutputPrefix.stdout.txt")
-        $stderr = [IO.File]::Create("$OutputPrefix.stderr.txt")
-        if ($AffinityMask -eq 0)
-        {
-            $process = [Diagnostics.Process]::Start($start)
-        }
-        else
-        {
-            [Diagnostics.Process]$owner = [Diagnostics.Process]::GetCurrentProcess()
-            [IntPtr]$originalAffinity = $owner.ProcessorAffinity
-            try
-            {
-                $owner.ProcessorAffinity = [IntPtr]::new([BitConverter]::ToInt64([BitConverter]::GetBytes($AffinityMask), 0))
-                $process = [Diagnostics.Process]::Start($start)
-            }
-            finally
-            {
-                try
-                {
-                    $owner.ProcessorAffinity = $originalAffinity
-                }
-                finally
-                {
-                    $owner.Dispose()
-                }
-            }
-            [UIntPtr]$processAffinity = [UIntPtr]::Zero
-            [UIntPtr]$systemAffinity = [UIntPtr]::Zero
-            if (-not [EntasisBenchmarkProcessAffinity]::GetProcessAffinityMask($process.SafeHandle, [ref]$processAffinity, [ref]$systemAffinity))
-            {
-                throw [ComponentModel.Win32Exception]::new([Runtime.InteropServices.Marshal]::GetLastWin32Error(), "Cannot query producer affinity for pid=$($process.Id).")
-            }
-            [uint64]$effectiveAffinity = $processAffinity.ToUInt64()
-            [string]$placement = "PROCESS_AFFINITY stage=$Stage requested=$AffinityMask effective=$effectiveAffinity pid=$($process.Id)"
-            [byte[]]$placementBytes = [Text.Encoding]::UTF8.GetBytes("$placement`n")
-            $stdout.Write($placementBytes, 0, $placementBytes.Length)
-            $stdout.Flush()
-            Write-Host $placement
-            if ($effectiveAffinity -ne $AffinityMask)
-            {
-                throw "Producer affinity differs from requested mask: requested=$AffinityMask effective=$effectiveAffinity"
-            }
-        }
-        [Threading.Tasks.Task]$stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdout, 4096, $copyCancellation.Token)
-        [Threading.Tasks.Task]$stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderr, 4096, $copyCancellation.Token)
-        while (-not $process.HasExited)
-        {
-            $observedPeak = Get-ProcessPeakWorkingSet $process $observedPeak
-            [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
-            if ($remaining -le 0)
-            {
-                break
-            }
-            [void]$process.WaitForExit([int][Math]::Min($remaining, 100))
-        }
-        if ($process.HasExited -and $Clock.ElapsedMilliseconds -lt $BudgetMilliseconds)
-        {
-            $exitCode = $process.ExitCode
-            foreach ($task in @($stdoutTask, $stderrTask))
-            {
-                [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
-                if ($remaining -le 0 -or -not $task.Wait([int][Math]::Min($remaining, [int]::MaxValue)))
-                {
-                    $exitCode = 124
-                    break
-                }
-            }
-        }
-        if ($exitCode -eq 124)
-        {
-            [string]$message = "BENCHMARK_TIMEOUT stage=$Stage elapsed_ms=$($Clock.ElapsedMilliseconds) pid=$($process.Id)"
-            [Console]::Error.WriteLine($message)
-            [IO.File]::WriteAllText("$OutputPrefix.timeout.txt", $message)
-        }
-    }
-    finally
-    {
-        $copyCancellation.Cancel()
-        try
-        {
-            if ($null -ne $process -and -not $process.HasExited)
-            {
-                try
-                {
-                    $process.Kill($true)
-                }
-                catch [InvalidOperationException]
-                {
-                    if (-not $process.HasExited)
-                    {
-                        throw
-                    }
-                }
-                [long]$remaining = $BudgetMilliseconds - $Clock.ElapsedMilliseconds
-                if ($remaining -gt 0)
-                {
-                    [void]$process.WaitForExit([int][Math]::Min($remaining, [int]::MaxValue))
-                }
-            }
-        }
-        finally
-        {
-            if ($null -ne $process)
-            {
-                $process.Dispose()
-            }
-            if ($null -ne $stdout)
-            {
-                $stdout.Dispose()
-            }
-            if ($null -ne $stderr)
-            {
-                $stderr.Dispose()
-            }
-            $copyCancellation.Dispose()
-        }
-    }
-    Write-ProcessObservation $childClock $OutputPrefix $Stage $observedPeak
-    [Console]::Out.Write([IO.File]::ReadAllText("$OutputPrefix.stdout.txt"))
-    [Console]::Error.Write([IO.File]::ReadAllText("$OutputPrefix.stderr.txt"))
-    if ($exitCode -ne 0 -and $exitCode -ne 124)
-    {
-        [Console]::Error.WriteLine("Command failed ($exitCode): $FilePath stage=$Stage")
-    }
-    return $exitCode
-}
 
 try
 {
@@ -417,6 +288,26 @@ $workloadOptionNames = [ordered]@{
     ProjectileSpacing = "projectile-spacing"
     ProjectileVelocity = "projectile-velocity"
 }
+[hashtable]$requestedMetadata = @{}
+foreach ($option in $workloadOptionNames.Keys)
+{
+    $requestedMetadata[$option] = $workloadOptionNames[$option]
+}
+$requestedMetadata.Case = "case"
+$requestedMetadata.Layout = "layout"
+$requestedMetadata.AngularMode = "angular-mode"
+$requestedMetadata.Scenario = "scenario"
+$requestedMetadata.Chains = "chains"
+$requestedMetadata.Links = "links"
+$requestedMetadata.MassRatio = "mass-ratio"
+$requestedMetadata.Passes = "passes"
+$requestedMetadata.Bundles = "bundles"
+$requestedMetadata.WarmupPasses = "warmup-passes"
+$requestedMetadata.Stage = "stage"
+$requestedMetadata.Fixture = "fixture"
+$requestedMetadata.Motion = "motion"
+$requestedMetadata.BodyCount = "bodies"
+$requestedMetadata.UnconstrainedSubsteps = "unconstrained-substeps"
 $nativeOptions = @()
 $reportOptions = @()
 $resultPackage = $Package
@@ -535,6 +426,217 @@ if ($Package -in @("container", "contact_islands", "pyramid"))
     $resultPackage = "$Package\$Variant"
     $reportOptions += @("--variant", $Variant)
 }
+elseif ($Package -eq "solver_contact_work")
+{
+    if ($Precision -ne "Float32" -or $Record -ne "Off" -or
+        -not $PSBoundParameters.ContainsKey("ProcessorAffinity") -or
+        -not $PSBoundParameters.ContainsKey("TimeoutSeconds") -or
+        $Workers -cnotmatch '^[1-9][0-9]*$' -or
+        -not [IO.Path]::IsPathFullyQualified($ContactInput) -or
+        -not (Test-Path -LiteralPath $ContactInput -PathType Leaf))
+    {
+        throw "Contact work requires one worker, Float32, Record Off, ProcessorAffinity, TimeoutSeconds and an existing absolute ContactInput file"
+    }
+    foreach ($option in @($workloadOptionNames.Keys) + @("Variant", "Scenario", "AngularMode", "Chains", "Links", "MassRatio", "Case", "Layout", "Passes", "Bundles", "WarmupPasses"))
+    {
+        if ($PSBoundParameters.ContainsKey($option))
+        {
+            throw "Option $option does not apply to contact work"
+        }
+    }
+    $ContactInput = [IO.Path]::GetFullPath($ContactInput)
+    $nativeOptions += @("--input=$ContactInput", "--processor-affinity=$ProcessorAffinity")
+}
+elseif ($Package -eq "simulation_stage_work")
+{
+    if ([string]::IsNullOrEmpty($Stage) -or [string]::IsNullOrEmpty($Fixture) -or [string]::IsNullOrEmpty($Motion) -or
+        $Precision -ne "Float32" -or $Record -ne "Off" -or $Workers -cnotmatch '^[1-9][0-9]*$' -or
+        -not $PSBoundParameters.ContainsKey("ProcessorAffinity") -or -not $PSBoundParameters.ContainsKey("TimeoutSeconds"))
+    {
+        throw "Stage work requires Stage, Fixture, Motion, Float32, one worker, ProcessorAffinity, TimeoutSeconds and Record Off"
+    }
+    foreach ($option in @($workloadOptionNames.Keys) + @("Variant", "Case", "Layout", "Passes", "Bundles", "WarmupPasses", "Scenario", "AngularMode", "Chains", "Links", "MassRatio", "UnconstrainedSubsteps", "BodyCount"))
+    {
+        if ($PSBoundParameters.ContainsKey($option))
+        {
+            throw "Option $option does not apply to stage work"
+        }
+    }
+    $nativeOptions += @("--stage=$Stage", "--fixture=$Fixture", "--motion=$Motion")
+    $resultPackage = "$Package/$Stage.$Fixture.$Motion"
+}
+elseif ($Package -eq "shape_mixed_bounds")
+{
+    foreach ($option in @($workloadOptionNames.Keys) + @("Variant"))
+    {
+        if ($PSBoundParameters.ContainsKey($option))
+        {
+            throw "Option $option does not apply to bounds work"
+        }
+    }
+    if ($PSBoundParameters.ContainsKey("BodyCount"))
+    {
+        $nativeOptions += "--body-count=$BodyCount"
+        $resultPackage = "$Package/bodies-$BodyCount"
+    }
+}
+elseif ($Package -eq "solver_fixed_work")
+{
+    if ([string]::IsNullOrEmpty($Case) -or $Record -ne "Off" -or
+        ($Case -ne "conserving" -and $Precision -ne "Float32"))
+    {
+        throw "Fixed work requires a supported Case, Record Off and Float32 for new cases"
+    }
+    foreach ($option in @($workloadOptionNames.Keys) + @("Variant"))
+    {
+        if ($PSBoundParameters.ContainsKey($option) -and -not ($Case -eq "cached-convex" -and $option -in @("VelocityIterations", "Substeps")))
+        {
+            throw "Option $option does not apply to fixed work"
+        }
+    }
+    if ($Case -ne "conserving")
+    {
+        if (-not $PSBoundParameters.ContainsKey("Passes"))
+        {
+            $Passes = 100
+        }
+        if (-not $PSBoundParameters.ContainsKey("WarmupPasses"))
+        {
+            $WarmupPasses = 10
+        }
+        if (-not $PSBoundParameters.ContainsKey("Bundles"))
+        {
+            $Bundles = 1250
+        }
+    }
+    $nativeOptions += @("--case=$Case", "--passes=$Passes", "--warmup-passes=$WarmupPasses")
+    if ($Case -in @("conserving", "nonconserving", "pose", "constrained-final", "free-final", "kinematic"))
+    {
+        if ($Layout -notin @("full", "partial", "sparse", "isotropic"))
+        {
+            throw "Integration cases require a supported Layout"
+        }
+        $nativeOptions += "--layout=$Layout"
+    }
+    elseif ($PSBoundParameters.ContainsKey("Layout"))
+    {
+        throw "Layout does not apply to native graph cases"
+    }
+    if ($Case -in @("pose", "constrained-final", "free-final") -and $Layout -notin @("full", "isotropic"))
+    {
+        throw "Final pose cases process the full real population and require full or isotropic Layout"
+    }
+    if ($Case -in @("conserving", "nonconserving", "pose", "constrained-final", "free-final", "joints"))
+    {
+        if ($AngularMode -cnotin @("nonconserving", "momentum", "gyro") -or
+            ($Case -in @("conserving", "joints") -and $AngularMode -eq "nonconserving") -or
+            ($Case -eq "nonconserving" -and $AngularMode -ne "nonconserving"))
+        {
+            throw "Select an AngularMode applicable to this fixed case"
+        }
+        $nativeOptions += "--angular-mode=$AngularMode"
+    }
+    elseif ($PSBoundParameters.ContainsKey("AngularMode"))
+    {
+        throw "AngularMode does not apply to this fixed case"
+    }
+    if ($Case -eq "joints")
+    {
+        if ($Scenario -cnotin @("hinge", "weld", "mixed"))
+        {
+            throw "Fixed joints require Scenario hinge, weld or mixed"
+        }
+        if ($PSBoundParameters.ContainsKey("Bundles"))
+        {
+            throw "Joints uses Chains/Links rather than Bundles"
+        }
+        if (-not $PSBoundParameters.ContainsKey("Chains"))
+        {
+            $Chains = 1000
+        }
+        if (-not $PSBoundParameters.ContainsKey("Links"))
+        {
+            $Links = 9
+        }
+        if ($Chains * ($Links + 1) -gt 1000000)
+        {
+            throw "Joint population exceeds 1000000"
+        }
+        $nativeOptions += @("--scenario=$Scenario", "--chains=$Chains", "--links=$Links", "--mass-ratio=$MassRatio")
+    }
+    else
+    {
+        foreach ($option in @("Scenario", "Chains", "Links", "MassRatio"))
+        {
+            if ($PSBoundParameters.ContainsKey($option))
+            {
+                throw "$option requires fixed joints"
+            }
+        }
+        $nativeOptions += "--bundles=$Bundles"
+    }
+    if ($Case -eq "cached-convex")
+    {
+        if (-not $PSBoundParameters.ContainsKey("VelocityIterations"))
+        {
+            $VelocityIterations = "2"
+        }
+        if (-not $PSBoundParameters.ContainsKey("Substeps"))
+        {
+            $Substeps = "2"
+        }
+        if ("$VelocityIterations/$Substeps" -cnotin @("2/2", "4/1"))
+        {
+            throw "Cached convex requires 2x2 or 4x1"
+        }
+        $nativeOptions += @("--velocity-iterations=$VelocityIterations", "--substeps=$Substeps")
+    }
+    if ($Case -eq "free-final")
+    {
+        if ([string]::IsNullOrEmpty($UnconstrainedSubsteps))
+        {
+            throw "Free final requires UnconstrainedSubsteps"
+        }
+        $nativeOptions += "--unconstrained-substeps=$UnconstrainedSubsteps"
+    }
+    elseif ($PSBoundParameters.ContainsKey("UnconstrainedSubsteps"))
+    {
+        throw "UnconstrainedSubsteps requires free-final"
+    }
+    $resultPackage = "$Package/$Case"
+}
+elseif ($Package -eq "solver_joint_angular")
+{
+    if ($Scenario -cnotin @("hinge", "weld", "mixed") -or $AngularMode -cnotin @("momentum", "gyro") -or
+        $Chains * ($Links + 1) -gt 1000000 -or $Record -ne "Off")
+    {
+        [Console]::Error.WriteLine("Angular requires Scenario hinge/weld/mixed, AngularMode momentum/gyro and its bounded population")
+        exit 2
+    }
+    [hashtable]$fixedSettings = @{ WarmupSteps = "0"; VelocityIterations = "1"; Substeps = "4"; TimestepHz = "60"; Sleep = "disabled" }
+    foreach ($option in @($workloadOptionNames.Keys) + @("Variant"))
+    {
+        if (-not $PSBoundParameters.ContainsKey($option))
+        {
+            continue
+        }
+        if ($option -eq "Steps")
+        {
+            if ($Steps -cnotmatch '^[1-9][0-9]{0,5}$' -or [long]$Steps -gt 100000)
+            {
+                [Console]::Error.WriteLine("Angular Steps must be 1..100000")
+                exit 2
+            }
+        }
+        elseif (-not $fixedSettings.ContainsKey($option) -or [string]$PSBoundParameters[$option] -cne $fixedSettings[$option])
+        {
+            [Console]::Error.WriteLine("Angular option $option conflicts with its fixed workload")
+            exit 2
+        }
+    }
+    $nativeOptions += @("--scenario=$Scenario", "--angular-mode=$AngularMode", "--chains=$Chains", "--links=$Links", "--mass-ratio=$MassRatio")
+    $resultPackage = "$Package/$Scenario.$AngularMode"
+}
 else
 {
     foreach ($option in @($workloadOptionNames.Keys) + @("Variant"))
@@ -545,13 +647,55 @@ else
         }
     }
 }
+foreach ($option in @("Stage", "Fixture", "Motion"))
+{
+    if ($Package -ne "simulation_stage_work" -and $PSBoundParameters.ContainsKey($option))
+    {
+        throw "$option requires simulation_stage_work"
+    }
+}
+if ($Package -ne "shape_mixed_bounds" -and $PSBoundParameters.ContainsKey("BodyCount"))
+{
+    throw "BodyCount requires shape_mixed_bounds"
+}
+if ($Package -ne "solver_fixed_work" -and $PSBoundParameters.ContainsKey("UnconstrainedSubsteps"))
+{
+    throw "UnconstrainedSubsteps requires solver_fixed_work/free-final"
+}
+if ($Package -ne "solver_contact_work" -and $PSBoundParameters.ContainsKey("ContactInput"))
+{
+    throw "ContactInput requires solver_contact_work"
+}
+if ($Package -notin @("solver_joint_angular", "solver_fixed_work"))
+{
+    foreach ($option in @("Scenario", "AngularMode", "Chains", "Links", "MassRatio"))
+    {
+        if ($PSBoundParameters.ContainsKey($option))
+        {
+            [Console]::Error.WriteLine("Option $option requires solver_joint_angular")
+            exit 2
+        }
+    }
+}
+if ($Package -ne "solver_fixed_work")
+{
+    foreach ($option in @("Case", "Layout", "Passes", "Bundles", "WarmupPasses"))
+    {
+        if ($PSBoundParameters.ContainsKey($option))
+        {
+            [Console]::Error.WriteLine("Option $option requires solver_fixed_work")
+            exit 2
+        }
+    }
+}
 if ($Precision -eq "Mixed64" -and $Package -ne "large_world_precision")
 {
     $resultPackage += "/mixed64"
 }
 foreach ($option in $workloadOptionNames.Keys)
 {
-    if ($option -ne "Verify" -and $PSBoundParameters.ContainsKey($option))
+    if ($option -ne "Verify" -and $PSBoundParameters.ContainsKey($option) -and
+        -not ($Package -eq "solver_fixed_work" -and $Case -eq "cached-convex" -and $option -in @("VelocityIterations", "Substeps")))
     {
         $value = $PSBoundParameters[$option]
         if ([string]::IsNullOrEmpty($value))
@@ -583,20 +727,7 @@ if ($workerValues.Count -eq 0)
 [uint64]$requestedProcessorAffinity = 0
 if ($PSBoundParameters.ContainsKey("ProcessorAffinity"))
 {
-    if ($null -eq ("EntasisBenchmarkProcessAffinity" -as [type]))
-    {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-public static class EntasisBenchmarkProcessAffinity
-{
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool GetProcessAffinityMask(SafeProcessHandle process, out UIntPtr processMask, out UIntPtr systemMask);
-}
-'@
-    }
+    Initialize-BenchmarkProcessAffinity
     if ($ProcessorAffinity -cnotmatch '^[1-9][0-9]*$' -or
         -not [uint64]::TryParse($ProcessorAffinity, [ref]$requestedProcessorAffinity))
     {
@@ -641,12 +772,16 @@ catch
     exit 2
 }
 
-$binary = Get-BenchmarkBinary $Package $Configuration $Record $Components "Off" $Precision $PrecisionCandidate $QueryExecution
+$binary = Get-BenchmarkBinary $Package $Configuration $Record $Components "Off" $Precision $PrecisionCandidate $QueryExecution $Case
 $reporter = Get-BenchmarkReporterBinary $Configuration
 $buildCommand = "& .\scripts\windows\benchmarks\build_benchmarks.ps1 -Package $Package -Configuration $Configuration -Record $Record"
 if ($Package -in $script:BenchmarkComponentPackages)
 {
     $buildCommand += " -Components $Components"
+}
+if ($Package -eq "solver_fixed_work")
+{
+    $buildCommand += " -Case $Case -Precision $Precision"
 }
 if ($Package -eq "spatial_query_batch")
 {
@@ -661,6 +796,27 @@ if (-not (Test-Path -LiteralPath $reporter -PathType Leaf))
 {
     [Console]::Error.WriteLine("Missing benchmark reporter: $reporter. Build with: $buildCommand")
     exit 2
+}
+[string]$resultLayout = "Single"
+[string]$baselineBinary = ""
+if ($PSBoundParameters.ContainsKey("BaselineRoot"))
+{
+    if ($Package -notin @("container", "contact_islands", "pyramid", "solver_joint_angular", "solver_fixed_work", "solver_contact_work", "simulation_stage_work", "shape_mixed_bounds", "query_extensions", "spatial_query_batch", "spatial_query_trace", "world_lifecycle", "awakening_duplicate_sets", "contact_churn_grid_4k", "noncontact_constraint_mix", "noncontact_fallback_smoke") -or $Record -ne "Off" -or
+        -not $PSBoundParameters.ContainsKey("TimeoutSeconds") -or
+        -not [IO.Path]::IsPathFullyQualified($BaselineRoot) -or
+        -not (Test-Path -LiteralPath $BaselineRoot -PathType Container))
+    {
+        [Console]::Error.WriteLine("BaselineRoot requires an existing absolute root, a supported paired package, Record Off and TimeoutSeconds")
+        exit 2
+    }
+    $BaselineRoot = [IO.Path]::GetFullPath($BaselineRoot)
+    $baselineBinary = Join-Path $BaselineRoot ([IO.Path]::GetRelativePath($script:Root, $binary))
+    if (-not (Test-Path -LiteralPath $baselineBinary -PathType Leaf))
+    {
+        [Console]::Error.WriteLine("Missing prepared baseline artifact: $baselineBinary")
+        exit 2
+    }
+    $resultLayout = "Paired"
 }
 $compilerVersion = "Unavailable (reused producer binary)"
 $operatingSystem = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription.Trim()
@@ -685,199 +841,358 @@ else
 }
 New-Item -ItemType Directory -Force -Path $resultParent | Out-Null
 New-Item -ItemType Directory -Path $pending | Out-Null
-Write-Host "BENCHMARK_RUN_CONFIG package=$Package configuration=$configurationName components=$($Components.ToLowerInvariant()) pending=$pending"
+if ($resultLayout -eq "Paired")
+{
+    New-Item -ItemType Directory -Path (Join-Path $pending "baseline"), (Join-Path $pending "candidate") | Out-Null
+}
+Write-Host "BENCHMARK_RUN_CONFIG package=$Package configuration=$configurationName components=$($Components.ToLowerInvariant()) failure_policy=$($FailurePolicy.ToLowerInvariant()) pending=$pending"
 $workloadClock = [Diagnostics.Stopwatch]::StartNew()
 Write-Host "BENCHMARK_PREPARED elapsed_ms=$($preparationClock.ElapsedMilliseconds)"
 $budgetMilliseconds = [long]$TimeoutSeconds * 1000
+[int]$firstFailureExitCode = 0
+[string]$cohortState = "Complete"
 foreach ($worker in $workerValues)
 {
-    $output = Join-Path $nativePending "workers-$worker.csv"
     for ($run = 1; $run -le $Runs; $run++)
     {
-        Write-Host "[benchmark] $Package workers=$worker run=$run/$Runs"
-        $childArguments = @("--worker-count=$worker", "--output=$output") + $nativeOptions
-        if ($Package -in $script:BenchmarkRecordingPackages)
+        [string[]]$arms = @("candidate")
+        if ($resultLayout -eq "Paired")
         {
-            $childArguments += "--record=$($Record.ToLowerInvariant())"
-            if ($Record -eq "On")
+            $arms = if ($run % 2 -eq 1)
             {
-                $recordingOutput = Join-Path $nativePending "workers-$worker-sample-$run.epr"
-                $childArguments += @("--recording-output=$recordingOutput", "--compression=$Compression", "--memory-mib=$MemoryMiB")
+                @("baseline", "candidate")
+            }
+            else
+            {
+                @("candidate", "baseline")
             }
         }
-        if ($PSBoundParameters.ContainsKey("TimeoutSeconds"))
+        foreach ($arm in $arms)
         {
-            $exitCode = Invoke-BenchmarkChild $binary $childArguments (Join-Path $pending "workers-$worker-run-$run") "worker=$worker run=$run/$Runs" $workloadClock $budgetMilliseconds $requestedProcessorAffinity
-            if ($exitCode -ne 0)
+            [string]$armPending = if ($resultLayout -eq "Paired")
             {
-                exit $exitCode
+                Join-Path $pending $arm
             }
-            if ($QueryCell -cin @("compound-8", "big-128", "big-8192", "nested-compound-8", "nested-big-8192"))
+            else
             {
-                [int[]]$workerOrder = @(18, 16, 20, 22, 24, 26, 28, 30, 0, 2, 4, 6, 8, 10, 12, 14,
-                    19, 17, 21, 23, 25, 27, 29, 31, 1, 3, 5, 7, 9, 11, 13, 15)
-                [string[]]$records = @([IO.File]::ReadLines((Join-Path $pending "workers-$worker-run-$run.stdout.txt")) |
-                    Where-Object { $_.StartsWith("WORKER_AFFINITY ") })
-                if ($records.Count -ne [int]$worker)
-                {
-                    throw "Expected one WORKER_AFFINITY record per active worker"
-                }
-                $workerIds = [Collections.Generic.HashSet[int]]::new()
-                $nativeIds = [Collections.Generic.HashSet[uint32]]::new()
-                foreach ($workerAffinityRecord in $records)
-                {
-                    if ($workerAffinityRecord -cnotmatch '^WORKER_AFFINITY cell=([^ ]+) worker=([0-9]+) requested=([0-9]+) effective=([0-9]+) native_tid=([0-9]+)$')
-                    {
-                        throw "Invalid worker-affinity record: $workerAffinityRecord"
-                    }
-                    [int]$workerId = [int]$Matches[2]
-                    [uint32]$nativeId = [uint32]$Matches[5]
-                    if ($Matches[1] -cne $QueryCell -or $workerId -ge [int]$worker -or $nativeId -eq 0 -or
-                        -not $workerIds.Add($workerId) -or -not $nativeIds.Add($nativeId))
-                    {
-                        throw "Invalid cell, worker or native thread identity: $workerAffinityRecord"
-                    }
-                    [uint64]$expectedMask = [uint64]1 -shl $workerOrder[$workerId]
-                    if ([uint64]$Matches[3] -ne $expectedMask -or [uint64]$Matches[4] -ne $expectedMask)
-                    {
-                        throw "Worker placement differs from declared LP order: $workerAffinityRecord"
-                    }
-                }
+                $pending
             }
-        }
-        else
-        {
-            Invoke-Checked $binary $childArguments
-        }
-        if ($Package -in @("spatial_query_batch", "spatial_query_trace"))
-        {
-            $samples = @(Import-Csv -LiteralPath $output)
-            if ($samples.Count -ne $run)
+            [string]$nativeArm = if ($resultLayout -eq "Paired")
             {
-                throw "Ray sample count mismatch in $output"
+                Join-Path $nativePending $arm
             }
-            foreach ($sample in $samples)
+            else
             {
-                if ($Package -eq "spatial_query_batch" -and
-                    ($sample.query_execution -cne $QueryExecution.ToLowerInvariant() -or
-                    $sample.batch_size -ne "256"))
+                $nativePending
+            }
+            [string]$armBinary = if ($arm -eq "baseline")
+            {
+                $baselineBinary
+            }
+            else
+            {
+                $binary
+            }
+            [string]$output = Join-Path $nativeArm "workers-$worker.csv"
+            Write-Host "[benchmark] $Package arm=$arm workers=$worker run=$run/$Runs"
+            $childArguments = @("--worker-count=$worker", "--output=$output") + $nativeOptions
+            if ($Package -in $script:BenchmarkRecordingPackages)
+            {
+                $childArguments += "--record=$($Record.ToLowerInvariant())"
+                if ($Record -eq "On")
                 {
-                    throw "Query execution/submission identity mismatch. Output: $output"
-                }
-                if ($sample.ray_pattern -cne $RayPattern)
-                {
-                    throw "Ray pattern mismatch: requested $RayPattern. Rebuild the selected producer. Output: $output"
+                    $recordingOutput = Join-Path $nativeArm "workers-$worker-sample-$run.epr"
+                    $childArguments += @("--recording-output=$recordingOutput", "--compression=$Compression", "--memory-mib=$MemoryMiB")
                 }
             }
-        }
-        if ($Package -in @("spatial_query_batch", "spatial_query_trace", "query_extensions"))
-        {
-            $samples = @(Import-Csv -LiteralPath $output)
-            if ($samples.Count -ne $run)
+            [int]$exitCode = 0
+            try
             {
-                throw "Query sample count mismatch in $output"
-            }
-            foreach ($sample in $samples)
-            {
-                if ($Package -eq "query_extensions")
+                if ($PSBoundParameters.ContainsKey("TimeoutSeconds"))
                 {
-                    if ($QueryCase -cne "control")
+                    $exitCode = Invoke-BenchmarkChild $armBinary $childArguments (Join-Path $armPending "workers-$worker-run-$run") "worker=$worker run=$run/$Runs" $workloadClock $budgetMilliseconds $requestedProcessorAffinity
+                    if ($exitCode -ne 0)
                     {
-                        [string]$expectedHits = "6144"
-                        if ($QueryOperation -ceq "ray-all" -and $QueryCell.StartsWith("nested-"))
+                        if ($FailurePolicy -eq "Stop")
                         {
-                            $expectedHits = "12288"
+                            exit $exitCode
                         }
-                        if ($QueryOperation -cin @("closest-point", "distance", "depenetration"))
+                        if ($firstFailureExitCode -eq 0)
                         {
-                            $expectedHits = "12288"
+                            $firstFailureExitCode = $exitCode
                         }
-                        [string]$expectedInputs = "1536"
-                        [string]$expectedPasses = "8"
-                        [string]$expectedQueries = "12288"
-                        [int]$expectedWarmup = 128 * [int]$sample.worker_count
-                        if ($QueryCase -ceq "collision-batch")
+                        if ($exitCode -eq 124 -and $workloadClock.ElapsedMilliseconds -ge $budgetMilliseconds)
                         {
-                            $expectedInputs = "24576"
-                            $expectedPasses = "1"
-                            $expectedQueries = "24576"
-                            $expectedHits = "12288"
-                            [int]$batchSize = 256
-                            if ($QueryCell -cmatch '-(1|8|32)$')
+                            [Console]::Error.WriteLine("BENCHMARK_FAILED status=deadline result=$pending exit_code=124")
+                            exit 124
+                        }
+                    }
+                    if ($QueryCell -cin @("compound-8", "big-128", "big-8192", "nested-compound-8", "nested-big-8192"))
+                    {
+                        [int[]]$workerOrder = @(18, 16, 20, 22, 24, 26, 28, 30, 0, 2, 4, 6, 8, 10, 12, 14,
+                            19, 17, 21, 23, 25, 27, 29, 31, 1, 3, 5, 7, 9, 11, 13, 15)
+                        [string[]]$records = @([IO.File]::ReadLines((Join-Path $armPending "workers-$worker-run-$run.stdout.txt")) |
+                            Where-Object { $_.StartsWith("WORKER_AFFINITY ") })
+                        if ($records.Count -ne [int]$worker)
+                        {
+                            throw "Expected one WORKER_AFFINITY record per active worker"
+                        }
+                        $workerIds = [Collections.Generic.HashSet[int]]::new()
+                        $nativeIds = [Collections.Generic.HashSet[uint32]]::new()
+                        foreach ($workerAffinityRecord in $records)
+                        {
+                            if ($workerAffinityRecord -cnotmatch '^WORKER_AFFINITY cell=([^ ]+) worker=([0-9]+) requested=([0-9]+) effective=([0-9]+) native_tid=([0-9]+)$')
                             {
-                                $batchSize = [int]$Matches[1]
+                                throw "Invalid worker-affinity record: $workerAffinityRecord"
                             }
-                            $expectedWarmup = $batchSize * [int]$sample.worker_count
+                            [int]$workerId = [int]$Matches[2]
+                            [uint32]$nativeId = [uint32]$Matches[5]
+                            if ($Matches[1] -cne $QueryCell -or $workerId -ge [int]$worker -or $nativeId -eq 0 -or
+                                -not $workerIds.Add($workerId) -or -not $nativeIds.Add($nativeId))
+                            {
+                                throw "Invalid cell, worker or native thread identity: $workerAffinityRecord"
+                            }
+                            [uint64]$expectedMask = [uint64]1 -shl $workerOrder[$workerId]
+                            if ([uint64]$Matches[3] -ne $expectedMask -or [uint64]$Matches[4] -ne $expectedMask)
+                            {
+                                throw "Worker placement differs from declared LP order: $workerAffinityRecord"
+                            }
                         }
-                        if ($sample.query_case -cne $QueryCase -or $sample.query_operation -cne $QueryOperation -or
-                            $sample.query_cell -cne $QueryCell -or $sample.input_count -cne $expectedInputs -or
-                            $sample.passes -cne $expectedPasses -or $sample.query_count -cne $expectedQueries -or
-                            $sample.warmup_queries -cne [string]$expectedWarmup -or
-                            $sample.benchmark_components -cne "all" -or $sample.worker_count -cne [string]$worker -or
-                            $sample.precision -cne $Precision.ToLowerInvariant() -or $sample.oracle_queries -cne $expectedInputs -or
-                            $sample.hit_count -cne $expectedHits -or
-                            $sample.checksum -cne $sample.hit_count)
-                        {
-                            throw "Selected query cell or counts mismatch in $output"
-                        }
-                    }
-                    elseif ($sample.PSObject.Properties.Name -contains "query_case" -and $sample.query_case -cne "control")
-                    {
-                        throw "Unexpected selected query case in $output"
-                    }
-                    elseif ($QueryGroup -ne "")
-                    {
-                        if ($sample.query_group -cne $QueryGroup -or $sample.query_repetitions -ne [string][int]$QueryRepetitions -or
-                            $sample.query_warmup_repetitions -ne [string][int]$QueryWarmupRepetitions -or
-                            $sample.query_count_per_operation -ne [string]([uint64]8192 * [uint64]$QueryRepetitions))
-                        {
-                            throw "Focused query settings mismatch in $output"
-                        }
-                    }
-                    elseif ($sample.PSObject.Properties.Name -contains "query_group")
-                    {
-                        throw "Unexpected focused query result in $output"
                     }
                 }
-                elseif ($sample.warmup_batches -ne [string][int]$WarmupBatches -or $sample.measured_batches -ne [string][int]$MeasuredBatches)
+                else
                 {
-                    throw "Spatial work count mismatch in $output"
+                    Invoke-Checked $armBinary $childArguments
                 }
-                if ($Package -eq "spatial_query_trace")
+                if ($Package -in @("spatial_query_batch", "spatial_query_trace"))
                 {
-                    [string]$emittedFamily = "all"
-                    if ($sample.PSObject.Properties.Name -contains "query_family")
+                    $samples = @(Import-Csv -LiteralPath $output)
+                    if ($samples.Count -ne $run)
                     {
-                        $emittedFamily = $sample.query_family
+                        throw "Ray sample count mismatch in $output"
                     }
-                    if ($emittedFamily -cne $QueryFamily)
+                    foreach ($sample in $samples)
                     {
-                        throw "Spatial query family mismatch in $output"
+                        if ($Package -eq "spatial_query_batch" -and
+                            ($sample.query_execution -cne $QueryExecution.ToLowerInvariant() -or
+                            $sample.batch_size -ne "256"))
+                        {
+                            throw "Query execution/submission identity mismatch. Output: $output"
+                        }
+                        if ($sample.ray_pattern -cne $RayPattern)
+                        {
+                            throw "Ray pattern mismatch: requested $RayPattern. Rebuild the selected producer. Output: $output"
+                        }
+                    }
+                }
+                if ($Package -in @("spatial_query_batch", "spatial_query_trace", "query_extensions"))
+                {
+                    $samples = @(Import-Csv -LiteralPath $output)
+                    if ($samples.Count -ne $run)
+                    {
+                        throw "Query sample count mismatch in $output"
+                    }
+                    foreach ($sample in $samples)
+                    {
+                        if ($Package -eq "query_extensions")
+                        {
+                            if ($QueryCase -cne "control")
+                            {
+                                [string]$expectedHits = "6144"
+                                if ($QueryOperation -ceq "ray-all" -and $QueryCell.StartsWith("nested-"))
+                                {
+                                    $expectedHits = "12288"
+                                }
+                                if ($QueryOperation -cin @("closest-point", "distance", "depenetration"))
+                                {
+                                    $expectedHits = "12288"
+                                }
+                                [string]$expectedInputs = "1536"
+                                [string]$expectedPasses = "8"
+                                [string]$expectedQueries = "12288"
+                                [int]$expectedWarmup = 128 * [int]$sample.worker_count
+                                if ($QueryCase -ceq "collision-batch")
+                                {
+                                    $expectedInputs = "24576"
+                                    $expectedPasses = "1"
+                                    $expectedQueries = "24576"
+                                    $expectedHits = "12288"
+                                    [int]$batchSize = 256
+                                    if ($QueryCell -cmatch '-(1|8|32)$')
+                                    {
+                                        $batchSize = [int]$Matches[1]
+                                    }
+                                    $expectedWarmup = $batchSize * [int]$sample.worker_count
+                                }
+                                if ($sample.query_case -cne $QueryCase -or $sample.query_operation -cne $QueryOperation -or
+                                    $sample.query_cell -cne $QueryCell -or $sample.input_count -cne $expectedInputs -or
+                                    $sample.passes -cne $expectedPasses -or $sample.query_count -cne $expectedQueries -or
+                                    $sample.warmup_queries -cne [string]$expectedWarmup -or
+                                    $sample.benchmark_components -cne "all" -or $sample.worker_count -cne [string]$worker -or
+                                    $sample.precision -cne $Precision.ToLowerInvariant() -or $sample.oracle_queries -cne $expectedInputs -or
+                                    $sample.hit_count -cne $expectedHits -or
+                                    $sample.checksum -cne $sample.hit_count)
+                                {
+                                    throw "Selected query cell or counts mismatch in $output"
+                                }
+                            }
+                            elseif ($sample.PSObject.Properties.Name -contains "query_case" -and $sample.query_case -cne "control")
+                            {
+                                throw "Unexpected selected query case in $output"
+                            }
+                            elseif ($QueryGroup -ne "")
+                            {
+                                if ($sample.query_group -cne $QueryGroup -or $sample.query_repetitions -ne [string][int]$QueryRepetitions -or
+                                    $sample.query_warmup_repetitions -ne [string][int]$QueryWarmupRepetitions -or
+                                    $sample.query_count_per_operation -ne [string]([uint64]8192 * [uint64]$QueryRepetitions))
+                                {
+                                    throw "Focused query settings mismatch in $output"
+                                }
+                            }
+                            elseif ($sample.PSObject.Properties.Name -contains "query_group")
+                            {
+                                throw "Unexpected focused query result in $output"
+                            }
+                        }
+                        elseif ($sample.warmup_batches -ne [string][int]$WarmupBatches -or $sample.measured_batches -ne [string][int]$MeasuredBatches)
+                        {
+                            throw "Spatial work count mismatch in $output"
+                        }
+                        if ($Package -eq "spatial_query_trace")
+                        {
+                            [string]$emittedFamily = "all"
+                            if ($sample.PSObject.Properties.Name -contains "query_family")
+                            {
+                                $emittedFamily = $sample.query_family
+                            }
+                            if ($emittedFamily -cne $QueryFamily)
+                            {
+                                throw "Spatial query family mismatch in $output"
+                            }
+                        }
+                    }
+                }
+                if ($Package -eq "solver_contact_work")
+                {
+                    [object[]]$contactSamples = @(Import-Csv -LiteralPath $output)
+                    if ($contactSamples.Count -ne $run -or $contactSamples[-1].contact_input -cne $ContactInput -or
+                        $contactSamples[-1].processor_affinity -cne $ProcessorAffinity -or
+                        $contactSamples[-1].worker_count -cne [string]$worker)
+                    {
+                        throw "Contact replay input, affinity or append count differs in $output"
+                    }
+                }
+                if ($Package -in $script:BenchmarkRecordingPackages)
+                {
+                    $samples = @(Import-Csv -LiteralPath $output)
+                    if ($samples.Count -ne $run -or $samples[-1].recording_mode -cne $Record.ToLowerInvariant())
+                    {
+                        throw "Recording capability mismatch in $output"
+                    }
+                    if ($Record -eq "On" -and ($samples[-1].recording_path -cne [IO.Path]::GetFileName($recordingOutput) -or -not (Test-Path -LiteralPath $recordingOutput -PathType Leaf)))
+                    {
+                        throw "Missing or mismatched finalized recording in $output"
+                    }
+                }
+                if ($Package -in $script:BenchmarkComponentPackages)
+                {
+                    $samples = @(Import-Csv -LiteralPath $output)
+                    if ($samples.Count -eq 0 -or $samples[-1].benchmark_components -cne $Components.ToLowerInvariant())
+                    {
+                        throw "Benchmark component mismatch: requested $Components; explicitly build the matching component selection. Output: $output"
+                    }
+                }
+                if ($resultLayout -eq "Paired")
+                {
+                    [object[]]$samples = @(Import-Csv -LiteralPath $output)
+                    if ($samples.Count -ne $run -or $samples[-1].worker_count -cne [string]$worker)
+                    {
+                        throw "Paired append count or worker mismatch in $output"
+                    }
+                    [Collections.Generic.Dictionary[string,string]]$emitted = [Collections.Generic.Dictionary[string,string]]::new()
+                    foreach ($field in $samples[-1].benchmark_parameters.Split(';'))
+                    {
+                        [string[]]$pair = $field.Split('=', 2)
+                        if ($pair.Length -ne 2 -or -not $emitted.TryAdd($pair[0], $pair[1]))
+                        {
+                            throw "Invalid benchmark parameter metadata in $output"
+                        }
+                    }
+                    foreach ($option in $requestedMetadata.Keys)
+                    {
+                    if (-not $PSBoundParameters.ContainsKey($option))
+                    {
+                        continue
+                    }
+                        [string]$key = $requestedMetadata[$option]
+                    if (-not $emitted.ContainsKey($key))
+                    {
+                        throw "Missing requested $key in $output"
+                    }
+                        [string[]]$expected = ([string]$PSBoundParameters[$option]).Split(',')
+                        [string[]]$actual = $emitted[$key].Split(',')
+                    if ($expected.Length -ne $actual.Length)
+                    {
+                        throw "Requested $key differs in $output"
+                    }
+                        for ([int]$component = 0; $component -lt $expected.Length; $component++)
+                        {
+                            [double]$expectedNumber = 0
+                            [double]$actualNumber = 0
+                            if ([double]::TryParse($expected[$component], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$expectedNumber))
+                            {
+                                if (-not [double]::TryParse($actual[$component], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$actualNumber) -or
+                                    [single]$expectedNumber -ne [single]$actualNumber)
+                                {
+                                    throw "Requested $key differs in $output"
+                                }
+                            }
+                        elseif ($expected[$component] -cne $actual[$component])
+                        {
+                            throw "Requested $key differs in $output"
+                        }
+                        }
+                    }
+                }
+
+                if ($exitCode -ne 0)
+                {
+                    [object[]]$failedSamples = @(Import-Csv -LiteralPath $output)
+                    if ($exitCode -eq 2 -and $failedSamples.Count -eq $run -and
+                        (($Package -in @("container", "contact_islands", "pyramid") -and $failedSamples[-1].physical_status -ceq "fail") -or
+                         ($Package -in @("solver_contact_work", "solver_fixed_work", "simulation_stage_work") -and $failedSamples[-1].physics_status -ceq "fail")))
+                    {
+                        if ($cohortState -eq "Complete")
+                        {
+                            $cohortState = "PhysicalFailed"
+                        }
+                    }
+                    else
+                    {
+                        $cohortState = "Incomplete"
                     }
                 }
             }
-        }
-        if ($Package -in $script:BenchmarkRecordingPackages)
-        {
-            $samples = @(Import-Csv -LiteralPath $output)
-            if ($samples.Count -ne $run -or $samples[-1].recording_mode -cne $Record.ToLowerInvariant())
+            catch
             {
-                throw "Recording capability mismatch in $output"
-            }
-            if ($Record -eq "On" -and ($samples[-1].recording_path -cne [IO.Path]::GetFileName($recordingOutput) -or -not (Test-Path -LiteralPath $recordingOutput -PathType Leaf)))
-            {
-                throw "Missing or mismatched finalized recording in $output"
-            }
-        }
-        if ($Package -in $script:BenchmarkComponentPackages)
-        {
-            $samples = @(Import-Csv -LiteralPath $output)
-            if ($samples.Count -eq 0 -or $samples[-1].benchmark_components -cne $Components.ToLowerInvariant())
-            {
-                throw "Benchmark component mismatch: requested $Components; explicitly build the matching component selection. Output: $output"
+                if ($FailurePolicy -eq "Stop")
+                {
+                    throw
+                }
+                if ($firstFailureExitCode -eq 0)
+                {
+                    $firstFailureExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
+                }
+                $cohortState = "Incomplete"
+                [Console]::Error.WriteLine("BENCHMARK_CELL_FAILED arm=$arm workers=$worker run=$run/$Runs exit_code=$exitCode error=$($_.Exception.Message)")
             }
         }
     }
+}
+if ($cohortState -eq "Incomplete")
+{
+    [Console]::Error.WriteLine("BENCHMARK_FAILED status=incomplete result=$pending exit_code=$firstFailureExitCode report=unavailable")
+    exit $firstFailureExitCode
 }
 $canonicalCommand = "& .\scripts\windows\benchmarks\run_benchmark.ps1 -Package $Package -Runs $Runs -Workers '$Workers' -Configuration $Configuration"
 if ($Package -in @("spatial_query_batch", "spatial_query_trace"))
@@ -901,7 +1216,7 @@ if ($PSBoundParameters.ContainsKey("TimeoutSeconds"))
 {
     $canonicalCommand += " -TimeoutSeconds $TimeoutSeconds"
 }
-foreach ($option in @($workloadOptionNames.Keys) + @("Variant", "Precision", "PrecisionCandidate", "PrecisionCase", "SamplingMode", "ProcessorAffinity") + @($queryOptionNames.Keys))
+foreach ($option in @($workloadOptionNames.Keys) + @("Variant", "Precision", "PrecisionCandidate", "PrecisionCase", "SamplingMode", "ProcessorAffinity", "BaselineRoot", "FailurePolicy", "Scenario", "AngularMode", "Chains", "Links", "MassRatio", "Case", "Layout", "Passes", "Bundles", "WarmupPasses", "ContactInput", "Stage", "Fixture", "Motion", "BodyCount", "UnconstrainedSubsteps") + @($queryOptionNames.Keys))
 {
     if ($PSBoundParameters.ContainsKey($option))
     {
@@ -909,8 +1224,16 @@ foreach ($option in @($workloadOptionNames.Keys) + @("Variant", "Precision", "Pr
         $canonicalCommand += " -$option '$literal'"
     }
 }
+$reportSource = if ($resultLayout -eq "Paired")
+{
+    Join-Path $nativePending "candidate"
+}
+else
+{
+    $nativePending
+}
 $reportArguments = @(
-    "--source", $nativePending,
+    "--source", $reportSource,
     "--package", $Package,
     "--configuration", $configurationName,
     "--runs", "$Runs",
@@ -921,6 +1244,10 @@ $reportArguments = @(
     "--logical-processors", "$script:AvailableWorkerCount",
     "--command", $canonicalCommand
 ) + $reportOptions
+if ($resultLayout -eq "Paired")
+{
+    $reportArguments += @("--baseline-source", (Join-Path $nativePending "baseline"))
+}
 Write-Host "BENCHMARK_STAGE stage=report workload_ms=$($workloadClock.ElapsedMilliseconds)"
 $reportClock = [Diagnostics.Stopwatch]::StartNew()
 if ($PSBoundParameters.ContainsKey("TimeoutSeconds"))
@@ -928,6 +1255,15 @@ if ($PSBoundParameters.ContainsKey("TimeoutSeconds"))
     $exitCode = Invoke-BenchmarkChild $reporter $reportArguments (Join-Path $pending "reporter") "reporter" $workloadClock $budgetMilliseconds
     if ($exitCode -ne 0)
     {
+        if ($FailurePolicy -eq "Continue")
+        {
+            if ($firstFailureExitCode -eq 0 -or $exitCode -eq 124)
+            {
+                $firstFailureExitCode = $exitCode
+            }
+            [Console]::Error.WriteLine("BENCHMARK_FAILED status=report_failed result=$pending reporter_exit_code=$exitCode exit_code=$firstFailureExitCode")
+            exit $firstFailureExitCode
+        }
         exit $exitCode
     }
 }
@@ -938,6 +1274,26 @@ else
 $workloadClock.Stop()
 Write-Host "BENCHMARK_REPORT elapsed_ms=$($reportClock.ElapsedMilliseconds)"
 Write-Host "BENCHMARK_ELAPSED milliseconds=$($workloadClock.ElapsedMilliseconds)"
-Complete-BenchmarkResultCommit $pending $current
-$reportPath = Join-Path $current "README.md"
+if ($cohortState -eq "PhysicalFailed")
+{
+    $failedReport = if ($resultLayout -eq "Paired")
+    {
+        Join-Path $pending "candidate/README.md"
+    }
+    else
+    {
+        Join-Path $pending "README.md"
+    }
+    [Console]::Error.WriteLine("BENCHMARK_FAILED status=physical_failed result=$pending report=$failedReport exit_code=$firstFailureExitCode")
+    exit $firstFailureExitCode
+}
+Complete-BenchmarkResultCommit $pending $current $resultLayout
+$reportPath = if ($resultLayout -eq "Paired")
+{
+    Join-Path $current "candidate/README.md"
+}
+else
+{
+    Join-Path $current "README.md"
+}
 Write-Host "BENCHMARK_OK result=$current report=$reportPath"

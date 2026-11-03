@@ -85,6 +85,9 @@ require_odin() {
 
 test_scope_to_package() {
   case "$1" in
+    benchmark-solver-contacts) printf '%s\n' solver_contacts ;;
+    benchmark-stage-work) printf '%s\n' simulation_stage_work ;;
+    benchmark-fixed-work) printf '%s\n' solver_fixed_work ;;
     precision-bounds|precision-broadphase|precision-storage|precision-collisions|precision-constraints|precision-targets|precision-mutations|precision-callbacks|precision-queries|precision-snapshots|benchmark-precision|root|scene-stability|benchmark-support|benchmark-report|benchmark-query|benchmark-spatial-query|physics-visuals|physics-viewer|cooking|bodies|broadphase|collections|collision-batching|collision-pairs|contact-optimization|constraints|intrinsics|islands|layout|narrowphase-integration|queries|public-api|release-parity|shapes|simulation|solver-kernels|sweeps|tasking-multi|tasking-single|threading|trees|utilities-bundles|utilities-math|utilities-memory)
       printf '%s\n' "${1//-/_}"
       ;;
@@ -99,6 +102,10 @@ test_package_path() {
     printf '%s/benchmarks/scene_stability\n' "$ROOT"
   elif [[ "$1" == benchmark_precision ]]; then
     printf '%s/benchmarks/large_world_precision\n' "$ROOT"
+  elif [[ "$1" == simulation_stage_work || "$1" == solver_fixed_work ]]; then
+    printf '%s/benchmarks/%s\n' "$ROOT" "$1"
+  elif [[ "$1" == solver_contacts ]]; then
+    printf '%s/benchmarks/solver_contacts\n' "$ROOT"
   elif [[ "$1" == benchmark_support ]]; then
     printf '%s/benchmarks/benchmark_support\n' "$ROOT"
   elif [[ "$1" == benchmark_query ]]; then
@@ -256,6 +263,7 @@ run_test_package() {
   local precision="${5:-float32}"
   local math_checks="${6:-off}"
   local precision_candidate="${7:-}"
+  local timeout_seconds="${8:-}"
   if [[ "$package" == benchmark_precision ]]; then package="benchmark_precision/$precision_candidate"; fi
   configure_odin_profile tests "$package" "$configuration" "$precision" "$math_checks"
   printf '[test] %s\n' "$package"
@@ -279,7 +287,18 @@ run_test_package() {
   if [[ -n "$test_names" ]]; then
     arguments+=( -define:ODIN_TEST_NAMES="$test_names" )
   fi
-  if [[ "$package" == physics_viewer ]]; then
+  if [[ -n "$timeout_seconds" ]]; then
+    local log_prefix="$ODIN_PROFILE_OUTPUT.test.$(date -u +%Y%m%dT%H%M%S%N)"
+    printf 'TEST_LOG prefix=%s deadline_seconds=%s\n' "$log_prefix" "$timeout_seconds"
+    printf '%s\n' "${arguments[@]}" > "$log_prefix.arguments.txt"
+    local status=0
+    timeout --kill-after=5s "$timeout_seconds" "$ODIN_BIN" "${arguments[@]}" > "$log_prefix.stdout.txt" 2> "$log_prefix.stderr.txt" || status=$?
+    cat "$log_prefix.stdout.txt" "$log_prefix.stderr.txt"
+    if ((status == 124 || status == 137)); then
+      printf 'TEST_TIMEOUT exit_code=%s deadline_seconds=%s forced_cleanup_seconds=5\n' "$status" "$timeout_seconds" > "$log_prefix.timeout.txt"
+    fi
+    return "$status"
+  elif [[ "$package" == physics_viewer ]]; then
     timeout --foreground 180 "$ODIN_BIN" "${arguments[@]}"
   else
     "$ODIN_BIN" "${arguments[@]}"

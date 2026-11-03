@@ -245,7 +245,7 @@ result_lane_read :: proc(path: string, worker: int, package_name: string, budget
 		column, status := header_index(records[0], "benchmark_parameters");
 		if status == .Ok && len(records[1]) == len(records[0])
 		{
-			names: [4]string = {"container", "contact_islands", "pyramid", "large_world_precision"};
+			names: [6]string = {"container", "contact_islands", "pyramid", "large_world_precision", "solver_joint_angular", "solver_fixed_work"};
 			for name in names
 			{
 				prefix: string = strings.concatenate({"workload=", name, ";"});
@@ -283,7 +283,7 @@ result_lane_read :: proc(path: string, worker: int, package_name: string, budget
 	{
 		return {}, result;
 	}
-	lane.measurement = "ray_elapsed_ms" if effective_package == "spatial_query_batch" else "physics_elapsed_ms";
+	lane.measurement = "ray_elapsed_ms" if effective_package == "spatial_query_batch" else "fixed_elapsed_ms" if workload_kind(effective_package) == .Fixed else "physics_elapsed_ms";
 	lane.unit = .Milliseconds;
 	if lane.summary.precision.mode == "memory"
 	{

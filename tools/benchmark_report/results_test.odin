@@ -51,7 +51,18 @@ visual_result_components_preserve_units_and_absence :: proc(t: ^testing.T)
 			testing.expect_value(t, unavailable, 31 if index == 0 else 48);
 			markdown: string = render_markdown(request, collected.summaries[:]);
 			testing.expect(t, strings.contains(markdown, group));
-			testing.expect(t, strings.contains(markdown, "Mean ns/API call"));
+			testing.expect_value(t, strings.count(markdown, "| Workers | Samples | Average ns/API call |"), 1);
+			testing.expect(t, !strings.contains(markdown, "| World resources | Mean ns/API call"));
+			request.baseline_source = path;
+			paired: Report_Result = generate_report(request);
+			testing.expect(t, paired.status == .Ok, paired.diagnostic);
+			if paired.status == .Ok
+			{
+				testing.expect_value(t, strings.count(paired.markdown, fmt.tprintf("Selected query: %s | 2 measured chunks of 8,192 API calls | 3 warmup chunks of 128 calls", group)), 1);
+				testing.expect_value(t, strings.count(paired.markdown, "| Threads | Baseline ns/API call | Candidate ns/API call | Gain % |"), 1);
+				testing.expect(t, !strings.contains(paired.markdown, "| World resources | Mean ns/API call"));
+				testing.expect_value(t, os.remove(fmt.tprintf("%s/README.md", path)), os.Error(nil));
+			}
 			if index == 0
 			{
 				testing.expect(t, strings.contains(markdown, "16384 calls and 32768 pair tests"));

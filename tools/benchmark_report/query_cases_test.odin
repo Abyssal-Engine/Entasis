@@ -253,7 +253,7 @@ query_case_identity_counts_and_control_history_are_preserved :: proc(t: ^testing
 	if result.status == .Ok
 	{
 		rendered: string = render_markdown(request, result.summaries[:]);
-		testing.expect(t, strings.contains(rendered, "24,576 pairs"));
+		testing.expect(t, strings.contains(rendered, "Inputs: 24576 | Passes: 1 | Pairs: 24576"));
 		testing.expect(t, strings.contains(rendered, "unmeasured"));
 		testing.expect_value(t, result.summaries[0].speedup, f64(0));
 	}

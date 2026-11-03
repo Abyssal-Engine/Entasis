@@ -17,6 +17,8 @@ Cli_Values :: struct
 	variant: string,
 	variant_count: int,
 	source_directory:   string,
+	baseline_source: string,
+	baseline_count: int,
 	package_name:       string,
 	configuration:      string,
 	runs:               string,
@@ -127,6 +129,10 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 			values.counts[0] += 1
 			value, status = cli_value(args, &index, "--source")
 			values.source_directory = value
+		case "--baseline-source":
+			values.baseline_count += 1;
+			value, status = cli_value(args, &index, "--baseline-source");
+			values.baseline_source = value;
 		case "--package":
 			values.counts[1] += 1
 			value, status = cli_value(args, &index, "--package")
@@ -171,6 +177,14 @@ parse_cli :: proc(args: []string) -> (Cli_Values, Report_Status)
 		{
 			return {}, status
 		}
+	}
+	if values.baseline_count > 1 || (values.baseline_count == 1 && values.baseline_source == "")
+	{
+		return {}, .Invalid_Arguments;
+	}
+	if (workload_kind(values.package_name) == .Domain || workload_kind(values.package_name) == .Fixed) && values.variant_count != 0
+	{
+		return {}, .Invalid_Arguments;
 	}
 	for count in values.counts
 	{
@@ -361,6 +375,7 @@ run :: proc() -> int
 		query=values.query, ray_pattern=values.ray_pattern,
 		precision=values.precision, precision_candidate=values.precision_candidate, precision_case=values.precision_case, sampling_mode=values.sampling_mode,
 		source_directory = values.source_directory,
+		baseline_source = values.baseline_source,
 		variant = values.variant,
 		package_name = values.package_name,
 		configuration = values.configuration,

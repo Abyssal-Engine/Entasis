@@ -136,6 +136,7 @@ benchmark_build_fixture :: proc(owner: ^Benchmark_Owner) -> entasis.Status
 
 benchmark_owner_create :: proc(
 owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
+timestepper: entasis.Timestepper = {}, timestep_callbacks: entasis.Timestep_Callbacks = {},
 ) -> Benchmark_Result
 {
 	owner.options = options;
@@ -147,7 +148,10 @@ owner: ^Benchmark_Owner, pool: ^entasis.Buffer_Pool, options: support.Options,
 		return {status=.Allocation_Failed};
 	}
 	owner.narrow_policy = {material=entasis.contact_material(0.5, 2, entasis.spring_settings(30, 1))};
-	status := entasis.world_init_with_pool(&owner.world, benchmark_world_description(owner, options.worker_count), pool);
+	description: entasis.World_Description = benchmark_world_description(owner, options.worker_count);
+	description.timestepper = timestepper;
+	description.timestep_callbacks = timestep_callbacks;
+	status := entasis.world_init_with_pool(&owner.world, description, pool);
 	if status != .Ok
 	{
 		return {status=.Creation_Failed, physics_status=status};
@@ -273,6 +277,7 @@ benchmark_assess :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification
 			return status
 		}
 	}
+	previous: observations.Physical_Status = q.result.status;
 	if phase == .Construction || phase == .Warmup_Construction
 	{
 		observations.qualification_bind(q, phase)
@@ -280,6 +285,10 @@ benchmark_assess :: proc(owner: ^Benchmark_Owner, q: ^observations.Qualification
 	else
 	{
 		observations.qualification_assess(q, phase, step)
+	}
+	if previous != .Fail && q.result.status == .Fail
+	{
+		islands_write_first_failure(owner, q);
 	}
 	return .Ok
 }

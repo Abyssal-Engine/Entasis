@@ -86,8 +86,8 @@ main :: proc()
 	defer os.close(file);
 	if err != nil
 	{
-		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status,precision,ray_pattern,query_execution");
+		fmt.fprintln(file, "worker_count,batch_size,ray_query_count,warmup_batches,measured_batches,ray_hit_count,ray_checksum,ray_elapsed_ms,case_status,precision,ray_pattern,query_execution,benchmark_parameters");
 	}
-	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok,%s,%s,%s", args.worker_count, BATCH_SIZE,
-		trace.RAY_QUERY_COUNT, args.warmup_batches, args.measured_batches, hits, checksum, f64(elapsed) / 1e6, entasis.PRECISION_NAME, trace.ray_pattern_name(args.ray_pattern), QUERY_EXECUTION);
+	fmt.fprintfln(file, "%d,%d,%d,%d,%d,%d,%d,%.9f,ok,%s,%s,%s,workload=spatial_query_batch;region=prepared-post-join;execution=%s;ray-pattern=%s;warmup=%d;measured=%d", args.worker_count, BATCH_SIZE,
+		trace.RAY_QUERY_COUNT, args.warmup_batches, args.measured_batches, hits, checksum, f64(elapsed) / 1e6, entasis.PRECISION_NAME, trace.ray_pattern_name(args.ray_pattern), QUERY_EXECUTION, QUERY_EXECUTION, trace.ray_pattern_name(args.ray_pattern), args.warmup_batches, args.measured_batches);
 }

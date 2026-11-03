@@ -314,12 +314,12 @@ run_hierarchy_case :: proc(args: Query_Arguments) -> e.Status
 	file, state = support.extension_csv_open(args.output);
 	if state == .Empty
 	{
-		if fmt.fprintln(file, "worker_count,case_status,metric_status,physics_elapsed_ms,benchmark_components,precision,query_case,query_operation,query_cell,input_count,passes,query_count,warmup_queries,hit_count,checksum,oracle_queries") <= 0
+		if fmt.fprintln(file, "worker_count,case_status,metric_status,physics_elapsed_ms,benchmark_components,precision,query_case,query_operation,query_cell,input_count,passes,query_count,warmup_queries,hit_count,checksum,oracle_queries,benchmark_parameters") <= 0
 		{
 			panic("hierarchy CSV header");
 		}
 	}
-	if fmt.fprintf(file, "%d,ok,ok,%.9f,all,%s,%s,%s,%s,1536,8,12288,%d,%d,%.0f,1536\n", args.workers, elapsed, e.PRECISION_NAME, args.query_case, args.query_operation, args.query_cell, 128*args.workers, hits, checksum) <= 0
+	if fmt.fprintf(file, "%d,ok,ok,%.9f,all,%s,%s,%s,%s,1536,8,12288,%d,%d,%.0f,1536,workload=query_extensions;region=dispatch-query-results;case=%s;operation=%s;cell=%s;input-count=1536;passes=8\n", args.workers, elapsed, e.PRECISION_NAME, args.query_case, args.query_operation, args.query_cell, 128*args.workers, hits, checksum, args.query_case, args.query_operation, args.query_cell) <= 0
 	{
 		panic("hierarchy CSV row");
 	}

@@ -1,5 +1,9 @@
-function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller")
+function Get-BenchmarkBinary([string]$Package, [string]$Configuration = "Release", [string]$Record = "Off", [string]$Components = "All", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller", [string]$FixedCase = "")
 {
+    if ($Package -eq "solver_fixed_work")
+    {
+        $Package += "_$FixedCase"
+    }
     if ($Package -eq "large_world_precision")
     {
         return (Join-Path $script:Root "build/benchmarks/large_world_precision/$($Configuration.ToLowerInvariant())/$PrecisionCandidate/entasis_large_world_precision.exe")
@@ -166,14 +170,24 @@ function Invoke-BenchmarkBuild([string]$OdinExe, [string]$Package, [string]$Outp
     Write-Host "BENCHMARK_BUILT package=$Package elapsed_ms=$($clock.ElapsedMilliseconds)"
 }
 
-function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller")
+function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configuration = "Release", [string]$Emit = "Executable", [string]$Components = "All", [string]$Record = "Off", [string]$Symbols = "Off", [string]$Precision = "Float32", [string]$PrecisionCandidate = "", [string]$QueryExecution = "Caller", [string]$FixedCase = "")
 {
     Assert-BenchmarkPackage $Package
-    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols $Precision $PrecisionCandidate $QueryExecution
+    [string]$output = Get-BenchmarkBinary $Package $Configuration $Record $Components $Symbols $Precision $PrecisionCandidate $QueryExecution $FixedCase
     [string[]]$profileArguments = @("-define:ENTASIS_PRECISION=$($Precision.ToLowerInvariant())")
     if ($Package -eq "spatial_query_batch")
     {
         $profileArguments += "-define:ENTASIS_QUERY_EXECUTION=$($QueryExecution.ToLowerInvariant())"
+    }
+    if ($Package -eq "solver_fixed_work")
+    {
+        [string[]]$cases = @("conserving", "convex", "cached-convex", "nonconvex", "joints", "nonconserving", "pose", "constrained-final", "free-final", "kinematic")
+        [int]$caseIndex = [Array]::IndexOf($cases, $FixedCase)
+        if ($caseIndex -lt 0)
+        {
+            throw "Unknown fixed-work case: $FixedCase"
+        }
+        $profileArguments += "-define:ENTASIS_BENCHMARK_FIXED_CASE=$caseIndex"
     }
     switch ($Configuration)
     {
@@ -197,13 +211,22 @@ function Build-Benchmark([string]$OdinExe, [string]$Package, [string]$Configurat
     if ($Emit -eq 'Assembly')
     {
         $output = Join-Path $script:Root "build/inspection/$Package/release/$Package.s"
+        if ($Package -eq "solver_fixed_work")
+        {
+            $output = Join-Path $script:Root "build/inspection/$Package/release/${Package}_$FixedCase.s"
+        }
         if ($Package -eq "large_world_precision")
         {
             $output = Join-Path $script:Root "build/inspection/$Package/release/$PrecisionCandidate/$Package.s"
         }
         elseif ($Precision -eq "Mixed64")
         {
-            $output = Join-Path $script:Root "build/inspection/$Package/release/mixed64/$Package.s"
+            [string]$assemblyName = "$Package.s"
+            if ($Package -eq "solver_fixed_work")
+            {
+                $assemblyName = "${Package}_$FixedCase.s"
+            }
+            $output = Join-Path $script:Root "build/inspection/$Package/release/mixed64/$assemblyName"
         }
         if ($Package -eq "spatial_query_batch" -and $QueryExecution -eq "Mailbox")
         {

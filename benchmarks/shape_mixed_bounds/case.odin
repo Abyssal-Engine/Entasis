@@ -75,6 +75,7 @@ Benchmark_Simulation_Owner :: struct
 	shapes: [SHAPE_TYPE_COUNT]entasis.Shape_Handle,
 	state:  Owner_State,
 	layout: Bounds_Layout,
+	body_count: int,
 }
 
 Bounds_Counters :: struct
@@ -164,22 +165,22 @@ benchmark_motion_bounds_expansion :: #force_inline proc "contextless" (
 	return;
 }
 
-benchmark_world_description :: proc(worker_count: int) -> entasis.World_Description
+benchmark_world_description :: proc(worker_count: int, body_count: int = BODY_COUNT) -> entasis.World_Description
 {
 	description := entasis.world_description_default();
 	description.gravity = {};
 	description.damping = {};
 	description.capacity = {
-		bodies=BODY_COUNT,
+		bodies=i32(body_count),
 		statics=1,
 		inactive_body_sets=1,
 		shapes_per_type=16,
 		constraints=1024,
 		initial_constraints_per_type_batch=16,
 		minimum_constraints_per_body=8,
-		broad_phase_candidates=BODY_COUNT * 2,
-		pairs=BODY_COUNT * 2,
-		collision_child_pairs=BODY_COUNT * 2,
+		broad_phase_candidates=i32(body_count * 2),
+		pairs=i32(body_count * 2),
+		collision_child_pairs=i32(body_count * 2),
 		inactive_pairs=1,
 		pending_pairs_per_worker=64,
 	};
@@ -344,6 +345,30 @@ benchmark_create_shapes :: proc(
 	return shapes, .Ok;
 }
 
+// map grouped insertion order back to the unchanged logical input sequence
+benchmark_body_index :: proc "contextless" (layout: Bounds_Layout, body_count, insertion_index: int) -> int
+{
+	if layout == .Round_Robin
+	{
+		return insertion_index;
+	}
+	remaining: int = insertion_index;
+	for type_id in 0 ..< SHAPE_TYPE_COUNT
+	{
+		count: int = body_count / SHAPE_TYPE_COUNT;
+		if type_id < body_count % SHAPE_TYPE_COUNT
+		{
+			count += 1;
+		}
+		if remaining < count
+		{
+			return remaining * SHAPE_TYPE_COUNT + type_id;
+		}
+		remaining -= count;
+	}
+	return body_count;
+}
+
 benchmark_build_fixture :: proc(owner: ^Benchmark_Simulation_Owner) -> Case_Status
 {
 	if owner == nil || owner.state != .Ready
@@ -373,13 +398,9 @@ benchmark_build_fixture :: proc(owner: ^Benchmark_Simulation_Owner) -> Case_Stat
 		entasis.body_activity(-1, 255),
 	);
 	body.collidable.maximum_speculative_margin = 4;
-	for insertion_index in 0 ..< BODY_COUNT
+	for insertion_index in 0 ..< owner.body_count
 	{
-		body_index: int = insertion_index;
-		if owner.layout == .Clustered
-		{
-			body_index = (insertion_index % 1024) * SHAPE_TYPE_COUNT + insertion_index / 1024;
-		}
+		body_index: int = benchmark_body_index(owner.layout, owner.body_count, insertion_index);
 		type_id := body_index % SHAPE_TYPE_COUNT;
 		grid_x := body_index % 128;
 		grid_z := (body_index / 128) % 72;
@@ -412,7 +433,7 @@ benchmark_build_fixture :: proc(owner: ^Benchmark_Simulation_Owner) -> Case_Stat
 		}
 	}
 	stats, stats_status := entasis.world_stats(&owner.world);
-	if stats_status != .Ok || stats.active_bodies != BODY_COUNT ||
+	if stats_status != .Ok || stats.active_bodies != owner.body_count ||
 		stats.sleeping_bodies != 0 || stats.registered_shapes != SHAPE_TYPE_COUNT ||
 		stats.registered_shape_types != SHAPE_TYPE_COUNT
 	{
@@ -426,16 +447,17 @@ benchmark_owner_create :: proc(
 	pool: ^entasis.Buffer_Pool,
 	worker_count: int,
 	layout: Bounds_Layout,
+	body_count: int = BODY_COUNT,
 ) -> Case_Status
 {
 	if owner == nil || pool == nil || owner.state != .Empty ||
-		worker_count <= 0 || worker_count > MAXIMUM_WORKER_COUNT
+		worker_count <= 0 || worker_count > MAXIMUM_WORKER_COUNT || body_count < 8 || body_count > 1_000_000
 	{
 		return .Invalid_Argument;
 	}
 	status := entasis.world_init_with_pool(
 		&owner.world,
-		benchmark_world_description(worker_count),
+		benchmark_world_description(worker_count, body_count),
 		pool,
 	);
 	if status != .Ok
@@ -444,6 +466,7 @@ benchmark_owner_create :: proc(
 	}
 	owner.state = .Ready;
 	owner.layout = layout;
+	owner.body_count = body_count;
 	fixture_status := benchmark_build_fixture(owner);
 	if fixture_status != .Ok
 	{
@@ -523,17 +546,13 @@ benchmark_validate_bounds :: proc(
 	}
 	counters^ = {};
 	view, view_status := entasis.active_body_view(&owner.world);
-	if view_status != .Ok || view.count != BODY_COUNT
+	if view_status != .Ok || view.count != owner.body_count
 	{
 		return .Validation_Failed;
 	}
 	for body_index in 0 ..< view.count
 	{
-		type_id := body_index % SHAPE_TYPE_COUNT;
-		if owner.layout == .Clustered
-		{
-			type_id = body_index / 1024;
-		}
+		type_id: int = benchmark_body_index(owner.layout, owner.body_count, body_index) % SHAPE_TYPE_COUNT;
 		collidable := &view.collidables[body_index];
 		if collidable.shape != owner.shapes[type_id]
 		{
@@ -612,9 +631,9 @@ benchmark_validate_bounds :: proc(
 		}
 		counters.body_count += 1;
 	}
-	if counters.body_count != BODY_COUNT || counters.invalid_bounds_count != 0 ||
+	if counters.body_count != owner.body_count || counters.invalid_bounds_count != 0 ||
 		counters.mismatched_bounds_count != 0 ||
-		counters.shape_type_mask != (u32(1) << SHAPE_TYPE_COUNT) - 1
+		counters.shape_type_mask != (u32(1) << u32(min(owner.body_count, SHAPE_TYPE_COUNT))) - 1
 	{
 		return .Validation_Failed;
 	}

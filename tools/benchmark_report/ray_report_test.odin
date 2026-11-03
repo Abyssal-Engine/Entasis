@@ -2,6 +2,7 @@ package benchmark_report
 
 import "core:fmt"
 import "core:mem"
+import "core:os"
 import "core:strings"
 import "core:testing"
 
@@ -217,6 +218,19 @@ spatial_query_reports_reject_mixed_execution_modes :: proc(t: ^testing.T)
 				worker, 256, value));
 		}
 		testing.expect_value(t, collect_summaries(request).status, Report_Status.Ok);
+		paired_request: Report_Request = request;
+		paired_request.baseline_source = path;
+		paired: Report_Result = generate_report(paired_request);
+		testing.expect(t, paired.status == .Ok, paired.diagnostic);
+		if paired.status == .Ok
+		{
+			timer: string = "legacy-worker-construction" if mode == "legacy" else "prepared-post-join";
+			execution: string = "caller" if mode == "legacy" else mode;
+			testing.expect_value(t, strings.count(paired.markdown, fmt.tprintf("Execution: %s | Timer: %s", execution, timer)), 1);
+			testing.expect_value(t, strings.count(paired.markdown, "Query family: all | Queries/batch: 50000 | Warmup batches: 10 | Measured batches: 100"), 1);
+			testing.expect_value(t, strings.count(paired.markdown, "Ray pattern: axial"), 1);
+			testing.expect_value(t, os.remove(fmt.tprintf("%s/README.md", path)), os.Error(nil));
+		}
 		testing.expect_value(t, result_dataset_open(&dataset, path, request.package_name).status, Report_Status.Ok);
 		result_dataset_close(&dataset);
 	}

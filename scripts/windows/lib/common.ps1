@@ -42,6 +42,9 @@ $script:TestScopeToPackage = @{
 
     "root" = "root"
     "scene-stability" = "scene_stability"
+    "benchmark-solver-contacts" = "solver_contacts"
+    "benchmark-stage-work" = "simulation_stage_work"
+    "benchmark-fixed-work" = "solver_fixed_work"
     "benchmark-support" = "benchmark_support"
     "benchmark-report" = "benchmark_report"
     "benchmark-query" = "benchmark_query"
@@ -285,7 +288,7 @@ function Get-TestPackagePath([string]$Package)
     {
         return (Join-Path $script:Root "tools\$Package")
     }
-    if ($Package -in @("benchmark_support", "scene_stability"))
+    if ($Package -in @("benchmark_support", "scene_stability", "solver_contacts", "simulation_stage_work", "solver_fixed_work"))
     {
         return (Join-Path $script:Root "benchmarks\$Package")
     }
@@ -308,7 +311,7 @@ function Get-SafeName([string]$Value)
 
 function Assert-BenchmarkPackage([string]$Package)
 {
-    if ($script:BenchmarkPackages -notcontains $Package -and $Package -notin @("pyramid_wall", "scene_stability", "large_world_precision"))
+    if ($script:BenchmarkPackages -notcontains $Package -and $Package -notin @("pyramid_wall", "scene_stability", "large_world_precision", "solver_joint_angular", "solver_fixed_work", "solver_contact_capture", "solver_contact_work", "simulation_stage_work"))
     {
         throw "Unknown benchmark package: $Package"
     }
@@ -360,7 +363,7 @@ function Assert-WorkerCount([int]$WorkerCount)
     }
 }
 
-function Get-BenchmarkResultState([string]$Path)
+function Get-BenchmarkResultState([string]$Path, [ValidateSet("Single", "Paired")][string]$Layout = "Single")
 {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($null -eq $item)
@@ -369,6 +372,18 @@ function Get-BenchmarkResultState([string]$Path)
     }
     if (-not $item.PSIsContainer)
     {
+        return "Incomplete"
+    }
+    if ($Layout -eq "Paired")
+    {
+        [string]$candidate = Join-Path $Path "candidate"
+        [string]$baseline = Join-Path $Path "baseline"
+        [object[]]$baselineLanes = @(Get-ChildItem -LiteralPath $baseline -File -Filter "workers-*.csv" -ErrorAction SilentlyContinue)
+        if ((Get-BenchmarkResultState $candidate "Single") -eq "Complete" -and
+            $baselineLanes.Count -gt 0 -and ($baselineLanes | Where-Object Length -eq 0).Count -eq 0)
+        {
+            return "Complete"
+        }
         return "Incomplete"
     }
     $report = Join-Path $Path "README.md"
@@ -383,9 +398,9 @@ function Get-BenchmarkResultState([string]$Path)
     return "Incomplete"
 }
 
-function Complete-BenchmarkResultCommit([string]$Pending, [string]$Completed)
+function Complete-BenchmarkResultCommit([string]$Pending, [string]$Completed, [ValidateSet("Single", "Paired")][string]$Layout = "Single")
 {
-    if ((Get-BenchmarkResultState $Pending) -ne "Complete")
+    if ((Get-BenchmarkResultState $Pending $Layout) -ne "Complete")
     {
         throw "Incomplete pending benchmark result: $Pending"
     }
@@ -485,7 +500,8 @@ function Invoke-TestPackage(
     [int]$Threads = $script:TestThreads,
     [string]$Precision = "Float32",
     [string]$MathChecks = "Off",
-    [string]$PrecisionCandidate = ""
+    [string]$PrecisionCandidate = "",
+    [int]$TimeoutSeconds = 0
 )
 {
     if ($Package -eq "benchmark_precision")
@@ -517,7 +533,17 @@ function Invoke-TestPackage(
     {
         $arguments += "-define:ODIN_TEST_NAMES=$Tests"
     }
-    Invoke-Checked $OdinExe $arguments
+    if ($TimeoutSeconds -gt 0)
+    {
+        [string]$logPrefix = "$([IO.Path]::ChangeExtension($script:OdinProfileOutput, 'test')).$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
+        Write-Host "TEST_LOG prefix=$logPrefix deadline_seconds=$TimeoutSeconds"
+        [IO.File]::WriteAllText("$logPrefix.arguments.txt", ($arguments -join "`n"))
+        Invoke-BoundedProcess $OdinExe $arguments $TimeoutSeconds $logPrefix "test-$Package"
+    }
+    else
+    {
+        Invoke-Checked $OdinExe $arguments
+    }
 }
 
 function Invoke-CodegenPackage([string]$OdinExe, [string]$Package, [string]$Configuration)

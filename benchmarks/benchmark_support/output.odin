@@ -63,6 +63,7 @@ write_result :: proc(
 	additional_header: string = "", additional_values: string = "",
 	timing_method: string = "",
 	physical_output: Physical_Output = .Present,
+	shape_count: int = -1, constraint_count: int = 0,
 ) -> Case_Status
 {
 	// typed canonical text contains commas but no quotes/newlines. escape quotes
@@ -95,9 +96,10 @@ write_result :: proc(
 	{
 		elapsed_text = fmt.tprintf("%.9f", sample.elapsed_ms);
 	}
-	prefix := fmt.bprintf(buffer, "%d,%d,%d,%d,%d,%d,0,%d,%d,%d,%d,ok,ok,%s,\"",
+	effective_shape_count: int = o.body_count+o.static_count if shape_count < 0 else shape_count;
+	prefix: string = fmt.bprintf(buffer, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,ok,ok,%s,\"",
 	o.worker_count, o.steps, sample.stats.active_constraints, sample.stats.active_pairs,
-	o.body_count + o.static_count, o.body_count + o.static_count,
+	o.body_count + o.static_count, effective_shape_count, constraint_count,
 	sample.stats.sleeping_bodies, sample.invalid_transform_count, sample.below_floor_count, sample.out_of_bounds_count, elapsed_text);
 	count := len(prefix);
 	for c in transmute([]byte)parameters

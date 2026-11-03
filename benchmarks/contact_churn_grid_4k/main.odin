@@ -5,7 +5,7 @@ import "core:os"
 import "core:time"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "body_count,shape_count,invalid_transform_count,below_floor_count,out_of_bounds_count,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "body_count,shape_count,invalid_transform_count,below_floor_count,out_of_bounds_count,case_status,metric_status,physics_elapsed_ms,worker_count,step_index,warmup_steps,precision,benchmark_parameters";
 
 Argument_Status :: enum u8
 {
@@ -120,7 +120,7 @@ f64_finite_state :: proc "contextless" (value: f64) -> Argument_Status
 }
 
 write_result :: proc(
-	path: string, counters: Stability_Counters, elapsed_milliseconds: f64,
+	path: string, counters: Stability_Counters, elapsed_milliseconds: f64, worker_count: int,
 ) -> Case_Status
 {
 	_, stat_error := os.stat(path, context.temp_allocator);
@@ -143,10 +143,10 @@ write_result :: proc(
 		}
 	}
 	if fmt.fprintfln(
-		file, "%d,%d,%d,%d,%d,ok,ok,%.9f",
+		file, "%d,%d,%d,%d,%d,ok,ok,%.9f,%d,%d,%d,%s,workload=contact_churn_grid_4k;region=world-step-loop;steps=%d;warmup=%d",
 		PROTOCOL_BODY_COUNT, PROTOCOL_SHAPE_COUNT,
 		counters.invalid_transform_count, counters.below_floor_count,
-		counters.out_of_bounds_count, elapsed_milliseconds,
+		counters.out_of_bounds_count, elapsed_milliseconds, worker_count, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT, entasis.PRECISION_NAME, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT,
 	) <= 0
 	{
 		_ = os.close(file);
@@ -227,7 +227,7 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Run_Result
 	{
 		return {status=.Release_Failed};
 	}
-	return {status=write_result(arguments.output_path, counters, elapsed_milliseconds)};
+	return {status=write_result(arguments.output_path, counters, elapsed_milliseconds, arguments.worker_count)};
 }
 
 main :: proc()

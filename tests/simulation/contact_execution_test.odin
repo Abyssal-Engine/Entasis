@@ -1,6 +1,7 @@
 package simulation_tests
 
 import "core:math"
+import "core:simd"
 import "core:testing"
 import physics "entasis:entasis_physics"
 import util "entasis:entasis_utilities"
@@ -75,8 +76,8 @@ contact_execution_populate :: proc(
 	type_id: int = int(physics.constraint_description_type_id(T));
 	record: ^physics.Constraint_Type_Record = &world.solver.registry.records[type_id];
 	body_count: int = int(record.body_count);
-	handles: [22]physics.Body_Handle;
-	targets: [11]physics.Constraint_Handle;
+	handles: [34]physics.Body_Handle;
+	targets: [17]physics.Constraint_Handle;
 	for lane in 0 ..< count
 	{
 		for role in 0 ..< body_count
@@ -214,7 +215,7 @@ contact_execution_populate :: proc(
 contact_execution_expect_data :: proc(
 	t: ^testing.T, actual, expected: ^physics.Simulation,
 	block: ^physics.Solver_Work_Block, description: ^$T,
-	stage: physics.Solver_Execution_Stage,
+	stage: physics.Solver_Execution_Stage, velocity_iterations: int = 4,
 )
 {
 	actual_batch: ^physics.Type_Batch = &actual.solver.active_set.batches.memory[block.batch_index].type_batches.memory[block.type_batch_index];
@@ -232,7 +233,11 @@ contact_execution_expect_data :: proc(
 			bv: [8]f32 = transmute([8]f32)b[field];
 			for lane in 0 ..< 8
 			{
-				if !testing.expectf(t, math.abs(av[lane] - bv[lane]) <= 0.0002,
+				if velocity_iterations == 1
+				{
+					testing.expect_value(t, transmute(u32)av[lane], transmute(u32)bv[lane]);
+				}
+				else if !testing.expectf(t, math.abs(av[lane] - bv[lane]) <= 0.0002,
 					"type %d stage %v bundle %d field %d lane %d impulse %g versus %g",
 					type_id, stage, bundle_index, field, lane, av[lane], bv[lane])
 				{
@@ -305,7 +310,12 @@ contact_execution_substep :: proc(
 		};
 	}
 	testing.expect_value(t, blocks[0], blocks[1]);
-	record: ^physics.Constraint_Type_Record = &expected.solver.registry.records[type_id];
+	reference_record: physics.Constraint_Type_Record = expected.solver.registry.records[type_id];
+    if velocity_iterations > 1
+    {
+        reference_record = contact_cache_original_record(reference_record);
+    }
+    record: ^physics.Constraint_Type_Record = &reference_record;
 	prepare_status, _ := physics.solver_prepare_work_blocks(&actual.solver, 4);
 	if !testing.expect_value(t, prepare_status, physics.Physics_Status.Ok)
 	{
@@ -373,8 +383,22 @@ contact_execution_substep :: proc(
 				dt, job.inverse_dt, phase, stage, 3,
 			), physics.Physics_Status.Ok);
 		}
-		contact_execution_expect_data(t, actual, expected, &blocks[0], description, stage);
+		contact_execution_expect_data(t, actual, expected, &blocks[0], description, stage, velocity_iterations);
 		ball_socket_expect_state(t, actual, expected, actual_callbacks, expected_callbacks);
+		if velocity_iterations == 1
+		{
+			actual_set: ^physics.Body_Set = &actual.bodies.sets.memory[physics.BODIES_ACTIVE_SET_INDEX];
+			expected_set: ^physics.Body_Set = &expected.bodies.sets.memory[physics.BODIES_ACTIVE_SET_INDEX];
+			for index in 0 ..< int(actual_set.count)
+			{
+				a: [27]f32 = ball_socket_body_components(actual_set.dynamics_state.memory[index]);
+				b: [27]f32 = ball_socket_body_components(expected_set.dynamics_state.memory[index]);
+				for component in 7 ..< 13
+				{
+					testing.expect_value(t, transmute(u32)a[component], transmute(u32)b[component]);
+				}
+			}
+		}
 		if stage == .Incremental_Update || mode == .Never
 		{
 			testing.expect_value(t, actual_callbacks.count, 0);
@@ -436,22 +460,25 @@ contact_execution_compare_case :: proc(
 			return;
 		}
 	}
-	contact_execution_substep(t, actual, expected, &actual_callbacks, &expected_callbacks, description, mode, 1.0 / 60.0, phase);
+	contact_execution_substep(t, actual, expected, &actual_callbacks, &expected_callbacks, description, mode, 1.0 / 60.0, phase, 1);
 }
 
 contact_execution_type_cases :: proc(t: ^testing.T, pool: ^util.Buffer_Pool, $T: typeid)
 {
 	description: T = contact_execution_description(T);
-	counts: [2]int = {8, 11};
 	modes: [3]physics.Solver_Integration_Mode = {.Always, .Conditional, .Never};
 	phases: [2]physics.Solver_Substep_Phase = {.First, .Continuation};
 	angular_modes: [3]physics.Angular_Integration_Mode = {
 		.Nonconserving, .Conserve_Momentum, .Conserve_Momentum_With_Gyroscopic_Torque,
 	};
-	for count in counts
+	for count in 1 ..= 17
 	{
 		for mode in modes
 		{
+			if count == 1 && mode == .Conditional
+			{
+				continue;
+			}
 			for phase in phases
 			{
 				for angular_mode in angular_modes
@@ -850,7 +877,12 @@ contact_cache_reference_substeps :: proc(
 				for type_index in 0 ..< int(batch.type_batch_count)
 				{
 					type_batch: ^physics.Type_Batch = &batch.type_batches.memory[type_index];
-					record: ^physics.Constraint_Type_Record = &world.solver.registry.records[type_batch.type_id];
+					reference_record: physics.Constraint_Type_Record = world.solver.registry.records[type_batch.type_id];
+                    if iteration_count > 1
+                    {
+                        reference_record = contact_cache_original_record(reference_record);
+                    }
+                    record: ^physics.Constraint_Type_Record = &reference_record;
 					for bundle_index in 0 ..< (int(type_batch.count) + 7) / 8
 					{
 						// this registered kernel recomputes coefficients on every Solve
@@ -1139,4 +1171,318 @@ convex_contact_cached_sweeps_preserve_substep_and_description_lifetimes :: proc(
 	contact_execution_lifetime_case(t, &pool, physics.Contact_4);
 	contact_cache_dispatch_lifetime_case(t, &pool, 4);
 	contact_cache_dispatch_lifetime_case(t, &pool, 10);
+}
+
+// frozen accepted-parent scalar contact equations for cached multi-sweep tests
+contact_cache_original_normal :: #force_inline proc "contextless" (
+bodies: [^]$Body, normal, offset_a, offset_b: util.Vector3_Wide,
+depth, position_error_to_velocity, effective_mass_scale, maximum_recovery_velocity, softness: util.F32x8,
+dt, inverse_dt: f32, accumulated: ^util.F32x8, active_mask: util.I32x8, $body_count: int,
+)
+{
+	_ = dt;
+	angular_a: util.Vector3_Wide = util.vector3_wide_cross(offset_a, normal);
+	inverse_effective_mass: util.F32x8 = simd.add(
+	bodies[0].inverse_mass,
+	util.symmetric3x3_wide_vector_sandwich(angular_a, bodies[0].inverse_inertia)
+	);
+	csv: util.F32x8 = simd.add(
+	util.vector3_wide_dot(bodies[0].linear_velocity, normal),
+	util.vector3_wide_dot(bodies[0].angular_velocity, angular_a)
+	);
+	when body_count == 2
+	{
+		angular_b: util.Vector3_Wide = util.vector3_wide_cross(normal, offset_b);
+		inverse_effective_mass = simd.add(
+		inverse_effective_mass,
+		simd.add(
+		bodies[1].inverse_mass,
+		util.symmetric3x3_wide_vector_sandwich(angular_b, bodies[1].inverse_inertia)
+		)
+		);
+		csv = simd.add(
+		simd.sub(csv, util.vector3_wide_dot(bodies[1].linear_velocity, normal)),
+		util.vector3_wide_dot(bodies[1].angular_velocity, angular_b)
+		);
+	}
+	effective_mass: util.F32x8 = simd.div(effective_mass_scale, inverse_effective_mass);
+	bias: util.F32x8 = simd.min(
+	simd.mul(depth, util.F32x8(inverse_dt)),
+	simd.min(simd.mul(depth, position_error_to_velocity), maximum_recovery_velocity)
+	);
+	negated_csi: util.F32x8 = simd.add(simd.mul(accumulated^, softness), simd.mul(simd.sub(csv, bias), effective_mass));
+	previous: util.F32x8 = accumulated^;
+	accumulated^ = simd.max(util.F32x8(0), simd.sub(accumulated^, negated_csi));
+	accumulated^ = physics.constraint_kernel_mask_scalar(accumulated^, active_mask);
+	csi: util.F32x8 = physics.constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
+	physics.constraint_contact_penetration_apply(bodies, normal, offset_a, offset_b, csi, active_mask, body_count);
+}
+
+contact_cache_original_tangent :: #force_inline proc "contextless" (
+bodies: [^]$Body, tangent_x, tangent_y, offset_a, offset_b: util.Vector3_Wide,
+maximum_impulse: util.F32x8, accumulated: ^util.Vector2_Wide, active_mask: util.I32x8, $body_count: int,
+)
+{
+	linear_jacobian: util.Matrix2x3_Wide = util.Matrix2x3_Wide{tangent_x, tangent_y};
+	angular_a: util.Matrix2x3_Wide = util.Matrix2x3_Wide{
+		util.vector3_wide_cross(offset_a, tangent_x),
+		util.vector3_wide_cross(offset_a, tangent_y),
+	};
+	inverse_effective_mass: util.Symmetric2x2_Wide = util.symmetric2x2_wide_add(
+	util.symmetric2x2_wide_sandwich_scale(linear_jacobian, bodies[0].inverse_mass),
+	util.symmetric3x3_wide_matrix_sandwich(angular_a, bodies[0].inverse_inertia),
+	);
+	csv_linear: util.Vector2_Wide = util.vector2_wide_scale(
+	util.matrix2x3_wide_transform_by_transpose(bodies[0].linear_velocity, linear_jacobian),
+	-1
+	);
+	csv_angular: util.Vector2_Wide = util.vector2_wide_scale(
+	util.matrix2x3_wide_transform_by_transpose(bodies[0].angular_velocity, angular_a),
+	-1
+	);
+	when body_count == 2
+	{
+		angular_b: util.Matrix2x3_Wide = util.Matrix2x3_Wide{
+			util.vector3_wide_cross(tangent_x, offset_b),
+			util.vector3_wide_cross(tangent_y, offset_b),
+		};
+		inverse_effective_mass = util.symmetric2x2_wide_add(inverse_effective_mass, util.symmetric2x2_wide_add(
+		util.symmetric2x2_wide_sandwich_scale(linear_jacobian, bodies[1].inverse_mass),
+		util.symmetric3x3_wide_matrix_sandwich(angular_b, bodies[1].inverse_inertia),
+		));
+		csv_linear = util.vector2_wide_add(
+		csv_linear,
+		util.matrix2x3_wide_transform_by_transpose(bodies[1].linear_velocity, linear_jacobian)
+		);
+		csv_angular = util.vector2_wide_subtract(
+		csv_angular,
+		util.matrix2x3_wide_transform_by_transpose(bodies[1].angular_velocity, angular_b)
+		);
+	}
+	csi: util.Vector2_Wide = util.symmetric2x2_wide_transform(
+	util.vector2_wide_add(csv_linear, csv_angular),
+	util.symmetric2x2_wide_invert(inverse_effective_mass)
+	);
+	previous: util.Vector2_Wide = accumulated^;
+	accumulated^ = util.vector2_wide_add(accumulated^, csi);
+	magnitude: util.F32x8 = util.vector2_wide_length(accumulated^);
+	scale: util.F32x8 = simd.min(util.F32x8(1), simd.div(maximum_impulse, simd.max(util.F32x8(1e-16), magnitude)));
+	accumulated^ = physics.constraint_kernel_mask_vector2(util.vector2_wide_scale(accumulated^, scale), active_mask);
+	csi = physics.constraint_kernel_mask_vector2(util.vector2_wide_subtract(accumulated^, previous), active_mask);
+	physics.constraint_contact_tangent_apply(bodies, tangent_x, tangent_y, offset_a, offset_b, csi, active_mask, body_count);
+}
+
+contact_cache_original_twist :: #force_inline proc "contextless" (
+bodies: [^]$Body, normal: util.Vector3_Wide, maximum_impulse: util.F32x8,
+accumulated: ^util.F32x8, active_mask: util.I32x8, $body_count: int,
+)
+{
+	inverse_effective_mass: util.F32x8 = util.symmetric3x3_wide_vector_sandwich(normal, bodies[0].inverse_inertia);
+	csv: util.F32x8 = util.vector3_wide_dot(bodies[0].angular_velocity, normal);
+	when body_count == 2
+	{
+		inverse_effective_mass = simd.add(
+		inverse_effective_mass,
+		util.symmetric3x3_wide_vector_sandwich(normal, bodies[1].inverse_inertia)
+		);
+		csv = simd.sub(csv, util.vector3_wide_dot(bodies[1].angular_velocity, normal));
+	}
+	effective_mass: util.F32x8 = util.wide_select_f32(
+	transmute(util.I32x8)simd.lanes_eq(inverse_effective_mass, util.F32x8(0)),
+	util.F32x8(0),
+	simd.div(util.F32x8(1), inverse_effective_mass)
+	);
+	previous: util.F32x8 = accumulated^;
+	accumulated^ = simd.max(
+	simd.neg(maximum_impulse),
+	simd.min(maximum_impulse, simd.sub(accumulated^, simd.mul(csv, effective_mass)))
+	);
+	accumulated^ = physics.constraint_kernel_mask_scalar(accumulated^, active_mask);
+	csi: util.F32x8 = physics.constraint_kernel_mask_scalar(simd.sub(accumulated^, previous), active_mask);
+	physics.constraint_contact_twist_apply(bodies, normal, csi, active_mask, body_count);
+}
+
+contact_cache_original_solve :: proc "contextless" (
+prestep_raw: rawptr, bodies: [^]$Body, dt, inverse_dt: f32,
+impulses_raw: rawptr, active_mask: util.I32x8, $body_count, $contact_count: int,
+)
+{
+
+	contacts: [^]physics.Convex_Contact_Wide = ([^]physics.Convex_Contact_Wide)(prestep_raw);
+	cursor: uintptr = uintptr(prestep_raw) + uintptr(contact_count * size_of(physics.Convex_Contact_Wide));
+	offset_b: util.Vector3_Wide = util.Vector3_Wide{};
+	when body_count == 2
+	{
+		offset_b = (^util.Vector3_Wide)(rawptr(cursor))^;
+		cursor += uintptr(size_of(util.Vector3_Wide));
+	}
+	normal: util.Vector3_Wide = (^util.Vector3_Wide)(rawptr(cursor))^;
+	cursor += uintptr(size_of(util.Vector3_Wide));
+	material: ^physics.Contact_Material_Wide = (^physics.Contact_Material_Wide)(rawptr(cursor));
+	tangent: ^util.Vector2_Wide = (^util.Vector2_Wide)(impulses_raw);
+	penetrations: [^]util.F32x8 = ([^]util.F32x8)(rawptr(uintptr(impulses_raw) + uintptr(2 * size_of(util.F32x8))));
+	twist: ^util.F32x8 = (^util.F32x8)(rawptr(uintptr(impulses_raw) + uintptr((2 + contact_count) * size_of(util.F32x8))));
+	tangent_x, tangent_y: util.Vector3_Wide;
+	tangent_x, tangent_y = physics.constraint_kernel_build_orthonormal_basis(normal);
+	friction_center_a: util.Vector3_Wide = physics.constraint_contact_friction_center(contacts, contact_count);
+	friction_center_b: util.Vector3_Wide = util.vector3_wide_subtract(friction_center_a, offset_b);
+
+	position_error_to_velocity, effective_mass_scale, softness: util.F32x8 = physics.spring_settings_wide_compute(
+	material.spring_settings,
+	dt
+	);
+	for contact_index: int = 0; contact_index < contact_count; contact_index += 1
+	{
+		contact_offset_b: util.Vector3_Wide = util.vector3_wide_subtract(contacts[contact_index].offset_a, offset_b);
+		contact_cache_original_normal(
+		bodies, normal, contacts[contact_index].offset_a, contact_offset_b, contacts[contact_index].depth,
+		position_error_to_velocity, effective_mass_scale, material.maximum_recovery_velocity, softness,
+		dt, inverse_dt, &penetrations[contact_index], active_mask, body_count,
+		);
+
+	}
+	total_penetration: util.F32x8 = util.F32x8(0);
+	maximum_twist_radius_impulse: util.F32x8 = util.F32x8(0);
+	for contact_index: int = 0; contact_index < contact_count; contact_index += 1
+	{
+		total_penetration = simd.add(total_penetration, penetrations[contact_index]);
+		when contact_count == 1
+		{
+			maximum_twist_radius_impulse = simd.mul(
+			penetrations[contact_index],
+			simd.max(util.F32x8(0), contacts[contact_index].depth)
+			);
+		}
+		else
+		{
+			radius: util.F32x8 = util.vector3_wide_length(util.vector3_wide_subtract(
+			friction_center_a,
+			contacts[contact_index].offset_a
+			));
+			maximum_twist_radius_impulse = simd.add(
+			maximum_twist_radius_impulse,
+			simd.mul(penetrations[contact_index], radius)
+			);
+		}
+	}
+	contact_cache_original_tangent(
+	bodies,
+	tangent_x,
+	tangent_y,
+	friction_center_a,
+	friction_center_b,
+	simd.mul(material.friction_coefficient, total_penetration),
+	tangent,
+	active_mask,
+	body_count
+	);
+	contact_cache_original_twist(
+	bodies,
+	normal,
+	simd.mul(material.friction_coefficient, maximum_twist_radius_impulse),
+	twist,
+	active_mask,
+	body_count
+	);
+}
+
+
+contact_cache_original_kernel :: proc($body_count, $contact_count: int) -> physics.Constraint_Kernel_Proc
+{
+	return proc "contextless" (
+	prestep_raw: rawptr, bodies: ^[4]physics.Constraint_Kernel_Body_Wide, dt, inverse_dt: f32,
+	impulses_raw: rawptr, active_mask: util.I32x8, phase: physics.Constraint_Kernel_Phase,
+	)
+	{
+		if phase == .Warmstart && contact_count == 4
+		{
+			contact_cache_original_warmstart(prestep_raw, &bodies[0], impulses_raw, active_mask, body_count, contact_count);
+		}
+		else if phase == .Solve
+		{
+			contact_cache_original_solve(prestep_raw, &bodies[0], dt, inverse_dt, impulses_raw, active_mask, body_count, contact_count);
+		}
+		else
+		{
+			physics.constraint_contact_convex_kernel(prestep_raw, &bodies[0], dt, inverse_dt, impulses_raw, active_mask, phase, body_count, contact_count);
+		}
+	};
+}
+
+contact_cache_original_record :: proc(record: physics.Constraint_Type_Record) -> physics.Constraint_Type_Record
+{
+	result: physics.Constraint_Type_Record = record;
+	switch record.type_id
+	{
+		case physics.CONTACT_1_ONE_BODY_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(1, 1);
+		case physics.CONTACT_2_ONE_BODY_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(1, 2);
+		case physics.CONTACT_3_ONE_BODY_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(1, 3);
+		case physics.CONTACT_4_ONE_BODY_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(1, 4);
+		case physics.CONTACT_1_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(2, 1);
+		case physics.CONTACT_2_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(2, 2);
+		case physics.CONTACT_3_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(2, 3);
+		case physics.CONTACT_4_TYPE_ID:
+		result.prestep_warmstart_solve = contact_cache_original_kernel(2, 4);
+	}
+	return result;
+}
+
+contact_cache_original_warmstart :: proc "contextless" (
+prestep_raw: rawptr, bodies: [^]$Body, impulses_raw: rawptr, active_mask: util.I32x8,
+$body_count, $contact_count: int,
+)
+{
+
+	contacts: [^]physics.Convex_Contact_Wide = ([^]physics.Convex_Contact_Wide)(prestep_raw);
+	cursor: uintptr = uintptr(prestep_raw) + uintptr(contact_count * size_of(physics.Convex_Contact_Wide));
+	offset_b: util.Vector3_Wide = util.Vector3_Wide{};
+	when body_count == 2
+	{
+		offset_b = (^util.Vector3_Wide)(rawptr(cursor))^;
+		cursor += uintptr(size_of(util.Vector3_Wide));
+	}
+	normal: util.Vector3_Wide = (^util.Vector3_Wide)(rawptr(cursor))^;
+	cursor += uintptr(size_of(util.Vector3_Wide));
+
+	tangent: ^util.Vector2_Wide = (^util.Vector2_Wide)(impulses_raw);
+	penetrations: [^]util.F32x8 = ([^]util.F32x8)(rawptr(uintptr(impulses_raw) + uintptr(2 * size_of(util.F32x8))));
+	twist: ^util.F32x8 = (^util.F32x8)(rawptr(uintptr(impulses_raw) + uintptr((2 + contact_count) * size_of(util.F32x8))));
+	tangent_x, tangent_y: util.Vector3_Wide;
+	tangent_x, tangent_y=physics.constraint_kernel_build_orthonormal_basis(normal);
+	friction_center_a: util.Vector3_Wide=physics.constraint_contact_friction_center(contacts, contact_count);
+	friction_center_b: util.Vector3_Wide=util.vector3_wide_subtract(friction_center_a, offset_b);
+
+	physics.constraint_contact_tangent_apply(
+	bodies,
+	tangent_x,
+	tangent_y,
+	friction_center_a,
+	friction_center_b,
+	tangent^,
+	active_mask,
+	body_count
+	);
+	for contact_index: int = 0; contact_index < contact_count; contact_index += 1
+	{
+		contact_offset_b: util.Vector3_Wide = util.vector3_wide_subtract(contacts[contact_index].offset_a, offset_b);
+		physics.constraint_contact_penetration_apply(
+		bodies,
+		normal,
+		contacts[contact_index].offset_a,
+		contact_offset_b,
+		penetrations[contact_index],
+		active_mask,
+		body_count
+		);
+	}
+	physics.constraint_contact_twist_apply(bodies, normal, twist^, active_mask, body_count);
+	return;
+
 }

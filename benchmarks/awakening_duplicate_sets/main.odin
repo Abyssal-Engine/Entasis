@@ -5,7 +5,7 @@ import "core:os"
 import "core:time"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "sleeping_body_count,active_body_count,awakened_body_count,inactive_set_count,expected_pair_count,pair_count,invalid_transform_count,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "sleeping_body_count,active_body_count,awakened_body_count,inactive_set_count,expected_pair_count,pair_count,invalid_transform_count,case_status,metric_status,physics_elapsed_ms,worker_count,step_index,precision,benchmark_parameters";
 
 parse_worker_count :: proc "contextless" (value: string) -> (int, bool)
 {
@@ -34,7 +34,7 @@ parse_worker_count :: proc "contextless" (value: string) -> (int, bool)
 	return result, true;
 }
 
-write_result :: proc(path: string, result: Run_Result) -> bool
+write_result :: proc(path: string, result: Run_Result, worker_count: int) -> bool
 {
 	_, stat_error := os.stat(path, context.temp_allocator);
 	write_header := stat_error != nil;
@@ -49,10 +49,10 @@ write_result :: proc(path: string, result: Run_Result) -> bool
 		return false;
 	}
 	ok := fmt.fprintfln(
-		file, "%d,%d,%d,%d,%d,%d,%d,ok,ok,%.9f",
+		file, "%d,%d,%d,%d,%d,%d,%d,ok,ok,%.9f,%d,1,%s,workload=awakening_duplicate_sets;region=world-step;steps=1",
 		SLEEPING_BODY_COUNT, ACTIVE_BODY_COUNT, SLEEPING_BODY_COUNT,
 		result.inactive_set_count, EXPECTED_PAIR_COUNT, result.pair_count,
-		result.invalid_transform_count, result.elapsed_ms,
+		result.invalid_transform_count, result.elapsed_ms, worker_count, entasis.PRECISION_NAME,
 	) > 0;
 	if os.close(file) != nil
 	{
@@ -143,7 +143,7 @@ main :: proc()
 		);
 		os.exit(2);
 	}
-	if !write_result(output_path, result)
+	if !write_result(output_path, result, worker_count)
 	{
 		os.exit(2);
 	}

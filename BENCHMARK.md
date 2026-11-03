@@ -1,6 +1,6 @@
 # Benchmarks
 
-Published Entasis performance baselines, measured on Windows 11 with an Intel Core i7-13700K and 24 logical processors. Worker counts include the caller and CPU placement is unpinned. Compiler identity and measurement date belong to each dated result set
+Published Entasis performance baselines, measured on Windows 11 with an Intel Core i7-13700K and 24 logical processors. Worker counts include the caller and CPU placement is unpinned. Compiler identity and measurement date belong to each dated result set. The timing tables describe that machine and setup, without a cross-device comparison
 
 ## Simulation baselines
 
@@ -20,7 +20,7 @@ The notation is **velocity iterations per substep x substeps per simulation step
 | 2x2     |                               2 |                       2 | `-VelocityIterations 2 -Substeps 2` |
 | 1x4     |                               1 |                       4 | `-VelocityIterations 1 -Substeps 4` |
 
-All profiles perform four velocity iterations across the full step, but their substep work and resulting trajectories differ. Equal iteration totals do not establish equal performance or accuracy. Current large-world production qualification uses 1x4. The dated tables below preserve their original three-profile measurements
+All profiles perform four velocity iterations across the full step, but their substep work and resulting trajectories differ. Equal iteration totals do not establish equal performance or accuracy. The dated tables below preserve their original three-profile measurements
 
 ![Simulation step time by worker count for the 4x1, 2x2 and 1x4 solver profiles](results/simulation-baselines.svg)
 
@@ -139,14 +139,18 @@ The simulation fixtures use 60 Hz, gravity `(0, -10, 0)` and zero damping. The S
 - **Box Container:** 10,000 dynamic boxes in a 25 x 16 x 25 pile, five static colliders and sleeping disabled. A disposable world runs 30 warmup steps, then a fresh world in the same pool runs 300 measured steps
 - **Contact Islands:** 10,000 dynamic boxes in 50 stacks of 5 x 8 x 5, 50 static floors and sleeping disabled, with components common. The same world runs 30 warmup steps and then 300 measured steps
 - **Full Pyramid:** 16,206 cubes, four sphere projectiles and one floor, with sleeping disabled in the current baseline. The fixture default uses sleeping enabled. No warmup and 600 measured steps, with projectile launch inside step index 120
-- **Closest-ray batches:** 50,000 closest rays per frame through `entasis.query_batch`, in batches of 256. Ten warmup frames and 100 measured frames
+- **Closest-ray batches:** 50,000 prepared closest rays per batch. Both caller and mailbox execution submit at most 256 inputs per `entasis.query_batch` call under the same worker partition. Ten warmup batches and 100 measured batches
 - **Mixed spatial queries:** 10,000 static boxes and 100,000 queries per batch: 50,000 closest rays, 25,000 sphere casts with radius 0.5 and 25,000 AABB overlap-presence queries. Ten warmup batches and 100 measured batches
 
 Simulation timing excludes setup, warmup, validation and teardown. The retained Box Container baseline times the whole step loop. Current Verify On and recording On sum native step intervals, with assessment and capture after each interval. Verify Off with recording Off retains whole-loop timing. Contact Islands, Ragdolls and Pyramid sum per-step times, including Pyramid's launch work. Divide each process total by its measured step count before taking the median
 
+Contact Islands with recording Off also retains each measured native step as `STEP_TIMING step=<one-based-index> elapsed_ns=<integer>` in process stdout. Its CSV appends `step_p50_ms`, `step_p95_ms`, `step_p99_ms` and `step_max_ms`, computed after measurement using nearest rank over that process's steps. These are individual-step observations within one process, separate from the process-mean tables above. Recording On leaves the four fields `unavailable` and preserves its existing timing and capture path
+
+`shape_mixed_bounds` measures production bounds prediction for 9,216 bodies across nine shape types, first round-robin and then grouped into 1,024 bodies per type. Both layouts contain the same authored shapes, poses and velocities. Each layout runs 30 warmup calls and 3,000 timed `world_stage_predict_bounds` calls on the same world and dispatcher, with unchanged body inputs. New rows record warmup-cycle=same-owner-predict. Earlier rows without that token warmed a disposable world and measured a fresh world, and belong to a separate preparation cohort. The independent bounds oracle uses the unchanged 2e-4 tolerance outside timing. `physics_elapsed_ms` retains the round-robin result and `bounds_clustered_ms` reports the clustered result. Counts describe one layout. Construction uses one velocity iteration and four substeps, but this stage measurement executes no solver and is not full-step timing
+
 Both query packages accept `-RayPattern axial|oblique` on Windows, default axial. Axial preserves the published inputs. Oblique rays use one unit dominant component and two components of magnitude 1/64, projecting hit origins toward target centers and directing misses outward. Sphere casts and overlaps stay unchanged. CSVs record `ray_pattern`, and reports reject mixed patterns. Oblique results use a separate `oblique` directory below the package, before the optional precision directory
 
-Query timing includes submission, output writes, hit counting and dispatch. Setup, allocation, warmup and result validation are outside timing. The ray report records elapsed milliseconds for all measured frames. Throughput is `ray_query_count * measured_batches / (ray_elapsed_ms * 1000)` in millions of rays per second. Mixed-query CSVs record throughput in `queries_per_second`
+Closest-ray batch timing includes dispatch/session entry and exit, query work, result writes, and one common caller-side status validation, hit projection/counting and checksum pass after join. Complete input construction, context reservation, setup, allocation, warmup, scalar reference checks and teardown are outside timing. Both execution modes use the same complete input/result workspace. Historical closest-ray timings included input construction and consumption inside worker chunks and are not comparable to this timer. Mixed spatial query timing retains its existing boundary. The ray report records elapsed milliseconds for all measured frames. Throughput is `ray_query_count * measured_batches / (ray_elapsed_ms * 1000)` in millions of rays per second. Mixed-query CSVs record throughput in `queries_per_second`
 
 ## Physical qualification
 
@@ -159,84 +163,6 @@ Shape limits are whole-box authored-slot excess and assigned-neighbor compressio
 CSV fields record verification mode, criterion, outcome, coverage, counts, limits, first breach, worst observations and projectile cutoff. Zero-based body identities refer to the authored fixture, and step numbers count completed work units. A physical breach remains Fail after recovery or impact. Completed timing rows retain `case_status=ok,metric_status=ok` before physical Fail returns status 2. Run preserves the pending CSV/logs and finalized recording, stops later repeats/workers and publishes no successful report
 
 Verification On changes Container timing to `native_step_sum`, while recording Off plus verification Off retains `whole_loop`. Islands and Pyramid retain native step intervals, including Pyramid launch work. Verification mode is included in new canonical parameters. Assessment and recording can affect caches and wall time outside those intervals, so compare only compatible routes
-
-Linux Islands Build/Run accept `--components common|all` and default to All. Common uses distinct `_common` prepared images and avoids the separate restitution/trigger component workloads during focused physical checks
-
-## Reproduction
-
-The [physics viewer](tools/physics_viewer/README.md#replay) reads saved CSVs without executing workloads. The September 27 baselines use recording Off and have no associated replay. Visual frame times are not benchmark measurements
-
-Run from the repository root in PowerShell 7 on an otherwise idle machine. Explicit Build uses the declared compiler selection described in [Building](docs/BUILDING.md#toolchain-selection). Select the measured compiler and source to reproduce a dated baseline. Run uses the prepared producer and reporter without discovering a compiler
-
-The following commands measure five processes per worker for each solver profile, with explicit sleeping, recording, warmup and measured-step conditions
-
-```powershell
-$settings = @{
-    Configuration = 'Release'
-    Runs = 5
-    Workers = '1,2,3,4,5,6,8,10,12,14,16,24'
-    TimeoutSeconds = 900
-    Sleep = 'disabled'
-    Record = 'Off'
-    TimestepHz = 60
-}
-$profiles = @(
-    @{ Name = '4x1'; Iterations = 4; Substeps = 1 },
-    @{ Name = '2x2'; Iterations = 2; Substeps = 2 },
-    @{ Name = '1x4'; Iterations = 1; Substeps = 4 }
-)
-.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package container -Record Off
-.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package contact_islands -Components Common -Record Off
-.\scripts\windows\benchmarks\build_benchmarks.ps1 -Configuration Release -Package pyramid -Record Off
-foreach ($profile in $profiles)
-{
-    $solver = @{
-        Shape = 'box'
-        Variant = "box-$($profile.Name)-awake"
-        VelocityIterations = $profile.Iterations
-        Substeps = $profile.Substeps
-    }
-    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package container -Steps 300 -WarmupSteps 30
-    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package contact_islands -Components Common -Steps 300 -WarmupSteps 30
-    .\scripts\windows\benchmarks\run_benchmark.ps1 @settings @solver -Package pyramid -Steps 600 -WarmupSteps 0
-}
-```
-
-The 900-second ceiling applies to each selected profile's measurement and reporting phase. Build is outside that clock. Successful runs write CSVs and a report under `build/benchmark-results/windows_amd64/`. Each attempt gets a fresh `<attempt>.pending/` directory and publishes as `<attempt>/` only after samples, recordings and reporting succeed. Failed attempts and earlier completed runs are retained
-
-Ragdoll and query workloads retain separate dated results. Their native Build/Run package names are `ragdoll_stair_tumble`, `spatial_query_batch` and `spatial_query_trace`. Solver-profile and sleeping overrides above apply to the three configurable simulation workloads
-
-## Linux runs and result promotion
-
-Linux Build uses the declared compiler selection by default, with an optional build-only `--odin <absolute-native-executable>` override. Linux Run requires prepared executables and no compiler
-
-```sh
-./scripts/linux/benchmarks/build_benchmarks.sh --package container --configuration release --record off
-./scripts/linux/benchmarks/run_benchmark.sh \
-    --package container --shape box --variant box-default \
-    --runs 5 \
-    --workers 1,2,3,4 \
-    --configuration release
-```
-
-Successful runs publish raw worker CSVs and `README.md` in a new `build/benchmark-results/linux_amd64/<package>/<variant>/<configuration>/<attempt>/`. Failed work remains in its unique `<attempt>.pending/` directory. Promote an accepted Release result explicitly:
-
-```sh
-./scripts/linux/benchmarks/promote_benchmark.sh --package container --variant box-default --name accepted-result-name \
-    --run-directory build/benchmark-results/linux_amd64/container/box-default/release/COMPLETED-ATTEMPT
-```
-
-PowerShell scripts provide the Windows equivalent. Explicit Build compiles the selected producer and matching reporter. Run uses the prepared binaries without checking source or toolchain freshness, so rebuild explicitly after either changes. Missing binaries name the required Build command before any result directory or workload is created. Compiler provenance in new reports is unavailable for the prepared binary, while source metadata embedded during Build is preserved
-
-Windows `contact_islands`, `custom_extensions` and `query_extensions` artifacts end in `_common.exe` or `_all.exe` in Release, Development and recorded paths. For example, `build/benchmarks/entasis_contact_islands_all.exe` and `build/benchmarks/recorded/release/contact_islands_common.exe`. Build and Run for the same selected artifacts must run sequentially
-
-`BENCHMARK_PREPARED` covers native script entry, shared initialization, admission and result preparation. `BENCHMARK_STAGE stage=report workload_ms=` covers the sample phase, including setup, warmup, recording and bookkeeping. `BENCHMARK_REPORT` covers reporting, while `BENCHMARK_ELAPSED` covers the sample and reporting phases. None is pure physics time. GUI Total elapsed also includes host startup and, for Build and benchmark, compilation
-
-Promotion copies `README.md`, `workers-*.csv` and their declared finalized recordings into `results/<package>/<variant>/<name>/`, leaving process logs in ignored build output. It never overwrites an existing destination
-
-Compare builds on the same machine with the same compiler, flags, affinity, workload, warmup and timed region
-
-Windows Run accepts `-ProcessorAffinity MASK`. MASK is a positive decimal UInt64 bitmask of logical processors, such as 4 for logical CPU 2. Supply `-TimeoutSeconds` with this option. The mask must be within the command process's current eligible processors, with at least one selected processor per requested worker. Systems above 64 logical processors are unsupported for this selector and reject before result creation. The producer inherits the selected mask at process creation; the command immediately restores its own mask and checks the child's effective mask. Requested/effective masks appear in normal process and invocation logs, and the report's reproduction command preserves the option. Reporters retain the command's original affinity. Omission preserves existing inheritance. This controls eligible logical CPUs without reserving them or changing power, priority or frequency policy
 
 ## Configurable workloads
 
@@ -272,7 +198,7 @@ Invalid, duplicate, unknown and inapplicable options are rejected before physics
 
 Reports record effective settings in `benchmark_parameters` and reject mismatched samples
 
-Variant names use `[A-Za-z0-9][A-Za-z0-9._-]*`. Each variant retains its own completed attempts. Promotion requires the variant for configurable workloads. Other packages omit it from the result path
+Variant names use `[A-Za-z0-9][A-Za-z0-9._-]*`. Reports identify each configurable workload by its variant and effective settings
 
 ## Extension workloads
 
@@ -282,7 +208,7 @@ Selected `query_extensions` cells, supported operations and independent geometry
 
 ### Selected Windows query measurements
 
-The Windows runner accepts the controls below. Build the selected package before Run
+The query cases use the following workload selectors and repetition counts
 
 | Run option | Package | Meaning and default |
 | --- | --- | --- |
@@ -312,20 +238,13 @@ The extension fixtures use a sphere, a compound with two spheres, a two-triangle
 
 Focused extensions allocate the original sample buffer, restart the original input sequence for each chunk and validate every chunk outside timing. Reported time sums measured chunks. Other group cells and complete Common/All totals are excluded. Mean ns/API call divides the accumulated time by 8,192*N. Collision batch reports API calls and pair tests separately. The loop is serial, so worker counts configure world resources and timing ratios do not establish parallel query scaling. Repetitions within one process are one observation, not independent samples
 
-Spatial reports normalize totals to milliseconds per measured batch. Trace executes 100,000 queries per batch for all, 50,000 for ray or 25,000 for either other family. Skipped counts, hits, checksums, durations and rates are excluded. Hits and checksums retain their per-batch meanings. Setup, validation and output remain outside timing. Neither spatial aggregates nor repeated extension chunks supply p95/p99 latency distributions
+Spatial reports normalize totals to milliseconds per measured batch. Trace executes 100,000 queries per batch for all, 50,000 for ray or 25,000 for either other family. Skipped counts, hits, checksums, durations and rates are excluded. Hits and checksums retain their per-batch meanings. Scalar reference validation and CSV output remain outside timing; the prepared closest-ray batch timer includes its common post-join validation/checksum pass. Neither spatial aggregates nor repeated extension chunks supply p95/p99 latency distributions
 
-Current CSVs include the compiled precision, and spatial CSVs also record `ray_pattern`. Focused extension rows add selection and repetition metadata, while single-family trace rows add `query_family`. Readers retain an unspecified profile for historical rows without precision, interpret a missing pattern as axial and treat absent selection metadata as the complete workload. Historical precision must be established from the retained source. Reports and saved datasets reject incompatible selections, counts, components, precision and patterns. The viewer keeps focused results readable but requires the report's CLI command to relaunch selected groups, single trace families or nondefault spatial counts
-
-```powershell
-.\scripts\windows\benchmarks\run_benchmark.ps1 -Package query_extensions -Components Common -Configuration Release -Precision Float32 -Workers 1 -Runs 1 -QueryGroup convex.direct_collision -QueryRepetitions 512 -QueryWarmupRepetitions 64 -TimeoutSeconds 60
-.\scripts\windows\benchmarks\run_benchmark.ps1 -Package spatial_query_trace -Configuration Release -Precision Float32 -Workers 1 -Runs 1 -QueryFamily aabb-presence -WarmupBatches 10 -MeasuredBatches 1000 -TimeoutSeconds 60
-```
-
-Run uses the prepared images and creates a unique attempt at the existing package/pattern/precision depth. Malformed admitted values and wrong package combinations fail with status 2 before producer launch or output creation. Native parameter-binding errors retain PowerShell's status. Failed pending CSVs and process logs survive, and publication requires matching emitted settings plus a successful report. Freeze work counts before comparing sources
+Current CSVs include the compiled precision, and spatial CSVs also record `ray_pattern`. Focused extension rows add selection and repetition metadata, while single-family trace rows add `query_family`. Readers retain an unspecified profile for historical rows without precision, interpret a missing pattern as axial and treat absent selection metadata as the complete workload. Historical precision must be established from the retained source. Reports and saved datasets reject incompatible selections, counts, components, precision and patterns
 
 ## Optional playback recording
 
-On Windows, `-Record Off|On` selects distinct producer artifacts. CLI and fresh/reset GUI launches default Off. Save replay exposes explicit Off/On segments for supported cases. Container, baseline contact islands, pyramid, ragdoll stair tumble, noncontact constraint mix and noncontact fallback smoke record the actual measured world. Other packages reject On
+Recording Off and On identify distinct measurement conditions. Container, baseline contact islands, pyramid, ragdoll stair tumble, noncontact constraint mix and noncontact fallback smoke can record the actual measured world
 
 On accepts `-Compression lz4|lz4hc` and `-MemoryMiB 64..16384`, defaulting to LZ4 and 512 MiB. Each worker/repeat owns a fresh finalized recording. The CSV's relative `recording_path` and `recording_component` associate it with the exact sample. Missing legacy fields mean unavailable playback
 
@@ -333,14 +252,66 @@ On accepts `-Compression lz4|lz4hc` and `-MemoryMiB 64..16384`, defaulting to LZ
 
 Contact-islands recordings cover baseline `physics_elapsed_ms`, not the extra component measurements. A median has no recording
 
-The [physics viewer](tools/physics_viewer/README.md#benchmark-launch-and-recordings) offers Build and benchmark to compile before running, or Benchmark to use prepared binaries directly. Both keep the same window open with progress, cancellation and diagnostic output, then open the completed result
-
 ## Large-world precision qualification
 
-The explicit `large_world_precision` package supports only `baseline`, `origin` and `mixed64`. On Windows, select `-PrecisionCandidate` for both Build and Run, then choose `-PrecisionCase` and `-SamplingMode batch|instrumented|engine-only|memory` for Run. Run consumes prepared artifacts and preserves unique failed/partial attempts. Ordinary aggregate Build keeps its existing package list. Existing controls accept `-Precision Float32|Mixed64` and emit that compiled profile outside timing
+The `large_world_precision` cases compare `baseline`, `origin` and `mixed64`, with sampling modes `batch`, `instrumented`, `engine-only` and `memory`. Other benchmark cases record their compiled Float32 or Mixed64 profile outside timing
 
 Simulation cases keep 60 Hz, one velocity iteration per substep and four substeps, disabled sleeping, 30 disposable warmups and 512 recreated measured frames. Precision queries use worker 1, 128 warmup probes per family and eight passes over fixed 1,024-probe inputs. Baseline compact 10 km is an unranked boundary observation. Baseline 1,000 km/1 Gm are expected accuracy failures. Origin does not support distributed or spanning cases
 
 Batch measures maintenance, real engine work and high application-position export in one interval. Instrumented mode also retains frame/pass and maintenance events. Engine-only times actual simulation steps separately. Memory runs track world/pool/worker allocations and application buffers in separate processes, require zero owned bytes after teardown, and produce no timing/scaling chart
 
-Fix the workload and comparison criteria before measurement. Viewer and recording coordinates remain float presentation data
+Viewer and recording coordinates remain float presentation data
+
+## Native query dispatch experiment
+
+Spatial batch cases compare `caller` and `mailbox` query execution over the same prepared 50,000-ray workspace and fixed worker slices. Both call `query_batch` in submissions of at most 256 inputs. Caller uses ordinary dispatch, while mailbox wraps that dispatch in one resident session. W1 uses the direct path
+
+CSVs identify the query execution mode and prepared/post-join timer. Every warmup and measured frame's checksum is compared with an untimed scalar reference after sampling elapsed time. That reference calls the same engine's scalar query route and is not an independent geometry algorithm
+
+## Solver workloads
+
+`solver_joint_angular` contains tilted shapeless hinge, weld and mixed chains with conserving momentum or gyroscopic integration. `solver_fixed_work --case conserving` measures reset-inclusive passes of eight-body bundles and four integration substeps. Fixed passes are reported separately from world-step means
+
+Paired domain comparisons use five baseline/candidate pairs per cell, with arm order alternating by repetition. Headline costs are arithmetic means of the five process means in each arm. Gain % is calculated from those same full-precision means. Paired median gains and bootstrap intervals are separate supporting statistics
+
+## Domain performance benchmarks
+
+Each domain benchmark measures the production region listed below. Paired results use matching harness, fixed/restored/prescribed inputs, reset/history contracts, settings, work counts and CPU placement. Evolving-scene timings include trajectory-dependent changes in work and measure a different region
+
+| Domain | Existing owner | Measurement |
+| --- | --- | --- |
+| Bounds | shape_mixed_bounds | Production bounds prediction, round-robin/grouped shapes, default 9216 or explicit --body-count 10000 |
+| Trees and collision | simulation_stage_work | Separate tree update, pair traversal, narrow phase and combined collision stages on prescribed 10,000-body input |
+| Convex contact graph | solver_contact_work | Same frozen graph and independently restored entry for native 1x4 solver calls |
+| Cached/nonconvex contacts and joints | solver_fixed_work finite cases | Native registered solver graphs, independently restored between measured calls |
+| Continuation and final integration | solver_fixed_work finite cases | Actual production integration entries, with reset-inclusive legacy cases explicitly distinguished |
+| Queries and shape-pair collision | spatial_query_batch, spatial_query_trace, query_extensions | Declared query/pair API work, with their original counts and dispatch |
+| Lifecycle and awakening | world_lifecycle, awakening_duplicate_sets | Lifecycle component timings or the existing awakening-specific full step |
+
+The cached-convex fixed-work case has 2x2 and 4x1 solver budgets. Native convex, nonconvex and joint cases use a fixed 1x4 budget
+
+Domain setup uses 10,000 bodies where that is the declared physical population. Pair/query/lifecycle controls keep their natural counts. Report static/dynamic/kinematic populations and actual processed rows/lanes separately. Use each timer's native unit, such as ms/measured frame, ms/stage, ms/solve, ms/pass, ms/query batch or declared query throughput. For elapsed costs, divide each process's measured time by the completed calls, passes, frames or queries that define that unit, then take the arithmetic mean of the five process means. Throughput uses the declared work count divided by elapsed time with its original unit conversion. A solver cost in ms/solve is divided by measured solve calls, while ms/1000 logical point updates uses its separate logical-point-update count. Do not sum overlapping timers, divide time by a terminal scene contact count or relabel a partial-domain timer as full physics/render/application ms/frame
+
+Domain costs are arithmetic means of five process means per arm. Replay aggregates first average each input's five process means, then equally average the same inputs in both arms. Solver comparisons use `Threads | Baseline ms/solve | Candidate ms/solve | Gain %`. Threads includes the caller, and other domains use their declared native unit in both cost columns
+
+For elapsed costs, Gain % is `100*(baseline_mean-candidate_mean)/baseline_mean`, using the same full-precision arithmetic means as the two cost columns before display rounding. Positive means faster and negative means slower. Published historical tables retain their original methods and labels
+
+Paired median gains and bootstrap intervals describe supporting paired statistics, not the headline average-cost gain. Unpaired costs use each process's recorded measured count before averaging. Historical rows without count metadata remain labelled as process totals
+
+Every measured domain call has same-process untimed observation of work, allocation and physical outcomes
+
+Native fixed-work warmups use the same per-case reset, solve and observation cycle as measured iterations. Only measured passes contribute to reported time, coverage, quality summaries and work units; capacity snapshots are taken after warmup observation. The solver timer still surrounds only the production execution entry. New rows record warmup-cycle=restore-solve-observe in benchmark_parameters, separating this preparation contract from historical rows. The separate legacy conserving loop is unchanged
+
+Stateful stage controls retain tree/cache history through 30 warmup and 300 prescribed measured frames, with driver writes/observation outside timing. Pool columns describe capacity growth across the measured-frame observation window, including untimed prerequisites and observation. New capacity-window=measured-frame rows snapshot before the first measured frame's prerequisites. Historical rows omitted those first prerequisites from their starting capacity. Pool growth cannot be attributed solely to the timed stage. Stage controls do not run a solver to generate inputs. Solver controls instead restore physical buffers and callback context before every independent call. Joint controls report hinge/weld anchor error and joint angle error separately from quaternion normalization. Historical absent angular metrics remain unassessed. The evolving solver_joint_angular timing route observes only its terminal state and records observation=terminal-only, so its late/max fields do not establish trajectory maxima. These reset/history contracts are distinct
+
+## Controlled contact solver work
+
+`solver_contact_work` measures contact-solver cost with identical captured entry state and contact graph for every compared implementation. Evolving-scene timings include trajectory-dependent changes in contact work and measure total simulation cost
+
+Contact replay inputs come from Common Box Islands with in-process physical assessment. Each capture world runs thirty same-world warmups and supplies inputs immediately before measured steps 150 and 300
+
+Each replay producer restores dynamics, contact geometry and carried impulses before ten warmups and one hundred measured calls. Both phases execute reset, solve and untimed observation in the same order. Only measured calls contribute to timing, coverage, quality summaries and logical point updates, with capacity snapshots after the last warmup observation. New rows record warmup-cycle=reset-solve-observe, separating the corrected preparation from historical rows. The native timer covers integrator preparation and `solver_solve`, including scheduling, gather/scatter, friction, fallback and continuation substep integration. Loading, reset, observation and output are outside the timer. Final pose and unconstrained integration are excluded. Poses and contact depths can evolve within the four substeps, so this fixes the entry state and graph rather than geometry throughout the solve
+
+The report gives ms/solve, call latency percentiles and ms per 1000 logical normal contact-point updates. With P live contact points, R calls, S substeps and I velocity sweeps, the denominator is `R*S*I*P`. Valid zero-impulse contacts count and padded SIMD lanes do not. Final scene constraint counts cannot replace this denominator
+
+Every measured call receives untimed f64 endpoint observation in the same process. Reports retain finite/impulse/friction feasibility, observation coverage and max/RMS/p95 normal residual in m/s. Residuals describe each version's final compliant contact equations, whose geometry can differ after four substeps. They do not establish equal physical accuracy or replace evolving scene quality. Hard Pass and residual magnitude remain distinct

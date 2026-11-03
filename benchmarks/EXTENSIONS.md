@@ -62,8 +62,6 @@ These cells register one Box and place 8, 128 or 8,192 children on spacing-two X
 
 These five cells require an explicit `-TimeoutSeconds` so Run retains producer logs and checks exactly one `WORKER_AFFINITY` record per active worker. Before warmup, each actual worker thread binds to the corresponding prefix of LP order `18,16,20,22,24,26,28,30,0,2,4,6,8,10,12,14,19,17,21,23,25,27,29,31,1,3,5,7,9,11,13,15`. A second native affinity call verifies the one-bit mask, and records retain native thread IDs. The caller's previous mask is restored and background workers are shut down after use. Existing Mesh/Box cells retain their placement behavior
 
-The compound comparison on the verified Ryzen 9 7940HX uses process masks W1=262144, W8=1431633920, W16=1431655765, W24=4294923605 and W32=4294967295, identical for both images and independent controls. These placements do not establish optimal speed or reserve CPUs, and require fresh topology inspection after hardware changes. Query, warmup and oracle counts and the CSV schema remain the same as the existing hierarchy cells
-
 The hull cells are regular Y prisms with 32 vertices/18 faces or 256 vertices/130 faces. Both precisions admit all four operations. Rays use direction (0.125,-1,0.0625) and maximum t=8. Hit rays enter the top plane at t=4 with normal (0,1,0), while paired rays shifted by four X units miss. The independent oracle expects 6,144 hits/checksum. Hull import, preparation, warmup and checking remain outside timing. Hull cells retain process eligibility without compound per-thread pinning
 
 ### Selected global ray cells
@@ -154,4 +152,4 @@ From the full repository root in PowerShell 7, with the [Windows build prerequis
 
 Use the same commands for the other packages. Contact-islands runs use `-Shape Box -Variant box-default`. Lifecycle omits `-Components`. The timeout bounds the complete package sample matrix and report generation. Builds occur before measurement. Compare retained common results with matching common inputs, and review enabled costs separately using the raw CSV and reporter output
 
-Runs write CSVs and a report under `build/benchmark-results/windows_amd64/<package>/`. Contact-islands results include the variant directory. Each attempt uses a unique `<attempt>.pending/` directory and publishes as `<attempt>/` after success. Failed attempts and earlier completed runs are retained. See [reproduction and promotion](../BENCHMARK.md#reproduction) for output handling
+Runs write CSVs and a report under `build/benchmark-results/windows_amd64/<package>/`. Contact-islands results include the variant directory. Each attempt uses a unique `<attempt>.pending/` directory and publishes as `<attempt>/` after success. Failed attempts and earlier completed runs are retained. See [reproduction and promotion](../docs/BUILDING.md#benchmark-reproduction) for output handling

@@ -5,7 +5,7 @@ import "core:os"
 import "core:time"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "body_count,shape_type_count,invalid_bounds_count,mismatched_bounds_count,case_status,metric_status,physics_elapsed_ms,bounds_clustered_ms,precision";
+CSV_HEADER :: "body_count,shape_type_count,invalid_bounds_count,mismatched_bounds_count,case_status,metric_status,physics_elapsed_ms,bounds_clustered_ms,precision,worker_count,measured_passes,warmup_passes,benchmark_parameters";
 
 Argument_Status :: enum u8
 {
@@ -13,7 +13,7 @@ Argument_Status :: enum u8
 }
 Arguments :: struct
 {
-	worker_count: int, output_path: string,
+	worker_count: int, body_count: int, output_path: string,
 }
 
 Argument_Presence :: enum u8
@@ -44,7 +44,12 @@ parse_positive_integer :: proc "contextless" (value: string) -> (int, Argument_S
 		{
 			return 0, .Invalid;
 		}
-		result = result * 10 + int(character - '0');
+		digit: int = int(character - '0');
+		if result > (max(int) - digit) / 10
+		{
+			return 0, .Invalid;
+		}
+		result = result * 10 + digit;
 	}
 	if result <= 0
 	{
@@ -55,12 +60,12 @@ parse_positive_integer :: proc "contextless" (value: string) -> (int, Argument_S
 
 parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argument_Status)
 {
-	if len(arguments) != 3
+	if len(arguments) < 3 || len(arguments) > 4
 	{
 		return {}, .Invalid;
 	}
-	result: Arguments;
-	worker_set, output_set: Argument_Presence;
+	result: Arguments = {body_count=BODY_COUNT};
+	worker_set, output_set, body_set: Argument_Presence;
 	for argument in arguments[1:]
 	{
 		value, status := argument_value(argument, "--worker-count=");
@@ -76,6 +81,21 @@ parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argum
 				return {}, .Invalid;
 			}
 			worker_set = .Present;
+			continue;
+		}
+		value, status = argument_value(argument, "--body-count=");
+		if status == .Ok
+		{
+			if body_set == .Present
+			{
+				return {}, .Invalid;
+			}
+			result.body_count, status = parse_positive_integer(value);
+			if status != .Ok || result.body_count < 8 || result.body_count > 1_000_000
+			{
+				return {}, .Invalid;
+			}
+			body_set = .Present;
 			continue;
 		}
 		value, status = argument_value(argument, "--output=");
@@ -98,11 +118,11 @@ parse_arguments :: proc "contextless" (arguments: []string) -> (Arguments, Argum
 	return result, .Ok;
 }
 
-write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms, clustered_ms: f64) -> Case_Status
+write_result :: proc(arguments: Arguments, counters: Bounds_Counters, elapsed_ms, clustered_ms: f64) -> Case_Status
 {
-	_, stat_error := os.stat(path, context.temp_allocator);
+	_, stat_error := os.stat(arguments.output_path, context.temp_allocator);
 	write_header := stat_error != nil;
-	file, open_error := os.open(path, {.Write, .Append, .Create}, os.Permissions_Default_File);
+	file, open_error := os.open(arguments.output_path, {.Write, .Append, .Create}, os.Permissions_Default_File);
 	if open_error != nil || file == nil
 	{
 		return .Validation_Failed;
@@ -113,9 +133,10 @@ write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms, cluste
 		return .Validation_Failed;
 	}
 	if fmt.fprintfln(
-		file, "%d,%d,%d,%d,ok,ok,%.9f,%.9f,%s",
+		file, "%d,%d,%d,%d,ok,ok,%.9f,%.9f,%s,%d,%d,%d,\"workload=shape_mixed_bounds;region=predict-bounds;layouts=round-robin-and-clustered;bodies=%d;measured-passes=%d;warmup-passes=%d;warmup-cycle=same-owner-predict\"",
 		counters.body_count, SHAPE_TYPE_COUNT, counters.invalid_bounds_count,
 		counters.mismatched_bounds_count, elapsed_ms, clustered_ms, entasis.PRECISION_NAME,
+		arguments.worker_count, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT, counters.body_count, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT,
 	) <= 0
 	{
 		return .Validation_Failed;
@@ -124,58 +145,45 @@ write_result :: proc(path: string, counters: Bounds_Counters, elapsed_ms, cluste
 }
 
 benchmark_run_layout :: proc(
-	pool: ^entasis.Buffer_Pool, worker_count: int, layout: Bounds_Layout,
+	pool: ^entasis.Buffer_Pool, worker_count: int, layout: Bounds_Layout, body_count: int = BODY_COUNT,
 ) -> (Benchmark_Run_Result, Bounds_Counters, f64)
 {
-	status := Case_Status.Ok;
-
-	warmup: Benchmark_Simulation_Owner;
-	status = benchmark_owner_create(&warmup, pool, worker_count, layout);
+	owner: Benchmark_Simulation_Owner;
+	status: Case_Status = benchmark_owner_create(&owner, pool, worker_count, layout, body_count);
 	if status != .Ok
 	{
 		return {status=status, layout=layout}, {}, 0;
 	}
-	result := benchmark_owner_predict(&warmup, WARMUP_STEP_COUNT, .Warmup);
+	result: Benchmark_Run_Result = benchmark_owner_predict(&owner, WARMUP_STEP_COUNT, .Warmup);
 	if result.status != .Ok
 	{
-		_ = benchmark_owner_destroy(&warmup);
+		_ = benchmark_owner_destroy(&owner);
 		result.layout = layout;
 		return result, {}, 0;
 	}
-	if benchmark_owner_destroy(&warmup) != .Ok
-	{
-		return {status=.Release_Failed, layout=layout}, {}, 0;
-	}
-
-	measured: Benchmark_Simulation_Owner;
-	status = benchmark_owner_create(&measured, pool, worker_count, layout);
-	if status != .Ok
-	{
-		return {status=status, layout=layout}, {}, 0;
-	}
 	start := time.tick_now();
-	result = benchmark_owner_predict(&measured, MEASURED_STEP_COUNT, .Measured);
+	result = benchmark_owner_predict(&owner, MEASURED_STEP_COUNT, .Measured);
 	end := time.tick_now();
 	if result.status != .Ok
 	{
-		_ = benchmark_owner_destroy(&measured);
+		_ = benchmark_owner_destroy(&owner);
 		result.layout = layout;
 		return result, {}, 0;
 	}
 	counters: Bounds_Counters;
-	status = benchmark_validate_bounds(&measured, &counters);
+	status = benchmark_validate_bounds(&owner, &counters);
 	if status != .Ok
 	{
-		_ = benchmark_owner_destroy(&measured);
+		_ = benchmark_owner_destroy(&owner);
 		return {status=status, layout=layout}, counters, 0;
 	}
 	elapsed_ms := f64(i64(time.tick_diff(start, end))) / 1_000_000;
 	if elapsed_ms <= 0
 	{
-		_ = benchmark_owner_destroy(&measured);
+		_ = benchmark_owner_destroy(&owner);
 		return {status=.Validation_Failed, layout=layout}, counters, elapsed_ms;
 	}
-	if benchmark_owner_destroy(&measured) != .Ok
+	if benchmark_owner_destroy(&owner) != .Ok
 	{
 		return {status=.Release_Failed, layout=layout}, counters, elapsed_ms;
 	}
@@ -193,17 +201,17 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Run_Result
 	{
 		_ = entasis.buffer_pool_destroy(&pool);
 	}
-	result, counters, elapsed_ms := benchmark_run_layout(&pool, arguments.worker_count, .Round_Robin);
+	result, counters, elapsed_ms := benchmark_run_layout(&pool, arguments.worker_count, .Round_Robin, arguments.body_count);
 	if result.status != .Ok
 	{
 		return result;
 	}
-	clustered_result, _, clustered_ms := benchmark_run_layout(&pool, arguments.worker_count, .Clustered);
+	clustered_result, _, clustered_ms := benchmark_run_layout(&pool, arguments.worker_count, .Clustered, arguments.body_count);
 	if clustered_result.status != .Ok
 	{
 		return clustered_result;
 	}
-	return {status=write_result(arguments.output_path, counters, elapsed_ms, clustered_ms)};
+	return {status=write_result(arguments, counters, elapsed_ms, clustered_ms)};
 }
 
 main :: proc()
@@ -211,7 +219,7 @@ main :: proc()
 	arguments, status := parse_arguments(os.args);
 	if status != .Ok
 	{
-		fmt.eprintln("usage: entasis_shape_mixed_bounds --worker-count=<positive count up to engine maximum> --output=<path>");
+		fmt.eprintln("usage: entasis_shape_mixed_bounds --worker-count=<positive count up to engine maximum> --output=<path> [--body-count=8..1000000]");
 		os.exit(2);
 	}
 	result := run_benchmark(arguments);

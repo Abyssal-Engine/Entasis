@@ -9,7 +9,7 @@ import replay "../../tools/physics_replay"
 import scene "../../tools/physics_scene"
 import entasis "entasis:entasis"
 
-CSV_HEADER :: "body_count,constraint_count,invalid_state_count,case_status,metric_status,physics_elapsed_ms";
+CSV_HEADER :: "body_count,constraint_count,invalid_state_count,case_status,metric_status,physics_elapsed_ms,worker_count,step_index,warmup_steps,precision,benchmark_parameters";
 
 Argument_Status :: enum u8
 {
@@ -134,7 +134,7 @@ f64_finite_state :: proc "contextless" (value: f64) -> Argument_Status
 	return .Invalid;
 }
 
-write_result :: proc(path: string, counters: Stability_Counters, elapsed_milliseconds: f64, recording: support.Recording_Options) -> Case_Status
+write_result :: proc(path: string, counters: Stability_Counters, elapsed_milliseconds: f64, recording: support.Recording_Options, worker_count: int) -> Case_Status
 {
 	_, stat_error := os.stat(path, context.temp_allocator);
 	header_state := Argument_Status.Invalid;
@@ -153,9 +153,9 @@ write_result :: proc(path: string, counters: Stability_Counters, elapsed_millise
 		return .Validation_Failed;
 	}
 	if fmt.fprintfln(
-		file, "%d,%d,%d,ok,ok,%.9f%s",
+		file, "%d,%d,%d,ok,ok,%.9f,%d,%d,%d,%s,workload=noncontact_constraint_mix;region=world-step-loop;steps=%d;warmup=%d%s",
 		counters.dynamic_body_count, counters.constraint_count,
-		counters.invalid_state_count, elapsed_milliseconds, support.recording_columns(recording, "whole_loop"),
+		counters.invalid_state_count, elapsed_milliseconds, worker_count, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT, entasis.PRECISION_NAME, MEASURED_STEP_COUNT, WARMUP_STEP_COUNT, support.recording_columns(recording, "whole_loop"),
 	) <= 0
 	{
 		_ = os.close(file);
@@ -243,7 +243,7 @@ run_benchmark :: proc(arguments: Arguments) -> Benchmark_Run_Result
 	{
 		return {status=.Release_Failed};
 	}
-	return {status=write_result(arguments.output_path, counters, elapsed_milliseconds, arguments.recording)};
+	return {status=write_result(arguments.output_path, counters, elapsed_milliseconds, arguments.recording, arguments.worker_count)};
 }
 
 main :: proc()

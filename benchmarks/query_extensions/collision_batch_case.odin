@@ -300,12 +300,12 @@ run_collision_batch_case :: proc(args: Query_Arguments) -> e.Status
 	file, state = support.extension_csv_open(args.output);
 	if state == .Empty
 	{
-		if fmt.fprintln(file, "worker_count,case_status,metric_status,physics_elapsed_ms,benchmark_components,precision,query_case,query_operation,query_cell,input_count,passes,query_count,warmup_queries,hit_count,checksum,oracle_queries") <= 0
+		if fmt.fprintln(file, "worker_count,case_status,metric_status,physics_elapsed_ms,benchmark_components,precision,query_case,query_operation,query_cell,input_count,passes,query_count,warmup_queries,hit_count,checksum,oracle_queries,benchmark_parameters") <= 0
 		{
 			panic("collision CSV header");
 		}
 	}
-	if fmt.fprintf(file, "%d,ok,ok,%.9f,all,%s,collision-batch,collision,%s,24576,1,24576,%d,12288,12288,24576\n", args.workers, elapsed, e.PRECISION_NAME, args.query_cell, fixture.selection.batch_size*args.workers) <= 0
+	if fmt.fprintf(file, "%d,ok,ok,%.9f,all,%s,collision-batch,collision,%s,24576,1,24576,%d,12288,12288,24576,workload=query_extensions;region=dispatch-query-results;case=collision-batch;operation=collision;cell=%s;input-count=24576;passes=1\n", args.workers, elapsed, e.PRECISION_NAME, args.query_cell, fixture.selection.batch_size*args.workers, args.query_cell) <= 0
 	{
 		panic("collision CSV row");
 	}

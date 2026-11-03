@@ -225,7 +225,7 @@ main :: proc()
 		{
 			panic("CSV header");
 		}
-		if fmt.fprintln(file) <= 0
+		if fmt.fprintln(file, ",benchmark_parameters") <= 0
 		{
 			panic("CSV header");
 		}
@@ -281,7 +281,7 @@ main :: proc()
 				}
 			}
 		}
-		if fmt.fprintf(file, ",%s,%s,%d,%d\n", e.PRECISION_NAME, args.query_group, args.repetitions, args.warmup_repetitions) <= 0
+		if fmt.fprintf(file, ",%s,%s,%d,%d,workload=query_extensions;region=serial-api-calls;group=%s;repetitions=%d;warmup=%d\n", e.PRECISION_NAME, args.query_group, args.repetitions, args.warmup_repetitions, args.query_group, args.repetitions, args.warmup_repetitions) <= 0
 		{
 			panic("CSV row");
 		}
@@ -327,7 +327,7 @@ main :: proc()
 			}
 		}
 	}
-	if len(args.query_group) == 0 && fmt.fprintf(file, ",%s\n", e.PRECISION_NAME) <= 0
+	if len(args.query_group) == 0 && fmt.fprintf(file, ",%s,workload=query_extensions;region=serial-api-calls;components=%s;repetitions=%d;warmup=%d\n", e.PRECISION_NAME, support.BENCHMARK_COMPONENTS, args.repetitions, args.warmup_repetitions) <= 0
 	{
 		panic("CSV row");
 	}

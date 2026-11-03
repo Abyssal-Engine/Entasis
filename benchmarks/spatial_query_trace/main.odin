@@ -196,7 +196,7 @@ write_result :: proc(path: string, worker_count: int, result: Benchmark_Result, 
 	if stat_error != nil
 	{
 		if fmt.fprint(file, CSV_HEADER) <= 0 ||
-			(arguments.query_family != "all" && fmt.fprint(file, ",query_family") <= 0) || fmt.fprintln(file) <= 0
+			(arguments.query_family != "all" && fmt.fprint(file, ",query_family") <= 0) || fmt.fprintln(file, ",benchmark_parameters") <= 0
 		{
 			_ = os.close(file);
 			return .Validation_Failed;
@@ -264,7 +264,7 @@ write_result :: proc(path: string, worker_count: int, result: Benchmark_Result, 
 	{
 		written += fmt.fprintf(file, ",%s", arguments.query_family);
 	}
-	written += fmt.fprintln(file);
+	written += fmt.fprintfln(file, ",workload=spatial_query_trace;region=serial-query-families;family=%s;ray-pattern=%s;warmup=%d;measured=%d", arguments.query_family, ray_pattern_name(arguments.ray_pattern), arguments.warmup_batches, arguments.measured_batches);
 	if os.close(file) != nil || written <= 0
 	{
 		return .Validation_Failed;

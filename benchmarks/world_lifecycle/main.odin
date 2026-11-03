@@ -134,7 +134,7 @@ main :: proc()
 				}
 			}
 		}
-		if fmt.fprintln(file) <= 0
+		if fmt.fprintln(file, ",precision,benchmark_parameters") <= 0
 		{
 			panic("CSV header");
 		}
@@ -160,7 +160,7 @@ main :: proc()
 			}
 		}
 	}
-	if fmt.fprintln(file) <= 0
+	if fmt.fprintfln(file, ",%s,workload=world_lifecycle;region=five-lifecycle-phases;cycles=%d;bodies=%d", e.PRECISION_NAME, CYCLES, BODY_COUNT) <= 0
 	{
 		panic("CSV row");
 	}

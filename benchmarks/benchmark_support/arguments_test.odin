@@ -213,6 +213,74 @@ canonical_parameters_normalize_order_and_preserve_effective_changes :: proc(t: ^
 
 }
 
+@(test)
+solver_angular_defaults_and_counts :: proc(t: ^testing.T)
+{
+	angular: Solver_Angular_Options;
+	status: Admission;
+	angular, status = parse_solver_angular_options({"--scenario=hinge", "--angular-mode=momentum", "--output=unused.csv"}, .Timing);
+	testing.expect_value(t, status, Admission.Ok);
+	testing.expect_value(t, angular.chains*(angular.links+1), 1152);
+	testing.expect_value(t, angular.chains*angular.links, 1024);
+	testing.expect_value(t, angular.steps, 1200);
+}
+
+@(test)
+solver_angular_duplicate_unknown_and_inapplicable_options_rejected :: proc(t: ^testing.T)
+{
+	status: Admission;
+	for extra in ([]string{"--scenario=weld", "--shape=box", "--velocity-iterations=2", "--record=on", "--snapshot=x.csv", "--sample-every=30"})
+	{
+		_, status = parse_solver_angular_options({"--scenario=hinge", "--angular-mode=momentum", "--output=unused.csv", extra}, .Timing);
+		testing.expect_value(t, status, Admission.Invalid);
+	}
+}
+
+@(test)
+solver_angular_nonfinite_range_and_count_overflow_rejected :: proc(t: ^testing.T)
+{
+	status: Admission;
+	for extra in ([]string{"--chains=16385", "--links=129", "--mass-ratio=10001", "--chains=99999999999999999999", "--steps=NaN", "--steps=100001"})
+	{
+		_, status = parse_solver_angular_options({"--scenario=hinge", "--angular-mode=momentum", "--output=unused.csv", extra}, .Timing);
+		testing.expect_value(t, status, Admission.Invalid);
+	}
+}
+
+@(test)
+solver_fixed_defaults_and_counts :: proc(t: ^testing.T)
+{
+	fixed: Solver_Fixed_Options;
+	status: Admission;
+	fixed, status = parse_solver_fixed_options({"--case=conserving", "--layout=partial", "--angular-mode=gyro", "--output=unused.csv"});
+	testing.expect_value(t, status, Admission.Ok);
+	testing.expect_value(t, fixed.bundles*8, 32768);
+	testing.expect_value(t, fixed.passes, 512);
+	testing.expect_value(t, fixed.warmup, 4);
+}
+
+@(test)
+solver_fixed_duplicate_unknown_and_inapplicable_options_rejected :: proc(t: ^testing.T)
+{
+	status: Admission;
+	for extra in ([]string{"--case=conserving", "--shape=box", "--steps=4", "--constraints=8", "--phase=kernel"})
+	{
+		_, status = parse_solver_fixed_options({"--case=conserving", "--layout=partial", "--angular-mode=gyro", "--output=unused.csv", extra});
+		testing.expect_value(t, status, Admission.Invalid);
+	}
+}
+
+@(test)
+solver_fixed_nonfinite_range_and_count_overflow_rejected :: proc(t: ^testing.T)
+{
+	status: Admission;
+	for extra in ([]string{"--bundles=7", "--bundles=65537", "--passes=0", "--warmup-passes=1001", "--passes=NaN", "--passes=99999999999999999999"})
+	{
+		_, status = parse_solver_fixed_options({"--case=conserving", "--layout=partial", "--angular-mode=gyro", "--output=unused.csv", extra});
+		testing.expect_value(t, status, Admission.Invalid);
+	}
+}
+
 // optional numeric components extend the existing CSV without changing the
 // old header/row prefix or rewriting the header on the next sample
 @(test)
@@ -227,7 +295,7 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 	}
 	defer delete(directory);
 	defer os.remove_all(directory);
-	for extended in 0 ..< 2
+	for extended in 0 ..< 3
 	{
 		path: string = fmt.aprintf("%s/results-%d.csv", directory, extended);
 		defer delete(path);
@@ -240,9 +308,21 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 			header=",component_ms";
 			values=",2.500000000";
 		}
+		shapes, joints: int = 5, 0;
+		if extended == 2
+		{
+			shapes, joints = 0, 3;
+		}
 		for _ in 0 ..< 2
 		{
-			testing.expect_value(t, write_result(options, "shape=box", sample, header, values), Case_Status.Ok);
+			if extended == 2
+			{
+				testing.expect_value(t, write_result(options, "shape=box", sample, header, values, shape_count=shapes, constraint_count=joints), Case_Status.Ok);
+			}
+			else
+			{
+				testing.expect_value(t, write_result(options, "shape=box", sample, header, values), Case_Status.Ok);
+			}
 		}
 		data: []byte;
 		data, error = os.read_entire_file(path, context.allocator);
@@ -253,7 +333,7 @@ result_csv_preserves_default_and_optional_components :: proc(t: ^testing.T)
 		defer delete(data);
 		physical_buffer: [4096]u8;
 		physical: string = observations.physical_csv(sample.physical, physical_buffer[:]);
-		row: string = fmt.aprintf("2,3,0,0,5,5,0,0,0,0,0,ok,ok,1.250000000,\"shape=box\",%s%s%s,,,off,native_step_sum\n", entasis.PRECISION_NAME, values, physical);
+		row: string = fmt.aprintf("2,3,0,0,5,%d,%d,0,0,0,0,ok,ok,1.250000000,\"shape=box\",%s%s%s,,,off,native_step_sum\n", shapes, joints, entasis.PRECISION_NAME, values, physical);
 		defer delete(row);
 		expected: string = fmt.aprintf("%s%s%s%s\n%s%s", CSV_HEADER, header, observations.PHYSICAL_HEADER, RECORDING_HEADER, row, row);
 		defer delete(expected);
@@ -453,5 +533,51 @@ spatial_query_oblique_generation_preserves_constructed_hits_and_misses :: proc(t
 		oblique_origin, oblique_direction := trace.query_generate(index, arguments.ray_pattern);
 		testing.expect_value(t, origin, oblique_origin);
 		testing.expect_value(t, direction, oblique_direction);
+	}
+}
+
+@(test)
+fixed_domain_arguments_reject_inapplicable_options :: proc(t: ^testing.T)
+{
+	for name in ([]string{"convex", "cached-convex", "nonconvex"})
+	{
+		argument: string = fmt.aprintf("--case=%s", name);
+		options: Solver_Fixed_Options;
+		status: Admission;
+		options, status = parse_solver_fixed_options({argument, "--output=unused.csv"});
+		testing.expect_value(t, status, Admission.Ok);
+		testing.expect_value(t, options.bundles, 1250);
+		testing.expect_value(t, options.passes, 100);
+		testing.expect_value(t, options.warmup, 10);
+		_, status = parse_solver_fixed_options({argument, "--output=unused.csv", "--layout=full"});
+		testing.expect_value(t, status, Admission.Invalid);
+		delete(argument);
+	}
+	for args in ([][]string{
+		{"--case=pose", "--layout=partial", "--angular-mode=nonconserving", "--output=unused.csv"},
+		{"--case=free-final", "--layout=full", "--angular-mode=gyro", "--output=unused.csv"},
+		{"--case=cached-convex", "--velocity-iterations=1", "--substeps=4", "--output=unused.csv"},
+		{"--case=kinematic", "--layout=full", "--angular-mode=nonconserving", "--output=unused.csv"},
+		{"--case=joints", "--scenario=mixed", "--output=unused.csv"},
+		{"--case=nonconserving", "--layout=full", "--angular-mode=momentum", "--output=unused.csv"},
+		{"--case=convex", "--case=nonconvex", "--output=unused.csv"},
+		{"--case=convex", "--unconstrained-substeps=enabled", "--output=unused.csv"},
+	})
+	{
+		status: Admission;
+		_, status = parse_solver_fixed_options(args);
+		testing.expect_value(t, status, Admission.Invalid);
+	}
+	for args in ([][]string{
+		{"--case=cached-convex", "--velocity-iterations=4", "--substeps=1", "--output=unused.csv"},
+		{"--case=pose", "--layout=full", "--angular-mode=nonconserving", "--output=unused.csv"},
+		{"--case=free-final", "--layout=full", "--angular-mode=gyro", "--unconstrained-substeps=disabled", "--output=unused.csv"},
+		{"--case=kinematic", "--layout=sparse", "--output=unused.csv"},
+		{"--case=joints", "--scenario=mixed", "--angular-mode=momentum", "--output=unused.csv"},
+	})
+	{
+		status: Admission;
+		_, status = parse_solver_fixed_options(args);
+		testing.expect_value(t, status, Admission.Ok);
 	}
 }
