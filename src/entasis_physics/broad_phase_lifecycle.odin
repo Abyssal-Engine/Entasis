@@ -179,6 +179,7 @@ broad_phase_ensure_capacity :: proc (
 			return status;
 		}
 		old_maintenance_workspace := broad_phase.maintenance_workspace;
+		new_maintenance_workspace.task_stack.procedures.memory = nil;
 		broad_phase.maintenance_workspace = new_maintenance_workspace;
 		// the procedure table is embedded in the workspace. rebind after moving the
 		// initialized temporary so later threaded updates never borrow its stack
@@ -270,6 +271,7 @@ broad_phase_resize :: proc (
 	old_query_workspace := broad_phase.query_workspace;
 	old_maintenance_workspace := broad_phase.maintenance_workspace;
 	broad_phase.query_workspace = new_query_workspace;
+	new_maintenance_workspace.task_stack.procedures.memory = nil;
 	broad_phase.maintenance_workspace = new_maintenance_workspace;
 	// the procedure table is embedded in the workspace. rebind after moving the
 	// initialized temporary so later threaded updates never borrow its stack

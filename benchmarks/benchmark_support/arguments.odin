@@ -948,6 +948,7 @@ options_from_saved_parameters :: proc(workload: Workload, parameters: string, wo
 	{
 		return {}, .Invalid;
 	}
+	options.output = "preview.csv";
 	if verification_evidence != .Ok
 	{
 		options.verify = .Off;

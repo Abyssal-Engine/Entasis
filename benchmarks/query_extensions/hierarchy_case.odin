@@ -243,7 +243,10 @@ run_hierarchy_case :: proc(args: Query_Arguments) -> e.Status
 		{
 			panic("hierarchy dispatcher");
 		}
-		previous: uintptr;
+		when ODIN_OS == .Windows
+		{
+			previous: uintptr;
+		}
 		defer
 		{
 			shutdown_status: util.Threading_Status = util.thread_dispatcher_shutdown(&dispatcher);

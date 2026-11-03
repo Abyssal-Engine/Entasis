@@ -103,7 +103,7 @@ function Build-CAbiLibrary(
     $dllArguments += ("-extra-linker-flags:/DEF:$DefFile /IMPLIB:$ImportLibrary /DEFAULTLIB:libvcruntime.lib /DEFAULTLIB:libucrt.lib")
     Invoke-Checked $odin $dllArguments
 
-    $staticArguments = @("build", $Package, "-build-mode:lib", "-out:$StaticLibrary")
+    $staticArguments = @("build", $Package, "-build-mode:lib", "-linker:msvc", "-out:$StaticLibrary")
     $staticArguments += $commonArguments
     $staticArguments += $profileArguments
     Invoke-Checked $odin $staticArguments

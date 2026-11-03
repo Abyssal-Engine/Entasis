@@ -200,9 +200,6 @@ expect_contact_view_impulses_match_solver :: proc(
 }
 
 @(private)
-test_simulation: physics.Simulation;
-
-@(private)
 test_fused_simulation: physics.Simulation;
 
 @(private)
@@ -1582,7 +1579,7 @@ verify_queue_continuations_match_sweep_reference :: proc(t: ^testing.T)
 		world: ^physics.Simulation = &test_phase3_world_simulations[0];
 		world^ = {};
 		callback_state: Narrow_Callback_State = {
-			margin_override=margin, allow_result=.Allow, configure_result=.Allow,
+			margin_override=margin, rejected_child=-1, allow_result=.Allow, configure_result=.Allow,
 		};
 		callbacks: physics.Narrow_Phase_Callbacks = {
 			initialize=test_narrow_initialize, allow=test_narrow_allow,
@@ -1886,8 +1883,16 @@ pair_freshness_contact_update_and_removal :: proc(t: ^testing.T)
 		user_context=&callback_state,
 	};
 	description := test_simulation_description(&pool, callbacks);
-	test_simulation = {};
-	simulation := &test_simulation;
+	memory: rawptr;
+	allocation_error: mem.Allocator_Error;
+	memory, allocation_error = mem.alloc(size_of(physics.Simulation), align_of(physics.Simulation));
+	if !testing.expect(t, allocation_error == nil && memory != nil)
+	{
+		return;
+	}
+	defer testing.expect_value(t, mem.free(memory), mem.Allocator_Error.None);
+	simulation: ^physics.Simulation = cast(^physics.Simulation)memory;
+	simulation^ = {};
 	result := physics.simulation_create(simulation, &description);
 	testing.expect_value(t, result.status, physics.Physics_Status.Ok);
 	defer physics.simulation_destroy(simulation);

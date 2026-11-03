@@ -18,8 +18,8 @@ Tree_Bin :: struct
 tree_empty_bounds :: proc "contextless" () -> Tree_Bounds
 {
 	return {
-		min={Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX)},
-		max={-Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX)},
+		min={TREE_BUILD_SENTINEL, TREE_BUILD_SENTINEL, TREE_BUILD_SENTINEL},
+		max={-TREE_BUILD_SENTINEL, -TREE_BUILD_SENTINEL, -TREE_BUILD_SENTINEL},
 	};
 }
 
@@ -80,8 +80,8 @@ tree_binned_partition_references :: proc "contextless" (
 	references, scratch: util.Buffer(Tree_Build_Reference), start, count: int,
 ) -> int
 {
-	centroid_min := Tree_Position{Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX), Tree_Scalar(math.F64_MAX)};
-	centroid_max := Tree_Position{-Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX), -Tree_Scalar(math.F64_MAX)};
+	centroid_min := Tree_Position{TREE_BUILD_SENTINEL, TREE_BUILD_SENTINEL, TREE_BUILD_SENTINEL};
+	centroid_max := Tree_Position{-TREE_BUILD_SENTINEL, -TREE_BUILD_SENTINEL, -TREE_BUILD_SENTINEL};
 	for index in start ..< start + count
 	{
 		centroid := tree_bounds_centroid_sum(references.memory[index].bounds);
@@ -114,7 +114,7 @@ tree_binned_partition_references :: proc "contextless" (
 		{
 			prefix_bounds[index] = tree_bounds_merge(prefix_bounds[index - 1], references.memory[start + index].bounds);
 		}
-		best_cost := Tree_Scalar(math.F64_MAX);
+		best_cost := TREE_BUILD_SENTINEL;
 		best_split := 1;
 		best_right_count := 0;
 		right_bounds := references.memory[start + count - 1].bounds;
@@ -132,7 +132,7 @@ tree_binned_partition_references :: proc "contextless" (
 			right_bounds = tree_bounds_merge(references.memory[start + candidate - 1].bounds, right_bounds);
 			right_count += 1;
 		}
-		if best_right_count == 0 || best_right_count == count || best_cost == Tree_Scalar(math.F64_MAX) ||
+		if best_right_count == 0 || best_right_count == count || best_cost == TREE_BUILD_SENTINEL ||
 		math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 		{
 			return count / 2;
@@ -182,7 +182,7 @@ tree_binned_partition_references :: proc "contextless" (
 		prefix_bounds[bin_index] = accumulated_bounds;
 		prefix_counts[bin_index] = accumulated_count;
 	}
-	best_cost := Tree_Scalar(math.F64_MAX);
+	best_cost := TREE_BUILD_SENTINEL;
 	best_split := 1;
 	best_right_count := 0;
 	right_bounds := bins[bin_count - 1].bounds;
@@ -204,7 +204,7 @@ tree_binned_partition_references :: proc "contextless" (
 		}
 		right_count += bins[previous].count;
 	}
-	if best_right_count == 0 || best_right_count == count || best_cost == Tree_Scalar(math.F64_MAX) ||
+	if best_right_count == 0 || best_right_count == count || best_cost == TREE_BUILD_SENTINEL ||
 	math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 	{
 		return count / 2;
@@ -463,7 +463,7 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 		prefix_bounds[bin_index] = accumulated_bounds;
 		prefix_centroid_bounds[bin_index] = accumulated_centroid_bounds;
 	}
-	best_cost := Tree_Scalar(math.F64_MAX);
+	best_cost := TREE_BUILD_SENTINEL;
 	split_index = 1;
 	right_bounds := bins[bin_count - 1].bounds;
 	accumulated_right_centroid_bounds := bins[bin_count - 1].centroid_bounds;
@@ -489,7 +489,7 @@ tree_binned_node_child_split_from_bins :: proc "contextless" (
 		}
 		accumulated_right_leaf_count += bins[previous].leaf_count;
 	}
-	if right_leaf_count == 0 || right_leaf_count == total_leaf_count || best_cost == Tree_Scalar(math.F64_MAX) ||
+	if right_leaf_count == 0 || right_leaf_count == total_leaf_count || best_cost == TREE_BUILD_SENTINEL ||
 	math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 	{
 		return 0, 0, {}, {}, .Invalid_Description;
@@ -566,7 +566,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 			);
 			prefix_leaf_counts[index] = prefix_leaf_counts[index - 1] + references.memory[start + index].leaf_count;
 		}
-		best_cost := Tree_Scalar(math.F64_MAX);
+		best_cost := TREE_BUILD_SENTINEL;
 		best_split := 1;
 		best_right_leaf_count := 0;
 		right_bounds := tree_child_bounds(references.memory[start + count - 1]);
@@ -584,7 +584,7 @@ tree_binned_partition_node_children :: proc "contextless" (
 			right_bounds = tree_bounds_merge(tree_child_bounds(references.memory[start + candidate - 1]), right_bounds);
 			right_leaf_count += references.memory[start + candidate - 1].leaf_count;
 		}
-		if best_right_leaf_count == 0 || best_right_leaf_count == total_leaf_count || best_cost == Tree_Scalar(math.F64_MAX) ||
+		if best_right_leaf_count == 0 || best_right_leaf_count == total_leaf_count || best_cost == TREE_BUILD_SENTINEL ||
 		math.is_nan(best_cost) || math.is_inf(best_cost, 0)
 		{
 			return count / 2;

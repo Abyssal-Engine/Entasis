@@ -297,11 +297,19 @@ visual_query_validation_observations :: proc(t: ^testing.T)
 	testing.expect_value(t, owner.observations.sweeps[0].state, trace.Observation_State.Hit);
 	testing.expect_value(t, owner.observations.overlaps[0].state, trace.Observation_State.Hit);
 	retained: trace.Ray_Observation = owner.observations.rays[0];
-	worker: batch.Worker;
-	job: batch.Job = {owner=&owner, workers=([^]batch.Worker)(&worker)[:1], mode=.Validate};
-	batch.execute_lane(&job, 0, owner.owner_pool);
-	testing.expect_value(t, worker.status, entasis.Status.Ok);
-	testing.expect_value(t, worker.hits, u64(1));
+	batch_queries: [2]entasis.Query;
+	batch_results: [2]entasis.Query_Result;
+	for &query, index in batch_queries
+	{
+		query = entasis.query_ray_closest(owner.ray_inputs[index].ray);
+	}
+	job: batch.Job = {owner=&owner, queries=batch_queries[:], results=batch_results[:], mode=.Validate};
+	batch.execute_lane(&job, 0);
+	testing.expect_value(t, batch_results[0].status, entasis.Status.Ok);
+	testing.expect(t, batch_results[0].hit);
+	testing.expect_value(t, batch_results[0].ray_hit, retained.hit);
+	testing.expect_value(t, batch_results[1].status, entasis.Status.Not_Found);
+	testing.expect(t, !batch_results[1].hit);
 	testing.expect_value(t, owner.observations.rays[0], retained);
 	owner.ray_inputs[0].ray.origin.x = 10;
 	timed: trace.Family_Result = trace.family_execute(&owner, .Ray, .Timed);

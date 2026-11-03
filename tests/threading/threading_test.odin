@@ -1051,7 +1051,11 @@ prediction_compare_serial_and_parallel :: proc(
 )
 {
 	original_callbacks: physics.Pose_Integrator_Callbacks = simulation.integrator.callbacks;
-	defer simulation.integrator.callbacks = original_callbacks;
+	defer
+	{
+		simulation.integrator.callbacks.integrate_velocity = original_callbacks.integrate_velocity;
+		simulation.integrator.callbacks.user_context = original_callbacks.user_context;
+	}
 	record: Prediction_Callback_Record;
 	simulation.integrator.callbacks.integrate_velocity = prediction_test_integrate_velocity;
 	simulation.integrator.callbacks.user_context = &record;

@@ -14,8 +14,15 @@ test_root="$(mktemp -d "$source_root/build/toolchain-tests/linux.XXXXXX")/provis
 mkdir -p "$test_root/scripts/linux/lib" "$test_root/scripts/linux/toolchains" "$test_root/tools" "$test_root/fixture"
 cp "$source_root/scripts/linux/lib/toolchain_common.sh" "$test_root/scripts/linux/lib/"
 cp "$source_root/scripts/linux/toolchains/setup_toolchains.sh" "$test_root/scripts/linux/toolchains/"
+cp "$source_root/scripts/linux/toolchains/update_toolchains.sh" "$test_root/scripts/linux/toolchains/"
 declare -A entries=()
 toolchain_read_settings "$source_root/tools/toolchains.lock" entries
+declare -A source_selection=()
+if [[ -f "$source_root/toolchains.local" ]]; then
+  toolchain_read_settings "$source_root/toolchains.local" source_selection
+fi
+odin_fixture_cache="${source_selection[linux-amd64.cache_root]:-$source_root/build/toolchains/prebuilt}"
+odin_fixture_root="${source_selection[linux-amd64.roots.odin]:-$odin_fixture_cache/odin/${entries[odin.release]}/linux-amd64}"
 
 write_fixture_lock() {
   local key
@@ -112,6 +119,32 @@ set +e
 status=$?
 set -e
 [[ "$status" == 2 ]]
+cp "$test_root/tools/toolchains.lock" "$test_root/selector.lock"
+selector_index=0
+for selector in dev-2026-11A dev-2026-11aa dev-2026-11-a dev-2026-1a dev-2026-11a1 DEV-2026-11a; do
+  selector_log="$test_root/odin-selector-$selector_index.log"
+  set +e
+  "$test_root/scripts/linux/toolchains/update_toolchains.sh" --tool odin --mode update --version "$selector" > "$selector_log" 2>&1
+  status=$?
+  set -e
+  [[ "$status" == 2 ]] || toolchain_error "malformed Odin selector returned $status: $selector"
+  grep -Fq 'invalid Odin release' "$selector_log" || toolchain_error "malformed Odin selector reached another owner: $selector"
+  if grep -Fq 'RELEASE_METADATA' "$selector_log" || [[ -e "$test_root/tools/toolchains.lock.pending" ]] ||
+    ! cmp -s "$test_root/selector.lock" "$test_root/tools/toolchains.lock"; then
+    toolchain_error "malformed Odin selector reached metadata/declaration mutation: $selector"
+  fi
+  selector_index=$((selector_index + 1))
+done
+toolchain_inspect "$odin_fixture_root" odin "${entries[odin.version]}" "${entries[odin.commit]}" "$odin_fixture_cache"
+if toolchain_inspect "$odin_fixture_root" odin dev-0000-00 "${entries[odin.commit]}" "$odin_fixture_cache" > "$test_root/odin-version-mismatch.log" 2>&1; then
+  toolchain_error "Odin version mismatch unexpectedly passed"
+fi
+grep -Fq 'Odin declaration mismatch:' "$test_root/odin-version-mismatch.log"
+printf -v odin_fixture_wrong_commit '%040d' 0
+if toolchain_inspect "$odin_fixture_root" odin "${entries[odin.version]}" "$odin_fixture_wrong_commit" "$odin_fixture_cache" > "$test_root/odin-commit-mismatch.log" 2>&1; then
+  toolchain_error "Odin commit mismatch unexpectedly passed"
+fi
+grep -Fq 'Odin declaration mismatch:' "$test_root/odin-commit-mismatch.log"
 package="$test_root/icu-package"
 libraries="$package/usr/lib/x86_64-linux-gnu"
 mkdir -p "$libraries" "$package/DEBIAN" "$test_root/fixture-llvm/bin"
@@ -141,7 +174,7 @@ ln -s ld.lld "$test_root/fixture-llvm/bin/llvm-readobj"
   toolchain_use llvm "$test_root/fixture-llvm" "$test_root/runtime cache"
   "$LLVM_ROOT/bin/ld.lld" --version
 )
-printf 'TOOLCHAIN_TESTS_OK cases=cold,warm-offline,external,missing,digest,extraction-preservation,concurrent-writer,parser,private-runtime-cold,private-runtime-offline root=%s\n' "$test_root"
+printf 'TOOLCHAIN_TESTS_OK cases=cold,warm-offline,external,missing,digest,extraction-preservation,concurrent-writer,parser,odin-selector,odin-version-commit,private-runtime-cold,private-runtime-offline root=%s\n' "$test_root"
 [[ "$scope" == all ]] || exit 0
 
 official_root="$source_root/build/toolchain-tests/official-linux"

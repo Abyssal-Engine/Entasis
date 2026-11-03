@@ -14,13 +14,13 @@ if ($PSBoundParameters.ContainsKey("Version"))
 {
     $pattern = if ($Tool -eq "odin")
     {
-        '^dev-\d{4}-\d{2}$'
+        '^dev-[0-9]{4}-[0-9]{2}[a-z]?$'
     }
     else
     {
         '^\d+\.\d+\.\d+$'
     }
-    if ($Tool -eq "all" -or $Version -notmatch $pattern)
+    if ($Tool -eq "all" -or $Version -cnotmatch $pattern)
     {
         [Console]::Error.WriteLine("Version requires one tool and a valid stable/monthly release")
         exit 2
@@ -69,7 +69,15 @@ foreach ($name in $selected)
         throw "Only published stable/monthly releases are supported"
     }
     $tag = $release.tag_name
-    $number = $tag.Substring($prefix.Length)
+    [string]$number = $tag.Substring($prefix.Length)
+    if ($name -eq "odin")
+    {
+        if ($tag -cnotmatch '^(dev-[0-9]{4}-[0-9]{2})[a-z]?$')
+        {
+            throw "Unexpected Odin release tag: $tag"
+        }
+        $number = $Matches[1]
+    }
     $assets = switch ($name)
     {
         "odin"

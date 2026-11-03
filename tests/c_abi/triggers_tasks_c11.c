@@ -77,6 +77,9 @@ static int test_trigger_streamed_custom_failure(void)
     };
     task_fixture_t f = {0};
     ENTASIS_TEST_CHECK(task_fixture_init(&f, NULL) == 0);
+    entasis_capacity_hints_t capacity = description().capacity;
+    capacity.statics = 2 * PAIRS;
+    ENTASIS_TEST_CHECK(entasis_world_ensure_capacity(&f.world, &capacity, NULL) == ENTASIS_STATUS_OK);
     trigger_batch_callback_t callback = {&f.task, 0, 80};
     entasis_collision_task_registration_t registration = task_collision_registration(&f);
     registration.user_context = &callback;

@@ -16,7 +16,7 @@ done
 case "$configuration" in development|release) ;; *) fail_usage "--configuration must be development or release" ;; esac
 case "$compiler" in gcc|clang|all) ;; *) fail_usage "--compiler must be gcc, clang, or all" ;; esac
 
-case "$scope" in smoke|all|callbacks|large-worlds|compatibility) ;; *) fail_usage "--scope must be smoke, all, callbacks, large-worlds, or compatibility" ;; esac
+case "$scope" in smoke|all|callbacks|triggers-tasks|large-worlds|compatibility) ;; *) fail_usage "--scope must be smoke, all, callbacks, triggers-tasks, large-worlds, or compatibility" ;; esac
 
 case "$precision" in float32|mixed64) ;; *) fail_usage "--precision must be float32 or mixed64" ;; esac
 case "$compatibility_fixtures" in original|cumulative) ;; *) fail_usage "--compatibility-fixtures must be original or cumulative" ;; esac
@@ -186,6 +186,7 @@ if [[ "$precision" == mixed64 ]]; then runtime_c_tests+=(global_precision_c11); 
 [[ "$scope" != smoke ]] || runtime_c_tests=(smoke_c11)
 if [[ "$scope" == large-worlds ]]; then runtime_c_tests=(origin_precision_c11); if [[ "$precision" == mixed64 ]]; then runtime_c_tests+=(global_precision_c11); fi; fi
 if [[ "$scope" == callbacks ]]; then runtime_c_tests=(policies_c11 layer_material_policy_c11 extensions_c11); fi
+if [[ "$scope" == triggers-tasks ]]; then runtime_c_tests=(); fi
 for test_name in "${runtime_c_tests[@]}"; do
     fixture_args=()
     if [[ "$scope" == callbacks && "$test_name" == extensions_c11 ]]; then fixture_args=(callbacks); fi
@@ -211,6 +212,7 @@ if [[ "$precision" == mixed64 ]]; then runtime_cpp_tests+=(global_precision_cpp2
 [[ "$scope" != smoke ]] || runtime_cpp_tests=(smoke_cpp20)
 if [[ "$scope" == large-worlds ]]; then runtime_cpp_tests=(origin_precision_cpp20); if [[ "$precision" == mixed64 ]]; then runtime_cpp_tests+=(global_precision_cpp20); fi; fi
 if [[ "$scope" == callbacks ]]; then runtime_cpp_tests=(extensions_cpp20); fi
+if [[ "$scope" == triggers-tasks ]]; then runtime_cpp_tests=(); fi
 for test_name in "${runtime_cpp_tests[@]}"; do
     fixture_args=()
     if [[ "$scope" == callbacks && "$test_name" == extensions_cpp20 ]]; then fixture_args=(callbacks); fi
@@ -231,6 +233,7 @@ for test_name in "${runtime_cpp_tests[@]}"; do
 done
 
     [[ "$scope" != large-worlds && "$scope" != callbacks ]] || continue
+    if [[ "$scope" != triggers-tasks ]]; then
     printf 'C_ABI_CONSUMER test=smoke_cooking_c11 lane=%s scope=%s\n' "$lane" "$scope"
     "$CC" "${COMMON_C_FLAGS[@]}" "$ROOT/tests/c_abi/smoke_cooking_c11.c" \
         -L"$BUILD_DIR" -Wl,-rpath,"$BUILD_DIR" -lentasis_cooking \
@@ -241,9 +244,11 @@ done
         "$BUILD_DIR/libentasis_cooking.a" "${COMMON_STATIC_LIBS[@]}" \
         -o "$OUT_DIR/smoke_cooking-static"
     "$OUT_DIR/smoke_cooking-static"
+    fi
 
     [[ "$scope" != smoke ]] || continue
     cooking_tests=(cooking_assets_c11 compound_tasks_c11 allocators_c11 extensions_semantic_c11 triggers_tasks_c11)
+    if [[ "$scope" == triggers-tasks ]]; then cooking_tests=(triggers_tasks_c11); fi
     for test_name in "${cooking_tests[@]}"; do
         printf 'C_ABI_CONSUMER test=%s lane=%s scope=%s\n' "$test_name" "$lane" "$scope"
         binary_name="${test_name%_c11}"

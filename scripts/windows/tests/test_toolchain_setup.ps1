@@ -11,10 +11,28 @@ $testRoot = Join-Path $sourceRoot ("build/toolchain-tests/windows-" + [Guid]::Ne
 $null = New-Item -ItemType Directory -Path (Join-Path $testRoot "scripts/windows/lib"), (Join-Path $testRoot "scripts/windows/toolchains"), (Join-Path $testRoot "tools"), (Join-Path $testRoot "fixture")
 Copy-Item -LiteralPath (Join-Path $sourceRoot "scripts/windows/lib/toolchain_common.ps1") -Destination (Join-Path $testRoot "scripts/windows/lib")
 Copy-Item -LiteralPath (Join-Path $sourceRoot "scripts/windows/toolchains/setup_toolchains.ps1") -Destination (Join-Path $testRoot "scripts/windows/toolchains")
+Copy-Item -LiteralPath (Join-Path $sourceRoot "scripts/windows/toolchains/update_toolchains.ps1") -Destination (Join-Path $testRoot "scripts/windows/toolchains")
 Copy-Item -LiteralPath $nativeNinja -Destination (Join-Path $testRoot "fixture/ninja.exe")
 $archive = Join-Path $testRoot "fixture.zip"
 [IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $testRoot "fixture"), $archive)
 $entries = Read-ToolchainData (Join-Path $sourceRoot "tools/toolchains.lock")
+[hashtable]$sourceLocal = Read-ToolchainLocal
+[string]$odinCache = if ($sourceLocal.ContainsKey("cache_root"))
+{
+    $sourceLocal.cache_root
+}
+else
+{
+    Join-Path $sourceRoot "build/toolchains/prebuilt"
+}
+[string]$odinRoot = if ($sourceLocal.ContainsKey("roots") -and $sourceLocal.roots.ContainsKey("odin"))
+{
+    $sourceLocal.roots.odin
+}
+else
+{
+    Join-Path $odinCache "odin/$($entries.odin.release)/windows-amd64"
+}
 $entry = $entries.ninja
 $entry.release = "fixture"
 $asset = @{
@@ -181,7 +199,56 @@ if ((Resolve-Toolchain "ninja") -ne $installed)
 {
     throw "Failed installation changed the working entry"
 }
-Write-Host "TOOLCHAIN_TESTS_OK cases=cold,warm-offline,external,missing,digest,extraction-preservation,concurrent-writer root=$testRoot"
+[string]$declarations = [IO.File]::ReadAllText($lockPath)
+[int]$selectorIndex = 0
+foreach ($selector in @("dev-2026-11A", "dev-2026-11aa", "dev-2026-11-a", "dev-2026-1a", "dev-2026-11a1", "DEV-2026-11a"))
+{
+    [string]$selectorLog = Join-Path $testRoot "odin-selector-$selectorIndex.log"
+    & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File (Join-Path $testRoot "scripts/windows/toolchains/update_toolchains.ps1") -Tool odin -Mode Update -Version $selector *> $selectorLog
+    [int]$selectorStatus = $LASTEXITCODE
+    [string]$selectorOutput = [IO.File]::ReadAllText($selectorLog)
+    if ($selectorStatus -ne 2 -or
+        -not $selectorOutput.Contains("Version requires one tool and a valid stable/monthly release") -or
+        $selectorOutput.Contains("RELEASE_METADATA") -or
+        [IO.File]::ReadAllText($lockPath) -cne $declarations -or
+        (Test-Path -LiteralPath "$lockPath.pending"))
+    {
+        throw "Malformed Odin selector did not reject before metadata/declaration mutation: $selector"
+    }
+    $selectorIndex += 1
+}
+Assert-ToolchainBundle $odinRoot "odin" $entries.odin
+foreach ($field in @("version", "commit"))
+{
+    [hashtable]$mismatchedOdin = $entries.odin.Clone()
+    $mismatchedOdin[$field] = if ($field -eq "version")
+    {
+        "dev-0000-00"
+    }
+    else
+    {
+        "0" * 40
+    }
+    [string]$odinStatus = "UnexpectedSuccess"
+    try
+    {
+        Assert-ToolchainBundle $odinRoot "odin" $mismatchedOdin
+    }
+    catch
+    {
+        if (-not $_.Exception.Message.StartsWith("Odin declaration mismatch:"))
+        {
+            throw
+        }
+        $_ | Out-String | Set-Content -LiteralPath (Join-Path $testRoot "odin-$field-mismatch.log")
+        $odinStatus = "Rejected"
+    }
+    if ($odinStatus -ne "Rejected")
+    {
+        throw "Odin $field mismatch unexpectedly passed"
+    }
+}
+Write-Host "TOOLCHAIN_TESTS_OK cases=cold,warm-offline,external,missing,digest,extraction-preservation,concurrent-writer,odin-selector,odin-version-commit root=$testRoot"
 
 if ($Scope -eq "Fixtures")
 {

@@ -100,7 +100,26 @@ main :: proc()
 	{
 		fail("Unexpected release tag")
 	}
-	version := tag[len(prefix):]
+	version: string = tag[len(prefix):]
+	if tool == "odin"
+	{
+		if (len(tag) != 11 && len(tag) != 12) || !strings.has_prefix(tag, "dev-") || tag[8] != '-'
+		{
+			fail("Unexpected Odin release tag")
+		}
+		for index in ([6]int{4, 5, 6, 7, 9, 10})
+		{
+			if tag[index] < '0' || tag[index] > '9'
+			{
+				fail("Unexpected Odin release tag")
+			}
+		}
+		if len(tag) == 12 && (tag[11] < 'a' || tag[11] > 'z')
+		{
+			fail("Unexpected Odin release tag")
+		}
+		version = tag[:11]
+	}
 	names: [2]string
 	switch tool
 	{

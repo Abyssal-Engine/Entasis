@@ -13,6 +13,7 @@ when util.PRECISION_MODE == .Double_Coordinates
 	TREE_ORIGIN_MARGIN :: f64(36_028_797_018_963_968);
 	TREE_SIGN_BIT :: u64(0x8000_0000_0000_0000);
 	TREE_NEGATIVE_INFINITY :: u64(0xfff0_0000_0000_0000);
+	TREE_BUILD_SENTINEL :: max(f64);
 }
 else
 {
@@ -24,6 +25,8 @@ else
 	TREE_ORIGIN_MARGIN :: f32(67_108_864);
 	TREE_SIGN_BIT :: u32(0x8000_0000);
 	TREE_NEGATIVE_INFINITY :: u32(0xff80_0000);
+	// preserve the original Float32 overflow sentinel without an out-of-range cast
+	TREE_BUILD_SENTINEL :: f32(0h7f80_0000);
 }
 
 // shape kernels continue to use f32 rays in both profiles

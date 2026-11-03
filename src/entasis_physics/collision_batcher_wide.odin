@@ -182,7 +182,7 @@ collision_batcher_resolve_subpair_child :: proc "contextless" (
 		}
 		triangle^ = child_triangle;
 		return {
-			shape=triangle,
+			shape=nil,
 			type_id=TRIANGLE_TYPE_ID,
 			pose=child_pose,
 			child_index=int(source_child_index),
@@ -214,6 +214,7 @@ collision_batcher_gather_subpair_bundle :: proc "contextless" (
 	bundle.count = count;
 	// the first lane is active and its prepared data remains valid through padding
 	triangle_a, triangle_b: Triangle;
+	mesh_a, mesh_b: Reference_State;
 	expected_a, expected_b: rawptr;
 	orientation_a, orientation_b: util.Quaternion;
 	offset_b: util.Vector3;
@@ -250,12 +251,16 @@ collision_batcher_gather_subpair_bundle :: proc "contextless" (
 				return child_b_status;
 			}
 			expected_a, expected_b = child_a.shape, child_b.shape;
+			mesh_a = .Present if child_a.mesh_owner != nil else .Missing;
+			mesh_b = .Present if child_b.mesh_owner != nil else .Missing;
 			pose_a, pose_b := child_a.pose, child_b.pose;
 			flip = 0;
 			if subpair.source_child_a < 0
 			{
 				expected_a, expected_b = expected_b, expected_a;
 				pose_a, pose_b = pose_b, pose_a;
+				triangle_a, triangle_b = triangle_b, triangle_a;
+				mesh_a, mesh_b = mesh_b, mesh_a;
 				flip = -1;
 			}
 			offset_b = util.vector3_subtract(pose_b.position, pose_a.position);
@@ -263,12 +268,30 @@ collision_batcher_gather_subpair_bundle :: proc "contextless" (
 			speculative_margin = batcher.pairs.memory[continuation.parent_pair_index].input.speculative_margin;
 		}
 		bundle.flip_mask = simd.replace(bundle.flip_mask, lane, flip);
-		collision_convex_wide_write_shape_trusted(
-			bundle, int(task.shape_type_a), lane, expected_a, .Present,
-		);
-		collision_convex_wide_write_shape_trusted(
-			bundle, int(task.shape_type_b), lane, expected_b, .Missing,
-		);
+		// mesh triangles live in the packed payload, while registry shapes retain
+		// their borrowed scalar pointers for native and foreign custom callbacks
+		if mesh_a == .Present
+		{
+			bundle.shape_a[lane] = nil;
+			triangle_wide_write_slot_trusted(&bundle.a.triangle, lane, triangle_a);
+		}
+		else
+		{
+			collision_convex_wide_write_shape_trusted(
+				bundle, int(task.shape_type_a), lane, expected_a, .Present,
+			);
+		}
+		if mesh_b == .Present
+		{
+			bundle.shape_b[lane] = nil;
+			triangle_wide_write_slot_trusted(&bundle.b.triangle, lane, triangle_b);
+		}
+		else
+		{
+			collision_convex_wide_write_shape_trusted(
+				bundle, int(task.shape_type_b), lane, expected_b, .Missing,
+			);
+		}
 		util.vector3_wide_write_slot(&bundle.offset_b, lane, offset_b);
 		util.quaternion_wide_write_slot(&bundle.orientation_a, lane, orientation_a);
 		util.quaternion_wide_write_slot(&bundle.orientation_b, lane, orientation_b);

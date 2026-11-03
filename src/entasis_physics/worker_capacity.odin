@@ -57,7 +57,11 @@ broad_phase_ensure_worker_capacity :: #force_no_inline proc (
 	old_query_workspace := broad_phase.query_workspace;
 	old_maintenance_workspace := broad_phase.maintenance_workspace;
 	broad_phase.query_workspace = new_query_workspace;
+	// detach the temporary's embedded procedure table before moving ownership
+	new_maintenance_workspace.task_stack.procedures.memory = nil;
 	broad_phase.maintenance_workspace = new_maintenance_workspace;
+	broad_phase.maintenance_workspace.task_stack.procedures.memory =
+	&broad_phase.maintenance_workspace.task_procedures[0];
 	_ = tree_parallel_query_workspace_dispose(&old_query_workspace);
 	_ = tree_refit_refine_workspace_dispose(&old_maintenance_workspace);
 	return .Ok;

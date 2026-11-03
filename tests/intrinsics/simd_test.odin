@@ -77,7 +77,7 @@ x86_128_semantics :: proc(t: ^testing.T)
 	a := F32x4{1, 4, 9, 16};
 	b := F32x4{2, 3, 10, 8};
 	less := simd_x86._mm_cmplt_ps(a, b);
-	testing.expect_value(t, simd_x86._mm_movemask_ps(less), u32(0b0101));
+	testing.expect_value(t, simd_x86._mm_movemask_ps(less), i32(0b0101));
 	expect_f32x4(t, simd_x86._mm_blendv_ps(a, b, less), F32x4{2, 4, 10, 16});
 	expect_f32x4(t, simd_x86._mm_rcp_ps(a), F32x4{1, 0.25, 1.0 / 9.0, 0.0625}, 0.0005);
 	expect_f32x4(t, simd_x86._mm_rsqrt_ps(a), F32x4{1, 0.5, 1.0 / 3.0, 0.25}, 0.0005);

@@ -18,7 +18,7 @@ case "$mode" in check|update) ;; *) toolchain_usage_error "--mode must be check 
 if [[ -n "$version" ]]; then
   [[ "$tool" != all ]] || toolchain_usage_error "--version requires one tool"
   if [[ "$tool" == odin ]]; then
-    [[ "$version" =~ ^dev-[0-9]{4}-[0-9]{2}$ ]] || toolchain_usage_error "invalid Odin release"
+    [[ "$version" =~ ^dev-[0-9]{4}-[0-9]{2}[a-z]?$ ]] || toolchain_usage_error "invalid Odin release"
   else
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || toolchain_usage_error "invalid release version"
   fi

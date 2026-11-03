@@ -1,8 +1,17 @@
 package intrinsics_tests
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:mem"
 import "core:testing"
+import "core:thread"
+
+atomic_cell_initialize :: proc(host_thread: ^thread.Thread)
+{
+	context = runtime.default_context();
+	value: ^i32 = cast(^i32)host_thread.data;
+	value^ = 10;
+}
 
 @(test)
 bit_operation_edges :: proc(t: ^testing.T)
@@ -76,7 +85,16 @@ unaligned_copy_zero_and_overlap :: proc(t: ^testing.T)
 @(test)
 atomic_and_volatile_semantics :: proc(t: ^testing.T)
 {
-	value := i32(10);
+	value: i32;
+	initializer: ^thread.Thread = thread.create(atomic_cell_initialize);
+	if !testing.expect(t, initializer != nil)
+	{
+		return;
+	}
+	initializer.data = &value;
+	thread.start(initializer);
+	thread.join(initializer);
+	thread.destroy(initializer);
 	testing.expect_value(t, intrinsics.atomic_add_explicit(&value, 5, .Seq_Cst), i32(10));
 	testing.expect_value(t, value, i32(15));
 	testing.expect_value(t, intrinsics.atomic_add_explicit(&value, 1, .Seq_Cst), i32(15));
@@ -91,4 +109,7 @@ atomic_and_volatile_semantics :: proc(t: ^testing.T)
 	testing.expect_value(t, value, i32(99));
 	intrinsics.atomic_store_explicit(&value, 42, .Release);
 	testing.expect_value(t, intrinsics.atomic_load_explicit(&value, .Acquire), i32(42));
+	volatile_value: i32;
+	intrinsics.volatile_store(&volatile_value, 10);
+	testing.expect_value(t, intrinsics.volatile_load(&volatile_value), i32(10));
 }

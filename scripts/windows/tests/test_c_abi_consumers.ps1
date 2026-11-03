@@ -11,7 +11,7 @@ param(
     [string]$Precision = "Float32",
     [ValidateSet("Msvc", "ClangCl", "All")]
     [string]$Compiler = "Msvc",
-    [ValidateSet("Smoke", "All", "Lifecycle", "Queries", "Callbacks", "Stages", "Memory", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions", "Allocators", "Triggers", "Body-Control", "Restitution", "Large-Worlds", "Compatibility")]
+    [ValidateSet("Smoke", "All", "Lifecycle", "Queries", "Callbacks", "Stages", "Memory", "Custom-Shapes", "Custom-Tasks", "Custom-Constraints", "Extensions", "Allocators", "Triggers", "Triggers-Tasks", "Body-Control", "Restitution", "Large-Worlds", "Compatibility")]
     [string]$Scope = "All",
     [ValidateNotNullOrEmpty()]
     [string]$BaselineRoot,
@@ -132,6 +132,12 @@ switch ($Scope)
     {
         $runtimeCTests = @("triggers_c11")
         $runtimeCppTests = @("triggers_cpp20")
+        $cookingTests = @("triggers_tasks_c11")
+    }
+    "Triggers-Tasks"
+    {
+        $runtimeCTests = @()
+        $runtimeCppTests = @()
         $cookingTests = @("triggers_tasks_c11")
     }
     "Allocators"
